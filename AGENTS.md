@@ -5,7 +5,7 @@ This repository holds research and, next, a proof of concept for offline Zcash p
 ## Current target
 
 - **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
-- **After MVP v1: mainnet.** Mainnet runs NU6.3 (`0x37A5165B`) and has not activated NU7, so moving to mainnet means building with the NU6.3 branch ID unless mainnet activates NU7 first. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
+- **After MVP v1: mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
 - **Platform order:** mobile (iOS first) unless something below becomes a blocker, in which case desktop first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target.
 - **Transport:** a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat). Logos nodes come later.
@@ -47,9 +47,43 @@ Record every `ths` bug, missing feature or workaround here as you hit it, so it 
 ### 6. Wallet expiry delta is 40 blocks under NU7 (behaviour to override)
 
 - **What:** a `ths wallet send` mined at height 106 had `expiryheight` 146, a delta of about 40 blocks. ZIP 218 recommends 120 at NU7, and offline mesh carriage needs far more (the report's fleet policy).
-- **Where:** observed with v0.4.1 on 2026-10-25; the delta is set in the Zakura wallet stack the `ths` server uses, not yet traced to a file.
-- **Workaround:** the offline builder sets its own expiry from the fleet policy.
+- **Where:** `pub const DEFAULT_TX_EXPIRY_DELTA: u32 = 40;` in `zakura-primitives` 2.2.0, `crates/zcash_primitives/src/transaction/builder.rs` L54 ([zakura-core/common v2.2.0](https://github.com/zakura-core/common/blob/b6cf4cefe38fdccc6d2b0dc868f7d6ef01683413/crates/zcash_primitives/src/transaction/builder.rs)), which `ths` v0.4.1 pins. Common 4.0.0 raises the NU7 default to 120 blocks. At NU7's 25-second target, 40 blocks is about 17 minutes.
+- **Workaround:** the offline builder sets its own expiry from the fleet policy with `Builder::with_expiry_height`, or passes `Some(h)` to `create_proposed_transactions`.
 - **Upstream feature:** a configurable expiry delta on `ths wallet send` and the payment API, so long-expiry transactions can be tested without a separate builder.
+
+## Offline builder
+
+Build on Zakura Common **2.2.0**, the version `ths` v0.4.1 uses. The 2.2.0, 3.x and 4.x type families cannot be mixed in one binary, so pin every crate exactly; `zakura-client-*` rc7 asks for `^2.0.0` and would otherwise float.
+
+| Crate | Version | Features |
+|---|---|---|
+| `zakura-protocol` | `=2.2.0` | `local-consensus` |
+| `zakura-primitives` | `=2.2.0` | `circuits`, `std`, `multicore` |
+| `zakura-orchard` | `=2.2.0` | `circuit` |
+| `zakura-keys` | `=2.2.0` | |
+| `zakura-proofs` | `=2.2.0` | |
+| `zakura-pczt` (optional) | `=0.1.0-rc4` | |
+| `zakura-client-backend`, `zakura-client-sqlite` (optional, for the synced wallet DB) | `=0.1.0-rc7` | |
+
+Import them under their upstream names, as `ths` does, for example `zcash_primitives = { package = "zakura-primitives", version = "=2.2.0" }`.
+
+Function sequence (functions verified in source at v2.2.0 / rc7; not yet compiled):
+
+- **Network:** `LocalNetwork { .., nu6_3: Some(1), nu7: Some(1) }` matching the `ths` chain. `BranchId::for_height` then selects NU7.
+- **Payer, offline:** `Builder::new(net, target_height, BuildConfig::Standard { ironwood_anchor: Some(anchor), .. })` → `add_ironwood_spend(fvk, note, merkle_path)` (notes must be `NoteVersion::V3`) → `add_ironwood_output(ovk, addr, value, memo)` → `with_expiry_height(h)` → `build(..)` → `BuildResult::transaction()` → `Transaction::write`. With the wallet DB instead: `propose_transfer` → `create_proposed_transactions(.., expiry_height: Some(h))` → `get_transaction(txid)` → `write`.
+- **Payee, offline:** `Transaction::read(bytes, branch)` → `ironwood_bundle()` → `decrypt_outputs_with_keys(&[ivk])` → `signature_hash(.., SignableInput::Shielded, ..)` → `BatchValidator::new(&vk)`, `add_bundle`, `validate`. This proves the transaction is well formed and pays the payee; it cannot prove the anchor is a real chain root or that the notes are unspent, so the receipt says "pending".
+- **Gateway:** lightwalletd `SendTransaction`, or Zakura `sendrawtransaction` at `127.0.0.1:18232`.
+
+Limits to respect:
+
+- Spending change that has not been mined is not supported (`zakura-client-backend` rc7 `wallet.rs` L1414–1418), so chained offline payments wait for each parent to be mined.
+- `DeferredPcztBuilder` (sign before choosing the anchor) exists and accepts v6 only.
+- No Swift or uniffi bindings exist; the iOS wrapper is our own.
+- **Mainnet step:** Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None`. Before mainnet, either move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This does not block MVP v1.
+
+## Agent skills
+
+`.agents/skills/` holds [zcashlabs/zcash-skills](https://github.com/zcashlabs/zcash-skills) at `b841047`, copied as the whole `skills/` tree because partial copies break its routing. Use `zcash-payments`, `zcash-protocol`, `zakura`, `zcash-light-client` and `zcash-wallet` for builder work. They do not cover offline signing, PCZT, FROST or mobile bindings; use the crate source for those. Known stale facts at that commit: it says `ths` is 0.4.0 (it is 0.4.1), and `docs/versioned-facts.md` says Regtest has `nu7 = None` (v0.4.x activates NU7 at height 1).
 
 ## Running ths in an orb
 
