@@ -1,0 +1,22 @@
+[package]
+name = "escrowcheck"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+orchard = { package = "zakura-orchard", version = "=2.2.0", features = ["unstable-frost", "unstable-voting-circuits"] }
+pczt = { package = "zakura-pczt", version = "=0.1.0-rc4", features = ["signer", "orchard", "io-finalizer", "prover", "tx-extractor", "zcp-builder"] }
+zcash_primitives = { package = "zakura-primitives", version = "=2.2.0" }
+zcash_protocol = { package = "zakura-protocol", version = "=2.2.0", features = ["local-consensus"] }
+reddsa = { package = "zakura-reddsa", version = "=2.2.0", features = ["frost"] }
+frost-rerandomized = "3.0.0"
+pasta_curves = { package = "zakura-pasta-curves", version = "=2.2.0" }
+ff = "0.14"
+rand = { version = "0.10", features = ["sys_rng"] }
+rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
+zcash_note_encryption = "0.4.2"
+incrementalmerkletree = "0.8.2"
+shardtree = "0.7"
+blake2b_simd = "1"
+blake3 = "1"
+hex = "0.4"
