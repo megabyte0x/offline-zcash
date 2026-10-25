@@ -35,7 +35,14 @@ The mesh never moves coins. It moves a finished transaction, already signed and 
 | Verifier + pending policy | Decrypt own output, check proof and signatures, apply floor limit, per-payer counter and hot list, return a signed "pending" receipt | To build |
 | Gateway submitter | Submits, returns a broadcast receipt, then the inclusion proof and headers | To build; the laptop in v1, or a phone through a port forward (ths binds to loopback only) |
 
-Platform order: iOS first; a Mac is the fallback if iOS integration blocks (BitChat shares one codebase across both).
+Platform order: iOS first; a Mac is the fallback if iOS integration blocks (BitChat shares one codebase across both). The three-laptop demo (payer, payee, gateway) runs on three Macs (macOS 13+) with the BitChat fork, decided 25 October 2026.
+
+Transport rules from BitChat at `04995f68`:
+
+- Send the transaction as a private message (base64, about 12.3 KB, under the 60,000-character limit), not as a file or public broadcast. Private messages sit in a sealed on-disk outbox and are resent until acknowledged (24 h, 8 attempts). Private file sends are not outboxed.
+- The payee app saves the transaction to its own storage on receipt; BitChat keeps conversations in memory only.
+- The payee forwards the bytes to the gateway as a separate private message; a packet addressed to the payee stops there.
+- Use the same build configuration on all three Macs: Debug and Release use different Bluetooth service UUIDs.
 
 ## One payment
 
@@ -44,8 +51,8 @@ Platform order: iOS first; a Mac is the fallback if iOS integration blocks (BitC
 | 0 | Setup: sync, split funds into 10+ notes, exchange BitChat keys, load fleet settings (branch ID, expiry delta, fee, limits) | lightwalletd sync | Once |
 | 1 | Payee sends a ZIP 321 request | BitChat | Mesh |
 | 2 | Payer reserves notes and builds offline | `Builder::new` → `add_ironwood_spend` / `add_ironwood_output` → `with_expiry_height` → `build` → `Transaction::write` | None |
-| 3 | Signed broadcast, flooded by relays, kept in the outbox; carries a signed intent (nullifiers, txid, payee, amount, expiry) | BitChat fork | Mesh |
-| 4 | Payee verifies and replies with a "pending" receipt | `Transaction::read` → `decrypt_outputs_with_keys` → `BatchValidator` | Mesh |
+| 3 | Payer sends the transaction and the payment details (invoice, amount, payer's accountability signature) to the payee as a Noise-encrypted private message, kept in the outbox. Relays and the gateway receive the raw transaction bytes only, never an intent or payer identity | BitChat fork | Mesh |
+| 4 | Payee checks v6, Ironwood-only, branch ID, expiry against its last known height, anchor in its set of recent anchors, its own output, proofs and signatures; replies "passes checks at height H; pending" | `Transaction::read` → `decrypt_outputs_with_keys` → `BatchValidator` | Mesh |
 | 5 | Gateway submits; node mines | `SendTransaction` | Gateway only |
 | 6 | Inclusion proof and headers return; payee marks final; on expiry the payer re-issues from the same notes | BitChat fork | Mesh |
 
@@ -64,32 +71,32 @@ Platform order: iOS first; a Mac is the fallback if iOS integration blocks (BitC
 ```
  Available ──sign tx──▶ Reserved ──mined──▶ Spent
      ▲                     │
-     └── expired unmined AND chain shows nullifier unspent
+     └── expired unmined AND trusted sync past expiry shows nullifier unspent
  Change from a mined tx ──▶ Available
  Change from an unmined tx ──▶ Pending (not spendable)
 ```
 
 - Pre-split into 10+ confirmed notes while online; the number of notes caps the number of separate offline payments.
 - Reserve before signing, and persist the reservation so a crash cannot free it.
-- Release a reserved note only after expiry and proof from chain data that its nullifier was never spent.
+- Release a reserved note only after expiry, when a sync the device trusts, past the expiry height, shows its nullifier unspent. No header commits to the nullifier set (ZIP 221), so non-spend cannot be proven from a chain bundle.
 - Change becomes spendable only after a sync including its parent block; unmined change cannot be spent (Zakura client rc7 refuses).
 - One spending device per account. Two devices with the same key cannot see each other's reservations.
 
 ## Double spending
 
-No offline check proves a note is unspent, and no published scheme prevents a fully disconnected payer from double-spending without trusted hardware or a co-signer. A single co-signer was rejected as a central point of failure. The design uses three layers instead (details and sources: `research_notes/Offline Zcash over Logos mesh/decentralized_double_spend.md`):
+No offline check proves a note is unspent, and no published scheme prevents a fully disconnected payer from double-spending without trusted hardware or a co-signer. A "pending" payment is therefore an IOU from a known payer. Reviews and source checks on 25 October 2026 changed the layers (see `Design review reconciliation.md`):
 
 | Layer | When | Guarantee |
 |---|---|---|
 | 1. Quorum-certified notes: payer + any 2f+1 of 3f+1 FROST signers (e.g. any 3 of 4), each signing a nullifier for one transaction only | A quorum is reachable | Prevented if ≤ f signers misbehave |
-| 2. Bonded accountable intents: signed intent with per-epoch counter, bond under a committee key, paid out on a fraud proof; floor limit and open intents ≤ bond ÷ k | No quorum reachable | Deterred and compensated |
-| 3. Gossip of intents and fraud proofs; hot list | Always | Detected quickly |
+| 2. ~~Bonded accountable intents~~ dropped as written: Zakura ignores `lock_time` on fully shielded transactions (v1.6.0 `zakura-chain/src/transaction.rs` L620–644), so a bond has no refund path, and a committee-held bond is custody. Signed counters cannot cap total loss across partitions (one credential shown to N disconnected payees exposes N × the limit); they are local loss controls only | — | — |
+| 3. Conflict detection: a nullifier mined in a different txid is conflict evidence, not proof of fraud (re-issue and key theft look the same). Hot lists hold nullifiers only, never payer keys, and nothing is hot-listed automatically | Always | Detected after the next uplink |
 
 Staging:
 
-- **MVP v1:** pending tier (floor limit, per-payer counter), signed intents, fraud-proof detection at the gateway (nullifier mined in a different txid), hot-list gossip. Payees accept small amounts from known payers; final only when mined.
-- **Next:** bond and counters (layer 2), and a 4-device quorum (layer 1).
-- **Logos phase:** basecamp committees; layer 1 by default whenever a quorum is reachable.
+- **MVP v1:** pending tier (floor limit and per-payer counter kept on the payee), payment details and accountability signature sent only to the payee, conflict detection from chain data. Payees accept small amounts from known payers; final only when mined.
+- **Next:** bilateral 2-of-2 FROST escrow between payer and payee, the only prevention available with three devices. Needs glue porting frost-tools' `zcash-sign` to zakura-orchard 2.2.0 (`unstable-frost`) and zakura-pczt rc4 (`sign_ironwood_with`); escrow FVKs are non-standard and not quantum-recoverable.
+- **Later:** a 4-signer quorum (layer 1); in the Logos phase, basecamp committees.
 
 ## Stages
 
@@ -102,8 +109,12 @@ Staging:
 ## Open checks
 
 1. Build one offline Ironwood transaction with Zakura 2.2.0 on the local chain and verify it on a separate payee process.
-2. frost-tools bytes (sighash, α, signature) interoperate with a Zakura 2.2.0 transaction.
-3. Offline payee check of committee authorization (`rk = ak + α·G`) and what revealing α leaks.
-4. Whether Zakura enforces `lock_time` on fully shielded v6 transactions (bond refund).
-5. Fraud-proof soundness from light-client data.
-6. Phone proving time; BitChat delivery time for 9,166 bytes over 1 and 3 hops.
+2. Zebra 7 accepts the same bytes.
+3. A transaction proven against a fabricated anchor is rejected by the payee.
+4. A deliberate conflicting spend ends as "conflicted" at the payee, not "final".
+5. Packet capture shows no plaintext amounts, payees or keys on the mesh.
+6. Payee restarts between receipt and forwarding; the gateway appears later and submits.
+7. Anchor authentication from headers: ZIP 221/258 history-tree leaves carry Ironwood roots (Zakura 1.6.0 implements them), but no light-client MMR proof code was found.
+8. frost-tools bytes (sighash, α, signature) interoperate with a Zakura 2.2.0 transaction (for the escrow phase).
+9. Phone proving time; BitChat delivery time for 9,166 bytes over 1 and 3 hops.
+10. ~~`lock_time` on fully shielded v6~~ resolved: not enforced.

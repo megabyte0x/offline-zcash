@@ -1,13 +1,13 @@
 # AGENTS.md
 
-This repository holds research and, next, a proof of concept for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. See `reports/Offline Zcash over Logos mesh.md` for the design and `research_notes/` for sources.
+This repository holds research and, next, a proof of concept for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what to do next. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
 
 ## Current target
 
 - **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
 - **After MVP v1: mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
-- **Platform order:** mobile (iOS first) unless something below becomes a blocker, in which case desktop first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target.
+- **Platform order:** mobile (iOS first) unless something below becomes a blocker, in which case desktop first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target. The three-laptop demo (payer, payee, gateway) runs on three Macs with the BitChat fork; see `docs/components/transport-bitchat.md` for the transport rules.
 - **Transport:** a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat). Logos nodes come later.
 
 ## thus-spoke-zakura issue log
