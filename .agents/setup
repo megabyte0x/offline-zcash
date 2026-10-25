@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Prepares an Amp orb: Docker, the pinned ths launcher and its Regtest images.
+set -euo pipefail
+
+THS_VERSION=0.4.1
+step() { printf '\n==> %s (%(%T)T)\n' "$*" -1; }
+
+step "Docker packages"
+if ! command -v dockerd >/dev/null 2>&1; then
+  sudo install -m 0755 -d /etc/apt/keyrings
+  sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
+    sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+fi
+docker --version
+
+step "Rust toolchain"
+# Stable via rustup; a future rust-toolchain.toml pin is honoured by rustup automatically.
+if [[ ! -x "$HOME/.cargo/bin/cargo" ]]; then
+  curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs |
+    sh -s -- -y --profile minimal --component clippy,rustfmt
+fi
+"$HOME/.cargo/bin/cargo" --version
+
+step "ths launcher v$THS_VERSION"
+ths="$HOME/.local/bin/ths"
+if [[ "$("$ths" --version 2>/dev/null | awk '{print $2}')" != "$THS_VERSION" ]]; then
+  # install.sh verifies the release checksum; images are pulled below.
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    "https://raw.githubusercontent.com/zcashlabs/thus-spoke-zakura/v$THS_VERSION/install.sh" |
+    THS_VERSION="v$THS_VERSION" THS_SKIP_IMAGE_PULL=1 sh
+fi
+"$ths" --version
+
+step "ths Docker images"
+# Setup may not leave daemons running, so start dockerd only for the pull.
+# Images stay in /var/lib/docker and reach the snapshot.
+started_dockerd=0
+if ! timeout 2 docker info >/dev/null 2>&1; then
+  sudo -n dockerd --host unix:///var/run/docker.sock --group "$(id -gn)" \
+    >/tmp/setup-dockerd.log 2>&1 &
+  started_dockerd=1
+  for _ in $(seq 60); do timeout 2 docker info >/dev/null 2>&1 && break; sleep 0.5; done
+fi
+"$ths" pull
+if ((started_dockerd)); then
+  sudo -n pkill -TERM -x dockerd
+  for _ in $(seq 30); do pgrep -x dockerd >/dev/null || break; sleep 0.5; done
+fi
+
+step "Done"

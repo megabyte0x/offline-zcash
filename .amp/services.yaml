@@ -1,0 +1,10 @@
+services:
+  ths:
+    # Regtest chain (Zakura, lightwalletd, wallet dashboard). Docker comes from .agents/resume.
+    command: >-
+      until timeout 2 docker info >/dev/null 2>&1; do sleep 1; done;
+      exec "$HOME/.local/bin/ths" start --no-open
+    port: 32805
+    portal:
+      title: ths dashboard
+      description: Regtest wallet dashboard. Zakura RPC is 127.0.0.1:18232 and lightwalletd 127.0.0.1:9067 inside the orb.

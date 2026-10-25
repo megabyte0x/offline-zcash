@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Starts the supervised Docker daemon that ths needs. Runs on activation and every wake.
+set -euo pipefail
+
+if timeout 2 docker info >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Unix socket only; the user's primary group can use it, so no chmod is needed.
+amp orb service start dockerd \
+  --command "sudo -n dockerd --host unix:///var/run/docker.sock --group $(id -gn)"
+for _ in $(seq 25); do
+  if timeout 1 docker info >/dev/null 2>&1; then
+    docker info --format 'Docker {{.ServerVersion}} ready'
+    exit 0
+  fi
+  sleep 0.2
+done
+echo 'Docker did not become ready; see: amp orb service logs dockerd' >&2
+exit 1

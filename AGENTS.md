@@ -87,8 +87,8 @@ Limits to respect:
 
 ## Running ths in an orb
 
-- Start Docker: `amp orb service start dockerd --command 'sudo dockerd'`, then `sudo chmod 666 /var/run/docker.sock`.
-- Install the v0.4.1 launcher (`THS_VERSION=v0.4.1` with `install.sh`, or the `ths-x86_64-unknown-linux-gnu.tar.gz` release asset) to `~/.local/bin/ths`, run `ths pull`, then `amp orb service start ths --command "$HOME/.local/bin/ths start --no-open"`.
+- `.agents/setup` installs Docker, stable Rust (rustup, `~/.cargo/bin`) and the v0.4.1 launcher at `~/.local/bin/ths` and pulls its images; `.agents/resume` starts the `dockerd` service. Change the pinned version in `.agents/setup`.
+- Start the chain with `amp orb services ensure` (the `ths` service in `.amp/services.yaml`, with a dashboard portal). `amp orb service stop ths` deletes the chain.
 - Check: `getblockchaininfo` shows `consensus.chaintip = 77190ad9`, NU7 active at height 1, and an `ironwood` value pool.
 
 ## When to change the ths version
