@@ -2,7 +2,7 @@
 
 Amounts and recipients are well protected: Ironwood hides them on chain, and BitChat private messages hide the payment details from relays.
 Metadata is the weak point: who sent, when and from where leaks through the gateway, mesh peer IDs, radio and fleet-specific transaction shapes.
-With three devices the anonymity set is tiny. MVP v1 is a closed fleet on a local chain; several of these risks only become real in a shutdown on mainnet.
+With four devices the anonymity set is tiny. The design target is mainnet in a shutdown; the local chain and the four Macs are a harness, so no mitigation below is dropped because the harness cannot exercise it. Where the harness cannot test a control, the assumptions table says so and the control is tested with mainnet vectors.
 
 Related: [design.md](design.md), [components/double-spend.md](components/double-spend.md), [components/transport-bitchat.md](components/transport-bitchat.md), [components/gateway.md](components/gateway.md), [components/payee-verifier.md](components/payee-verifier.md). Deep sources: [threat_model.md](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/threat_model.md), [report §Metadata](../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md), [reconciliation](../archive/reports/Design%20review%20reconciliation.md).
 
@@ -14,12 +14,15 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 |---|---|---|
 | P1 | The old step-3 public broadcast of a signed intent (nullifiers, txid, payee, amount, expiry, payer key) was a plaintext payment record; BitChat public payloads are signed, not encrypted | **Fixed:** relays and the gateway get transaction bytes only; details and accountability signature go to the payee over a Noise-encrypted private message [decided] |
 | P2 | Identity-keyed controls (per-payer counters, accountability signatures) link every payment to a stable identity | Closed, known fleet only; never with strangers. Hot lists hold nullifiers, not payer keys [decided] |
-| P3 | The gateway is the first broadcaster (first-spy) and a trust point: it can withhold, delay, forge chain state and sees every transaction first | Accept in MVP v1; it holds no spending or viewing key. Mitigations in [gateway.md](components/gateway.md) [decided] |
+| P3 | The gateway is the first broadcaster (first-spy) and can withhold, delay or lie about chain state; it sees every transaction first | The design assumes ADV-G on every network. It holds no spending or viewing key; every chain fact the payee acts on is verified against proof of work, MMR anchor paths, txid branches and a bundle signature under the gateway's enrollment key; ≥ 2 gateways must agree on the tip, else `checked (single-source)` with the stricter cap. What one gateway can still do is omit a conflict notice; mitigations are ≥ 2 gateways, nullifier sharing and loss caps ([gateway.md](components/gateway.md), [payee-verifier.md](components/payee-verifier.md)). Supersedes the earlier "accept in MVP v1" [decided] |
 | P4 | Fleet transactions are fingerprintable: stale anchor, long expiry delta, uniform padding, bursts at each uplink | Accept: anonymity set is "fleet users", not "all Zcash users". Uniform policy so the fleet at least blends with itself [decided] |
-| P5 | BitChat stable peer IDs and neighbour announcements leak topology; with 3 devices the anonymity set is tiny | Accept in the demo [decided] |
-| P6 | Committees and FROST participants hold the escrow FVK, so they see amounts and recipients | Escrow payee sees the escrow FVK by design [decided] |
-| P7 | lightwalletd sees the submitter's IP and timing | Gateway over Tor for mainnet (MVP v2) [decided] |
+| P5 | BitChat stable peer IDs and neighbour announcements leak topology; with 4 devices the anonymity set is tiny | Stated limitation of the BitChat transport, on the harness and on mainnet alike: private messages only, same-size traffic, no payment data outside Noise. Mitigation plan: peer-ID rotation once its cost to the outbox is measured (open 3), and the Logos transport later ([later/logos.md](later/logos.md)). Supersedes "accept in the demo" [decided] |
+| P6 | The escrow co-signer does **not** need the escrow FVK: nullifier and `rk` are in the sighash, so it knows which notes it signs without seeing amounts or recipients. Sharing the FVK with a bilateral payee is a choice, not a requirement | Co-signer gets a redacted PCZT and no viewing key; a bilateral payee may hold the FVK only when the pair agrees [decided; corrects the earlier P6] |
+| P7 | lightwalletd sees the submitter's IP and timing | Gateway submits over Tor, fresh circuit per tx, random delay. Part of the design; built after the loopback path to `ths` works (build order in [gateway.md](components/gateway.md)), not deferred to a later stage [decided] |
 | P8 | ths dev accounts derive from all-zero entropy (`schema.rs` L42), so their keys are public | Fine for Regtest; never hold real value with them [decided] |
+| P9 | Pending-nullifier sharing lets every fleet payee learn which payee received each pending payment and when, and, once mined, link that payee to the on-chain tx. Amounts stay hidden | Accept inside a closed fleet only; payload carries txid, expiry and nullifiers, never payer or amount ([pending-tier.md](components/pending-tier.md)) [decided] |
+| P10 | The co-signer learns which txids are the payer's (nullifiers, `rk`, `cv`, `cmx`, ciphertexts, expiry, timing) and holds partial spending authority over escrow notes | Accept for v1.1; it sees no amounts, recipients or FVK. In the demo the co-signer is a separate offline Mac, not the gateway ([double-spend.md](components/double-spend.md)) [decided] |
+| P11 | The payer's device-bound payment key and `seq` give every payee a stable identity and a running count of the payer's offline payments | Accept inside the fleet (P2); the count can reset per enrollment [decided] |
 
 ## Findings
 
@@ -33,7 +36,7 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 | Broadcast | The first node to broadcast is the apparent origin; Zcash txs deanonymized from timing "with a high level of accuracy" (pre-Zebra) | [Biryukov & Tikhomirov 2019](https://orbilu.uni.lu/bitstream/10993/39724/1/biryukov-tikhomirov-deanonymization-and-linkability) |
 | Broadcast | Long-lived nodes over Tor face exit-banning and fingerprinting; a global passive adversary defeats Tor | [Biryukov & Pustogarov 2015](https://arxiv.org/abs/1410.6079), [Kappos & Piotrowska 2019](https://arxiv.org/pdf/1902.07337) |
 | Light client | lightwalletd learns IP, sync height and full-tx fetches; may show fake payments if headers are not validated | [ZIP 307](https://zips.z.cash/zip-0307), [Hornby deck](https://defuse.ca/downloads/Fixing%20Privacy%20Problems%20in%20the%20Zcash%20Light%20Wallet%20Protocol.pdf) |
-| Keys | A UFVK reveals incoming, outgoing and change history; a UIVK only incoming. FROST participants share the FVK | [ZIP 316](https://zips.z.cash/zip-0316), [ZF FROST book](https://frost.zfnd.org/zcash/technical-details.html) |
+| Keys | A UFVK reveals incoming, outgoing and change history; a UIVK only incoming. ZF's FROST book assumes participants share the FVK, but our co-signer signs from a redacted PCZT and needs none (P6) | [ZIP 316](https://zips.z.cash/zip-0316), [ZF FROST book](https://frost.zfnd.org/zcash/technical-details.html), [double-spend.md](components/double-spend.md) |
 | Mesh | Public broadcast reveals the sender's neighbourhood; peer-ID rotation does not remove timing correlation. Announces every 4 s, then 15–30 s | [bitchat_mesh.md](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/bitchat_mesh.md) L34, L99 (bitchat@`04995f68`) |
 | Mesh | Android Wi-Fi Aware uses a hard-coded PSK `"bitchat_secret"` | bitchat-android@`137ce6d` `WifiAwareMeshService.kt` L69–70 |
 | Radio | LoRa devices fingerprinted by deep-learning RFFI, including unseen devices; RSSI/TDOA localization; selective jamming cut reception to 1.3% | [Liverpool TIFS 2022](https://livrepository.liverpool.ac.uk/3148161/), [arXiv 2006.01278](https://arxiv.org/pdf/2006.01278), [Aras et al.](https://arxiv.org/pdf/1712.02141) |
@@ -61,8 +64,8 @@ Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Of
 
 | Threat | Mitigation | Residual |
 |---|---|---|
-| Payer double-spends while offline | Pending tier, floor limit, final only when mined; escrow next | High at pending |
-| Gateway first-spy and trust point | Tor, fresh circuit per tx (mainnet); several gateways; PoW-validated headers from ≥2 sources | Medium |
+| Payer double-spends while offline | Pending tier with caps and the device-bound PaymentStatement; nullifier sharing inside a partition; final only when mined; nullifier-lock co-signer in v1.1 | High at pending; none for escrow notes while the co-signer is honest |
+| Gateway first-spy and chain-state liar | Tor, fresh circuit per tx; ≥ 2 gateways; PoW-validated headers, MMR anchor paths, txid branches, signed bundles; `checked (single-source)` with one gateway | Medium (first-spy); omitted conflicts remain undetectable from one source |
 | Fleet fingerprint (anchor, expiry, padding, uplink bursts) | Freshest anchor; one fleet expiry; standard 10,000-zat fee; 2-action padding; spread broadcasts | Medium |
 | Mesh topology and origin via stable peer IDs and announcements | Private messages only; same-size traffic | Medium–High (tiny set) |
 | Sybil/eclipse feeding fake chain data | Known peers; header validation; ≥2 gateways | Medium–High |
@@ -72,17 +75,20 @@ Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Of
 | Viewing-key exposure | Never share a UFVK; UIVK only for watch-only | Medium |
 | Operator legal exposure | Commodity hardware, anyone can be a gateway | Medium–High in hostile jurisdictions |
 
-### Assumptions: MVP v1 versus a real shutdown
+### Assumptions: harness versus the design target
 
-| Assumption | MVP v1 (local Regtest, 3 Macs) | Real shutdown on mainnet |
+The design is written for the right-hand column. The left-hand column says only what the harness can exercise.
+
+| Assumption | Harness (local Regtest, 4 Macs) | Mainnet (design target) |
 |---|---|---|
-| Payers are known and accountable | Holds (closed fleet) | Holds only inside a fleet; fails with strangers |
-| Gateway is honest | Holds (own laptop) | Fails: must assume ADV-G |
-| Gateway can reach the network | Holds (local chain) | Intermittent; Tor is often blocked in shutdowns, so the gateway may be exposed or absent |
+| Payers are known and accountable | Closed fleet | Holds only inside a fleet; fails with strangers |
+| Gateway is honest | The design does not assume it, here or on mainnet. The harness gateway is a Mac we control, so lying-gateway tests inject forged bundles deliberately | Assume ADV-G: every bundle fact verified; ≥ 2 gateways |
+| Proof of work on headers | Cannot be exercised: Regtest has `with_disable_pow(true)` (issue log #8). Checked with mainnet header vectors under the `regtest-no-pow` flag ([chain.md](components/chain.md)) | Equihash and difficulty against a pinned floor on every header the payee accepts |
+| Gateway can reach the network | Loopback to `ths` | Intermittent; Tor is often blocked in shutdowns, so the gateway may be exposed or absent |
 | Uplink comes before expiry | Holds | Often fails: a 3-day expiry is short against real outages (G8); re-issue needs the payer |
-| No radio adversary | Holds (BLE, one room) | Fails: ADV-L can locate and jam transmitters |
-| Anonymity set | Irrelevant (worthless coins) | Fleet users only; small |
-| Keys | Public dev keys (all-zero entropy) | Must be real seeds, hardware or FROST-held |
+| No radio adversary | BLE, one room | Fails: ADV-L can locate and jam transmitters |
+| Anonymity set | Worthless coins, so untested | Fleet users only; small |
+| Keys | Public dev keys (all-zero entropy, P8) | Real seeds, hardware or FROST-held |
 | Legal exposure | None | Operators may face money-transmission or radio charges |
 
 ## Open
@@ -98,6 +104,8 @@ Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Of
 ### Corrections to archive text
 
 - Report flow step 5 (intent fan-out to gateways) and research note §9 (signed intents gossiped mesh-wide) → payee only (P1).
-- Threat note "rotate peer IDs per session" vs report "stable `--nodekey`": both written for Logos; the BitChat demo keeps stable peer IDs and accepts the linkage (P5).
+- Threat note "rotate peer IDs per session" vs report "stable `--nodekey`": both written for Logos; the BitChat transport keeps stable peer IDs for now, a stated limitation (P5).
+- Report and MVP v1 design "gateway over Tor and PoW-validated headers in a later mainnet stage" → part of the design, with a build order (P3, P7; [gateway.md](components/gateway.md)).
 - Report and card note: hot list of payer keys → nullifiers only (P2).
 - Threat note §1 says NU7 "not yet active": NU7 is active from height 1 on the local chain and from 3,543,405 on mainnet.
+- This file, 25 October morning, P6 "FROST participants hold the escrow FVK": not required (R1, R2); the co-signer works from the sighash alone.

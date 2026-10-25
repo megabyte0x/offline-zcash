@@ -7,7 +7,7 @@ This repository holds research and, next, a proof of concept for offline Zcash p
 - **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
 - **After MVP v1: mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
-- **Platform order:** mobile (iOS first) unless something below becomes a blocker, in which case desktop first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target. The three-laptop demo (payer, payee, gateway) runs on three Macs with the BitChat fork; see `docs/components/transport-bitchat.md` for the transport rules.
+- **Platform order:** mobile (iOS first) unless something below becomes a blocker, in which case desktop first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target. The demo runs on four Macs with the BitChat fork: A payer, B payee, C co-signer and second payee (all offline), D gateway (online); see `docs/components/transport-bitchat.md` for the transport rules.
 - **Transport:** a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat). Logos nodes come later.
 
 ## thus-spoke-zakura issue log
@@ -50,6 +50,24 @@ Record every `ths` bug, missing feature or workaround here as you hit it, so it 
 - **Where:** `pub const DEFAULT_TX_EXPIRY_DELTA: u32 = 40;` in `zakura-primitives` 2.2.0, `crates/zcash_primitives/src/transaction/builder.rs` L54 ([zakura-core/common v2.2.0](https://github.com/zakura-core/common/blob/b6cf4cefe38fdccc6d2b0dc868f7d6ef01683413/crates/zcash_primitives/src/transaction/builder.rs)), which `ths` v0.4.1 pins. Common 4.0.0 raises the NU7 default to 120 blocks. At NU7's 25-second target, 40 blocks is about 17 minutes.
 - **Workaround:** the offline builder sets its own expiry from the fleet policy with `Builder::with_expiry_height`, or passes `Some(h)` to `create_proposed_transactions`.
 - **Upstream feature:** a configurable expiry delta on `ths wallet send` and the payment API, so long-expiry transactions can be tested without a separate builder.
+
+### 7. Externally submitted transactions are not mined automatically (behaviour to confirm)
+
+- **What:** the chain stayed at one height while idle after `sendrawtransaction`; `ths` appears to mine only on demand (`crates/ths-server/src/payments/attempt.rs` L83–97 at v0.4.1, and `ths mine`). A gateway that submits raw bytes must therefore also trigger `generate` or `ths mine` for the demo. [unverified: observed once on 2026-10-25, not reproduced deliberately]
+- **Workaround:** the gateway calls `ths mine` (or the `generate` RPC) after each submission.
+- **Upstream feature:** an optional auto-mine interval, or mining whenever the mempool is non-empty.
+
+### 8. Regtest headers have synthetic timestamps and no proof of work (limitation to document)
+
+- **What:** Zakura Regtest sets `with_disable_pow(true)` (`zakura-network/src/parameters/testnet.rs` L1424–1425 at `ebda15e`), so blocks carry all-zero 36-byte Equihash solutions and nonces, headers are 177 bytes (mainnet: 1,487), and block times start from a 2011 epoch. A payee cannot exercise proof-of-work or timestamp checks against this chain.
+- **Workaround:** the payee's Equihash/difficulty/timestamp check is disabled only under an explicit `regtest-no-pow` flag, which is itself tested with mainnet header vectors (a real header passes, a corrupted one fails); every other bundle check (MMR anchor paths, txid branches, conflict notices, two-gateway agreement, signatures) runs unchanged on Regtest. Never infer the network from the solution length ([docs/components/chain.md](docs/components/chain.md)).
+- **Upstream feature:** none expected; record so nobody tries to validate Regtest headers.
+
+### 9. No RPC returns a Merkle path or a list of recent roots (missing feature, Zakura)
+
+- **What:** `gettxoutproof` returns "Method not found"; nothing returns a ZIP 221 history-tree path, and the node keeps only MMR peaks (`zakura-state/src/service/finalized_state/history_tree.rs` L71–85, `prune()` L373–445). `z_gettreestate` gives one height's roots at a time and returns the Sapling root byte-reversed.
+- **Workaround:** the gateway rebuilds the history tree from `getblock h 0` plus `z_gettreestate` per height, persists the leaves, rebuilds after `ths reorg` / `ths rollback` and computes paths itself ([`poc/mmr-anchor-poc`](poc/mmr-anchor-poc/README.md)); for inclusion it builds the txid branch from `getblock h 1` and reads `authdigest` from verbose `getrawtransaction`. This is a gateway duty in the design ([docs/components/gateway.md](docs/components/gateway.md)), not a harness-only step.
+- **Upstream feature:** a Zakura RPC for a history-tree path at height N (or a leaf list), and a recent-anchors RPC. This is a Zakura issue rather than a `ths` one.
 
 ## Offline builder
 

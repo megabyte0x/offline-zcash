@@ -6,7 +6,7 @@ Nothing here is built or run. MVP transport: [../components/transport-bitchat.md
 
 ## Decided
 
-- [decided] Not in MVP v1 or v2. The three-Mac demo uses BitChat ([reconciliation §3–4](../../archive/reports/Design%20review%20reconciliation.md)).
+- [decided] Not in MVP v1 or at the mainnet launch. The four-Mac harness demo uses BitChat ([reconciliation §3–4](../../archive/reports/Design%20review%20reconciliation.md)).
 - [decided] Target `logosdeliverynode` from [logos-messaging/logos-delivery](https://github.com/logos-messaging/logos-delivery) **v0.39.2** (`fd07b72`), pinned exactly. v0.39.0 broke the binary name, env prefix (`WAKUNODE2_` → `LOGOS_DELIVERY_NODE_`) and C ABI.
 - [decided] An IP backbone (5 GHz PtP, HaLow, 802.11s/batman-adv), not LoRa, carries Logos. LoRa or QR carries only the raw tx bytes through an application bridge ([report: IP backbone](../../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md)).
 - [decided] Internet-free network: no preset, private `--cluster-id`, `--num-shards-in-network=1`, `--nodekey`, static `--entry-node` peers; discovery off; RLN off; Mix `None`.

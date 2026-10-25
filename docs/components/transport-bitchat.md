@@ -1,18 +1,19 @@
 # Transport: BitChat fork
 
-The MVP transport is a fork of BitChat on three Macs. A sends the finished transaction to B as a Noise-encrypted private message; B saves it and forwards it to C as a second private message; C submits it.
+The MVP transport is a fork of BitChat on four Macs. A sends the finished transaction to B as a Noise-encrypted private message; B saves it and forwards it to D (the gateway) as a second private message; D submits it.
 BitChat already has a sealed on-disk sender outbox for private messages, so B can be offline when A sends. It has no other delay-tolerant storage that suits a transaction, so the payee app must persist what it receives.
 System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md). Later transport: [../later/logos.md](../later/logos.md).
 
 ## Decided
 
-- [decided] Three Macs (macOS 13+), payer A, payee B, gateway C, each running a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat) at `04995f68`. iOS and macOS share one codebase, so the same fork later runs on iPhone (iOS 16+). There is no Linux, Windows or CLI client, which is why the laptops are Macs ([reconciliation G9](../../archive/reports/Design%20review%20reconciliation.md)).
+- [decided] Four Macs (macOS 13+): payer A, payee B, co-signer and second payee C (all offline), gateway D (online), each running a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat) at `04995f68`. iOS and macOS share one codebase, so the same fork later runs on iPhone (iOS 16+). There is no Linux, Windows or CLI client, which is why the laptops are Macs ([reconciliation G9](../../archive/reports/Design%20review%20reconciliation.md)).
 - [decided] The transaction goes **A → B as a private message**: base64 text, about 12.3 KB, under the 60,000-character message limit. Not a file, not a public broadcast.
 - [decided] B writes the transaction to its own storage **on receipt**, before confirming to A. BitChat keeps conversations in memory only.
-- [decided] B forwards the bytes to C as a **separate private message**. A packet addressed to B stops at B.
+- [decided] B forwards the bytes to D as a **separate private message**. A packet addressed to B stops at B.
 - [decided] Relays and the gateway never receive payment intent (invoice, amount, payer signature). Payment details travel only inside A's private message to B.
-- [decided] All three Macs use the **same build configuration** (all Debug or all Release), because Debug and Release use different BLE service UUIDs.
+- [decided] All four Macs use the **same build configuration** (all Debug or all Release), because Debug and Release use different BLE service UUIDs.
 - [decided] Txid is the transport identity. Resending the same bytes is harmless.
+- [decided] Application messages are BitChat private-message texts with an `ozc1:` prefix: `ozc1:pay:` (tx + PaymentStatement, A→B), `ozc1:rcpt:` (Receipt, B→A), `ozc1:evq:`/`ozc1:evr:` (evidence request and reply, later). Pending-nullifier shares go as **group messages** (`0x25`) to a fleet-payee group, `ozc1:nf:`. Formats in [pending-tier.md](pending-tier.md).
 
 ## Findings
 
@@ -70,6 +71,7 @@ Source: `permissionlesstech/bitchat@04995f68` (Swift, Unlicense), read in code. 
 - [unverified] Outbox behaviour across A's app restart, and the order in which retries fire after a peer reappears.
 - [unverified] Real one-hop and three-hop delivery time for the transaction ([MVP open check 9](../../archive/reports/MVP%20v1%20design.md)).
 - [unverified] Whether reassembly within the 30 s fragment timeout holds on a busy or marginal link.
+- [unverified] Group messages at `04995f68`: the `0x25` API, the 16-member roster, 6 h gossip retention (`GroupProtocol.swift` L350–510, `GossipSyncManager.swift` L73–94, `TransportConfig.swift` L391 as cited by R3), whether a 350–450 B group message reaches 15 peers within 5 s over BLE, and whether group messages are relayed across hops. Needed before the nullifier-sharing test.
 - Packet capture: no plaintext amounts, addresses or keys on the BLE link.
 
 ### Decisive test
@@ -80,8 +82,8 @@ Source: `permissionlesstech/bitchat@04995f68` (Swift, Unlicense), read in code. 
 | 2 | B saves the tx, then confirms to A | Confirmation arrives only after the tx is on B's disk |
 | 3 | A disappears (app quit, Bluetooth off) | Nothing lost at B |
 | 4 | B restarts | Tx still in B's own store (BitChat's memory timeline is gone) |
-| 5 | C appears later | B delivers the tx to C as a private message |
-| 6 | C submits to the local chain | Node accepts; tx mined |
+| 5 | D appears later | B delivers the tx to D as a private message |
+| 6 | D submits to the local chain | Node accepts; tx mined |
 | 7 | Confirmation returns over the mesh to B, then A | B marks final; A's outbox entry clears |
 
 Variant: B offline when A sends; A's outbox delivers when B appears (within 24 h and 8 attempts).
