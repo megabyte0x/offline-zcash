@@ -6,7 +6,7 @@
 
 Four nodes, each one runtime with our modules: **A** payer, **R** relay, **B** payee, **D** gateway with internet. A pays B offline over two hops (A–R–B). B checks and stores the payment, then sends a receipt to A. B forwards the transaction to D, which submits it to the local `ths` chain and mines it. D then sends the result back to A and B. No node except D reaches the internet or the chain.
 
-**Done when (v0.1.0):** the tests below pass with the modules running under `logosctl` on Linux. Macs, the `ui_qml` screens and Bluetooth come after (v0.2.0), unless the owner moves the line.
+**Done when (v0.1.0):** the tests below pass with the modules running under `logosctl` on Linux, and the same payment runs from the `zcash_offline_ui` screens in Basecamp (owner decision, 26 October 2026: the UI is inside v0.1.0). Macs and Bluetooth LE come after (v0.2.0).
 
 ## Scope
 
@@ -17,7 +17,7 @@ Four nodes, each one runtime with our modules: **A** payer, **R** relay, **B** p
 | PaymentStatement and Receipt signed with per-device Ed25519 keys; receipt only after fsync | Device-bound key storage (Keychain or Secure Enclave) |
 | Gateway: `sendrawtransaction`, `generate 1`, signed `res` with txid, height and block hash ("gateway-reported") | Signed chain bundle with MMR anchor paths and txid branch (open-work tasks 7–9), Tor |
 | `mesh_offlineprotocol` over `offline-protocol-service` (TCP peer streams) | Bluetooth LE, `mesh_delivery`, `ble_mesh_module`, phones |
-| Headless node binary, then the same code as Logos modules under `logosctl` | `zcash_offline_ui` and Basecamp on Macs |
+| Headless node binary, then the same code as Logos modules under `logosctl`; `zcash_offline_ui` in Basecamp on Linux | Basecamp on Macs |
 
 ## Design choices this plan makes (reversible)
 
@@ -36,6 +36,7 @@ crates/ozm-node/                   headless binary: roles A, R, B, D; fleet tool
 crates/mesh-offlineprotocol/       local-API client implementing the Transport trait
 logos/zcash_offline_module/        .lidl + Rust cdylib shell over the core (milestone 5)
 logos/mesh_offlineprotocol/        .lidl provider module over the adapter (milestone 5)
+logos/zcash_offline_ui/            ui_qml app over zcash_offline_module (milestone 6)
 bench/                             scripts that start the sidecars, nodes and checks
 ```
 
@@ -48,8 +49,9 @@ bench/                             scripts that start the sidecars, nodes and ch
 | 2 | Payee checks and records: parse at the NU7 branch, v6 and Ironwood-only, decrypt own output, batch-validate proofs and signatures, expiry margin, anchor known from B's last sync; PaymentStatement and Receipt; fsync-then-receipt store | this orb | B accepts milestone 1's bytes and refuses each tampered case with its reason code (open-work task 2, test 7 subset) |
 | 3 | Envelope and transport: `ozm1` encode, seal and dedup; `mesh-offlineprotocol` client; node roles and resend loop keyed by (txid, auth_digest); D submits, mines, signs `res` | this orb | Happy path runs end to end on loopback, four sidecars in an A–R–B–D chain |
 | 4 | Headless bench and tests (below) | this orb | Tests 1–7 pass; timings recorded in [logos-modules.md](logos-modules.md) |
-| 5 | Logos packaging: `.lidl` contracts through `lidl check`, `logos-module-builder` with `codegen.rust`, signed `.lgx`, offline `logosctl install`, four runtimes with `--config-dir`; resolve the open items on interface-bound events | **large orb** (Nix build needs about 12 GB) | Tests 1–3 pass again under `logosctl`; **v0.1.0** tagged |
-| 6 | `zcash_offline_ui` (`ui_qml`) and Basecamp on four Macs over Wi-Fi, then Bluetooth LE | owner's Macs | v0.2.0 |
+| 5 | Logos packaging: `.lidl` contracts through `lidl check`, `logos-module-builder` with `codegen.rust`, signed `.lgx`, offline `logosctl install`, four runtimes with `--config-dir`; resolve the open items on interface-bound events | **large orb** (Nix build needs about 12 GB) | Tests 1–3 pass again under `logosctl` |
+| 6 | `zcash_offline_ui` (`ui_qml`): Status, Pay, Payments, Receive and Settings screens ([logos-modules.md](logos-modules.md)); four Basecamp runtimes (`--user-dir`) in one desktop session | **large orb** | Test 1 run from the screens: Pay on A, the payment appears on B, and both end at `mined`; screenshots of each state; **v0.1.0** tagged |
+| 7 | Basecamp on four Macs over Wi-Fi, then Bluetooth LE | owner's Macs | v0.2.0 |
 
 Milestones 1–2 and the adapter half of 3 are independent and can run in parallel.
 

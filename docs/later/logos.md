@@ -1,12 +1,12 @@
 # Later: Logos phase (not MVP)
 
-After the BitChat MVP and mainnet, basecamps running Logos Delivery replace the Macs and BLE, and a logos-co Zebra module becomes the gateway.
+The Logos pathway is tried first; the BitChat pathway is the fallback if Logos cannot work at all. The two are independent, and a bridge between them is optional. Build plan: [logos-v0.1.0-plan.md](logos-v0.1.0-plan.md).
 Logos Delivery is a real-time, IP-only pub/sub network with bounded catch-up, not a delay-tolerant one, so multi-day partitions rest on long Store retention plus our own resend loop keyed by **(txid, auth_digest)**. A compatible v6 re-anchor keeps txid but changes authorizing bytes ([expiry/re-issue findings](../components/expiry-reissue.md)).
 Nothing here is built or run. MVP transport: [../components/transport-bitchat.md](../components/transport-bitchat.md). Gateway: [../components/gateway.md](../components/gateway.md).
 
 ## Decided
 
-- [decided] Not in MVP v1 or at the mainnet launch. The four-Mac harness demo uses BitChat ([reconciliation §3–4](../../archive/reports/Design%20review%20reconciliation.md)).
+- [decided, owner 26 October 2026] Two independent pathways. **Logos (first):** modified Basecamp or `logosctl` nodes with our Zcash module and its own UI, no BitChat on those machines. **BitChat (fallback):** used only if Logos cannot work at all; needing changes does not count. This supersedes "not in MVP v1; the four-Mac demo uses BitChat" ([reconciliation §3–4](../../archive/reports/Design%20review%20reconciliation.md)).
 - [decided] Target `logosdeliverynode` from [logos-messaging/logos-delivery](https://github.com/logos-messaging/logos-delivery) **v0.39.2** (`fd07b72`), pinned exactly. v0.39.0 broke the binary name, env prefix (`WAKUNODE2_` → `LOGOS_DELIVERY_NODE_`) and C ABI.
 - [decided] An IP backbone (5 GHz PtP, HaLow, 802.11s/batman-adv), not LoRa, carries Logos. LoRa or QR carries only the raw tx bytes through an application bridge ([report: IP backbone](../../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md)).
 - [decided] Internet-free network: no preset, private `--cluster-id`, `--num-shards-in-network=1`, `--nodekey`, static `--entry-node` peers; discovery off; RLN off; Mix `None`.
