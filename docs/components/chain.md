@@ -89,6 +89,14 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 
 - A non-standard fee is a fingerprint, so the whole fleet uses one value: whatever the wallet emits.
 
+### Stack compatibility (#7, 26 October)
+
+- **Measured:** official Zebra 7.0.0 (`e8db87e`) on a fresh NU7 Regtest accepted to its mempool, and mined at height 103, a Common 2.2.0 payer + 3-of-4 FROST 9,166-byte v6 spend (txid `72beac5d82834891b0d286a05af0272487774e3fe960519309476385e3bd49d7`). All 5 saved transactions verify identically under Common 2.2.0, Common 4.0 and Zebra's upstream crates (`orchard` 0.16, `zcash_primitives` 0.31, `zcash_protocol` 0.11), and corruptions are rejected. Weighted DKG passes all 5 valid signer subsets on both 2.2.0 and 4.0. Not tested: 4.0-built transactions mined, public networks. #7 research
+- **Testnet needs no library change:** Common 2.2.0 `TEST_NETWORK` already sets NU7 = 4,465,026 (`zcash_protocol/src/consensus.rs` L491–536 at `b6cf4ce`); only `MAIN_NETWORK` has `None`.
+- **4.0 migration:** Common 4.0, PCZT rc9, wallet clients rc9.3. FROST moves to `zakura-reddsa-frost` 4.0 (`pallas-pasta` feature), still frost-core 3.0. The `use_qsk` FVK helper stays ours. Default expiry changes 40 → 120, so keep the explicit fleet expiry and fee. Types from different families can't be mixed directly, but serialized transactions cross between them (measured).
+- **Testnet difficulty:** a block more than 450 s after its parent may use the PoW-limit difficulty (ZIP 218). The testnet verifier must allow that rule; testnet results never stand in for mainnet sampled-header security.
+- Testnet endpoints: prefer our own Zebra + lightwalletd; `testnet.zec.rocks:443` is the public fallback. Faucets `faucet.testnet.valargroup.dev` and `faucet.zecpages.com` (untested).
+
 ### Mainnet step
 
 - Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None`. Before mainnet, move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This is a library step, not a design change, and does not block the harness work.

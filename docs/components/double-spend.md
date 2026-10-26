@@ -50,12 +50,47 @@ Measured by the co-signer research; evidence `quorum-frost-evidence.tar.gz` is k
   - Head-start block probability 1 − e^(−Δ/T) is a lower bound on sweep success, not the success rate.
 - **Carriage time is A's window** (latency research): modelled, not measured, at roughly 1 h in a city, 5 h at 20 km rural, 1–2 days at 100 km in mountains, and 4+ days cross-country, and possibly never. Receipt-gated acceptance is practical only near a gateway.
 
+## Failure model (gate 1; written 26 October, reasoned, not yet tested)
+
+**Invariant.** For each escrow nullifier nf, at most one *payment family* ever gets a valid group signature. A family is one canonical effects payload: the same actions, flags, value balance, pool and format. Versions inside a family differ only in expiry or branch, and only within the lock's absolute fence. The invariant holds while **at most one** of the four co-signers is faulty. Any two quorums of 3 out of 4 share 2 co-signers, so at least one honest co-signer sits in both and refuses the second family.
+
+**What every co-signer must do:**
+- **Lock at round 2, not round 1.** Committing nonces in round 1 releases nothing. Before releasing its round-2 share, a co-signer runs one fsynced database transaction that does three things:
+  - a compare-and-set of `nf → family digest` for every spend in the PCZT;
+  - writes the absolute fence;
+  - marks the session nonce as consumed.
+
+  If any nf is locked to another family, it refuses.
+- **Never unlock.** Expiry, a timeout, a reorg, a restart or an operator request never remove a lock. A lock is 72 bytes per nf, so keeping them forever is cheap.
+- **Nonces are single-use and live only in memory.** A restart discards every unconsumed nonce, and the next request starts a new session. Persisted nonce state may only mark a nonce consumed, never restore it for use.
+- **Sign renewals only inside the family:** identical canonical effects, a new expiry at or below the fence, the fleet-configured branch, never expiry 0.
+- **Keep the share and lock store on the device.** Seal them with a key held `ThisDeviceOnly` in the keychain, wrapped by the Secure Enclave where available. Exclude them from backups.
+
+| Failure | What happens | Within the fault budget? |
+|---|---|---|
+| One co-signer lies (signs two families for one nf) | The other quorum still holds an honest member who refuses | Yes, f = 1 |
+| A co-signer is restored from a backup or cloned | Its old locks are gone, so it can sign again. **Counts as the one liar** | Uses up f; retire it (reconfiguration) |
+| Two co-signers faulty, or one liar plus one restored | Two families can get signatures; the chain mines one | **No.** Detected only on chain |
+| A + 2 co-signers collude | A double-spend is possible | **No.** Same bound |
+| Crash after fsync, before sending the share | The lock exists and nothing escaped. The same family is re-signed in a new session | Yes |
+| Crash before fsync | Nothing locked, nothing released | Yes |
+| Two concurrent requests for one nf | The compare-and-set serialises them; the second family is refused | Yes |
+| A splits the first votes (C1 and C2 lock P1, C3 and C4 lock P2) | Neither family reaches 3, so the note is stuck forever | Hurts only A; accepted |
+| 1 co-signer offline | The other 3 sign | Yes |
+| 2 co-signers offline | Escrow notes can't be spent; ordinary notes fall back to pending or receipt-gated | Accepted; availability only |
+| A loses all 4 shares | Funds are lost unless A backed up its shares (allowed; useless without a quorum) | Accepted |
+| A retired co-signer keeps its old share | Refresh and repair don't revoke it, so it is a potential liar until the notes move | Replacement means sweeping every escrow note to a new group key online |
+| A fake group key (A alone controls Y) | B's `rk` check would pass | B accepts Y only with a certificate signed by all 4 co-signers' enrolled payment keys at DKG |
+| A malicious α or coordinator | Open: randomizer gate (Open 2) | Unverified |
+
+**Evidence.** Two mined spends of one nf under the group key show that the threshold was broken. FROST aggregates hide *which* co-signers signed. So for attribution each co-signer keeps, with its lock, a signed record of the family it approved. A co-signer that holds no record for a mined family wasn't part of that quorum.
+
 ## Open
 
-1. **Before any safety claim:** a written co-signer failure model covering rollback, cloning, concurrent sessions, ambiguous crashes, nonce persistence and reconfiguration, plus crash tests showing no second release.
+1. **Before any safety claim:** the failure model above (written 26 Oct) must be tested: kill between fsync and release (no second release, no nonce reuse), concurrent requests for one nf, a restored co-signer treated as retired, and B rejecting an uncertified group key.
 2. **Randomizer:** review of payer-chosen α against Re-Randomized FROST ([ePrint 2024/436](https://eprint.iacr.org/2024/436)). Deprecation is not a forgery finding, but fixed-α same-proof renewal stays a gate. Don't copy draft DKG `sk=ext`.
 3. **Reconfiguration** [proposed]: replacing a lost co-signer. Share repair and refresh keep the group key but neither moves locks nor revokes old shares, so retiring a co-signer means sweeping escrow notes online to a new group key. A may back up its own shares; they are useless without a quorum. Losing all of A's shares with no backup is unrecoverable. This replaces the old v1.2 options (fenced cold share, tlock).
 4. Escrow FVK against ZIP 2005 `use_qsk` vectors; `Signer::new` on a redacted PCZT; payee policy checks for real, dummy and mixed inputs.
 5. Group size, co-signer enrollment and placement per town; mesh and phone timing for one co-signing round.
-6. Harness layout [decided 26 Oct]: 4 co-signer processes on the four Macs, two on one Mac for the demo only.
+6. Harness layout [decided 26 Oct]: 4 co-signer processes on B, C (two) and D; A is never its own co-signer. Demo only.
 7. Expiry/renewal and reorg gates from [expiry-reissue.md](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research), now with the group.

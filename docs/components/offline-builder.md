@@ -67,6 +67,14 @@ Import under the upstream names, as `ths` does, for example `zcash_primitives = 
 - **Logos wallet core does not fit as the builder:** it signs and broadcasts in one job, exports no raw bytes or PCZT, hard-codes expiry, and uses upstream crates ([gateway.md](gateway.md#logos-phase-facts); [logos_zcash_modules.md §5](../../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/logos_zcash_modules.md)).
 - **Hardware signers** give no double-spend protection, because the seed can be restored on a second device ([report, Ironwood section](../../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md)).
 
+### Notes, phone cost and bindings (#8, decided 26 October: 32-note harness inventory, foreground-only proving and co-signing on iOS)
+
+- **Notes, not proving speed, limit offline payments.** Proposed starting inventory (Regtest, illustrative): 32 notes: 16 × 0.0501 and 8 × 0.2001 ZEC under the payer key, 4 × 0.5001 and 4 × 1.0001 under the group key. Each note includes 10,000 zats for one payment's fee. That is up to 24 pending-tier and 8 escrow one-note payments. Use the smallest sufficient note, at most 2 inputs, always 2 actions (Common 2.2.0 `orchard/src/builder.rs` L38–149). Fund, split, confirm and keep witnesses before going offline. When notes run out, stop paying; never spend unmined change. #8 research
+- The 21-day expiry is carriage lifetime, not 21 days of new payments: 30-minute freshness and the 100-block anchor window still apply, and the mesh witness-update protocol is open.
+- **Measured on the orb** (2-vCPU Xeon, warm, Common 2.2.0): two-action proof 675 ms (peak RSS 99.8 MiB), four-action proof 1.19 s, verify 11.5 ms. Proving key build 387 ms, verifying key build 214 ms. Projections only: Apple Silicon Mac 0.5–2 s, recent iPhone 1–5 s per proof; budget 256 MiB working memory. No Apple hardware measured.
+- **Bindings:** one Rust `staticlib` plus a thin Swift wrapper. It exposes prepare/prove/finalize, verify payment and chain evidence, FROST rounds and fixed-policy PCZT redaction. Secrets, nonces and reservations stay in Rust. Stripped Linux binary 8.6 MiB. `cargo check` for iOS and macOS fails in `zakura-pasta-curves` without an Apple toolchain; it needs a Mac build.
+- iOS runs co-signing in the foreground; background BLE carriage is best-effort (about 10 s per BLE wake).
+
 ## Open
 
 - [unverified] Production offline app plus separate payee process and wallet-DB path. Scratch direct-path compilation/mining and 9,166-byte v6 shape are established; they do not implement the end-to-end app.

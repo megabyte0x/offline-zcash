@@ -78,6 +78,7 @@ Stages are a build order. Every stage is designed for mainnet and run on the har
 | MVP v1 | Harness (local NU7 chain, ths v0.4.1) | Everything above: pending tier with PaymentStatement, Receipt, nullifier sharing, gateway mempool receipt. Chain-state checks in three steps: (1) signed bundle format with every slot, anchor-in-window, expiry margin, txid branch, MMR anchor verifier; (2) Equihash/difficulty checker with the pinned floor and mainnet header vectors; (3) two-gateway agreement and `checked (single-source)` degradation. Tor submission path after loopback works |
 | MVP v1.1 | Harness | Co-signer group (payer + 3-of-4); escrow notes; bilateral configuration |
 | MVP v1.2 | Harness | Co-signer reconfiguration: replace a lost co-signer by sweeping escrow notes to a new group key (proposed) |
+| Public testnet | Testnet, NU7 from height 4,465,026 | Move once to Common 4.0 (PCZT rc9, clients rc9.3, `zakura-reddsa-frost`) before this stage. Same rules as the harness and mainnet; only difference is the testnet minimum-difficulty rule (block > 450 s after its parent) in the header verifier. Own Zebra + lightwalletd gateway node |
 | Mainnet launch | Mainnet, NU7 from height 3,543,405 | Library step only: Zakura Common 4.x or custom mainnet params; public endpoints over Tor; `regtest-no-pow` off; real ZEC, each send approved. No design change (the earlier "MVP v2" row that deferred Tor and header validation to this stage is superseded) |
 | Logos phase | Mainnet | Basecamps and Logos Delivery; Zebra module as gateway; quorum committees |
 

@@ -22,7 +22,7 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 | P8 | ths dev accounts derive from all-zero entropy (`schema.rs` L42), so their keys are public | Fine for Regtest; never hold real value with them [decided] |
 | P9 | Pending-nullifier sharing lets every fleet payee learn which payee received each pending payment and when, and, once mined, link that payee to the on-chain tx. Amounts stay hidden | Accept inside a closed fleet only; payload carries txid, expiry and nullifiers, never payer or amount ([pending-tier.md](components/pending-tier.md)) [decided] |
 | P10 | Each consulted co-signer of the group (≥ 3 per payment) learns which txids are the payer's (nullifiers, `rk`, `cv`, `cmx`, ciphertexts, expiry, timing) and holds partial spending authority over escrow notes | Accept for v1.1; it sees no amounts, recipients or FVK. In the demo the co-signer is a separate offline Mac, not the gateway ([double-spend.md](components/double-spend.md)) [decided] |
-| P12 | Gateway acks are broadcast mesh-wide (owner, 26 Oct): every device in range learns each txid, its auth digest and status **before mining**, and can tie that on-chain transaction to this area and time. Amounts and parties stay hidden | Accepted for MVP; random `request_nonce` hides the submitter; revisit with #6 fleet fingerprint |
+| P12 | Gateway acks are broadcast mesh-wide (owner, 26 Oct): every device in range learns each txid, its auth digest and status **before mining**, and can tie that on-chain transaction to this area and time. Amounts and parties stay hidden | Accepted for MVP and testnet as the least-work option (owner, 26 Oct). **Mainnet gate:** encrypt `ack`/`cnf` to a fleet key, keep `tip` public (#6 option B) |
 | P11 | The payer's device-bound payment key and `seq` give every payee a stable identity and a running count of the payer's offline payments | Accept inside the fleet (P2); the count can reset per enrollment [decided] |
 
 ## Findings
@@ -91,6 +91,12 @@ The design is written for the right-hand column. The left-hand column says only 
 | Anonymity set | Worthless coins, so untested | Fleet users only; small |
 | Keys | Public dev keys (all-zero entropy, P8) | Real seeds, hardware or FROST-held |
 | Legal exposure | None | Operators may face money-transmission or radio charges |
+
+### Fleet fingerprint (#6, 26 October)
+
+- **On chain:** the 72,576-block expiry and old anchors mark a *delayed-payment class*, not this fleet specifically. Expiry is an absolute height, so knowing the policy reveals the build height (E − 72,576). These avoidable markers are already ordinary, so keep them: `lock_time` 0, minimum-2 padding (4 of 7 sampled Ironwood-only mainnet txs were 2 actions / 9,166 B / 10,000 zats), conventional ZIP 317 fee, freshest verified anchor. FROST adds no on-chain marker (normal 64-byte signature, rerandomized `rk`). Repairs reuse nullifiers, so anyone who sees both versions can link them; the canonical chain shows only the winner. #6 research
+- **Mesh:** plaintext broadcast `ack`/`cnf` (P12) give a local observer an exact txid/nullifier ↔ mesh place and time link before mining, which is worse than any on-chain marker. Generic `tip` broadcasts reveal only gateway presence and freshness. BitChat's outer group `senderID` is claimed, unsigned and not bound to the inner author (`BLEService.swift` L2830–2855 at `04995f68`).
+- Anonymity set: about 4.17 M ZEC was in Ironwood at height 3,531,315 (ZecBlock, 26 Oct). That is money, not users. No post-NU7 user estimate exists; measure before mainnet, with no numeric anonymity promise now.
 
 ## Open
 

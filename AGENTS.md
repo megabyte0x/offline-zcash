@@ -5,7 +5,8 @@ This repository holds research and, next, a proof of concept for offline Zcash p
 ## Current target
 
 - **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
-- **After MVP v1: mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
+- **After MVP v1: public testnet, then mainnet.** Testnet activates NU7 at **4,465,026** with the same branch ID and runs the same rules, except the header verifier allows the testnet minimum-difficulty rule (ZIP 218: a block more than 450 s after its parent). Move the builder to Common 4.0 once, before testnet; stay on 2.2.0 for MVP v1. Run our own Zebra + lightwalletd gateway node on testnet.
+- **Mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
 - **Platform order:** laptops first for the current experiments, then mobile. iOS and Android are both candidates for the first phone target; the owner said (26 October 2026) that iOS is not necessarily first. BitChat's iOS and macOS apps share one codebase, so a Mac is the fallback test target. The demo runs on four Macs with the BitChat fork: A payer, B payee, C co-signer and second payee (all offline), D gateway (online); see `docs/components/transport-bitchat.md` for the transport rules.
 - **Transport:** a fork of [permissionlesstech/bitchat](https://github.com/permissionlesstech/bitchat). Logos nodes come later.
@@ -104,7 +105,7 @@ Limits to respect:
 - Spending change that has not been mined is not supported (`zakura-client-backend` rc7 `wallet.rs` L1414–1418), so chained offline payments wait for each parent to be mined.
 - `DeferredPcztBuilder` (sign before choosing the anchor) exists and accepts v6 only.
 - No Swift or uniffi bindings exist; the iOS wrapper is our own.
-- **Mainnet step:** Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None`. Before mainnet, either move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This does not block MVP v1.
+- **Mainnet step:** Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None` (its `TEST_NETWORK` already has NU7 at 4,465,026). Before mainnet, either move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This does not block MVP v1.
 
 ## Agent skills
 

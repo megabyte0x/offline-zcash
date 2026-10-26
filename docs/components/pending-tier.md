@@ -135,7 +135,8 @@ Initial values, **provisional** until measured and owner-approved; on the harnes
 
 | Parameter | Value | Why |
 |---|---|---|
-| Floor F | 0.5 ZEC per payment | A 0.6 ZEC request shows a refusal |
+| Floor F | 0.5 ZEC per payment; a payment **≥ F** needs escrow (decided 26 Oct) | A 0.6 ZEC request shows a refusal |
+| Escrow cap | 3.0 ZEC outstanding per payee from escrow payments (decided 26 Oct) | Limits damage if the co-signer group is broken |
 | Per-payer outstanding count C | 3 | EMV UCOL-style cap; a 4th payment is refused |
 | Per-payer outstanding value V | 1.0 ZEC | 3 × 0.3 passes; a 4th fails |
 | Payee total outstanding T | 3.0 ZEC over all payers | Payee's appetite |

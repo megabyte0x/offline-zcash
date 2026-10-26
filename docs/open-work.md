@@ -13,9 +13,9 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 | 3 | Transaction expiry and re-issue | **Decided 26 Oct** for a minimal build (10 and B-initiated repair deferred); not implemented ([expiry-reissue](components/expiry-reissue.md)) |
 | 4 | Gateway protocol | **Spec v1 written 26 Oct** ([gateway Protocol v1](components/gateway.md#protocol-v1-owner-decisions-26-october-byte-layouts-proposed-not-implemented)): anyone submits, tip/conflicts broadcast mesh-wide, pulled catch-up; timing, PMv2, Tor isolation, limits and forwarding wording decided; header delivery = sampled proofs (heuristic, λ 64, 100-header suffix, post-NU7 checkpoint), byte layout still to write; must also run on public testnet; bundle/receipt wire encoding, signature coverage, retries/idempotency and lag/fork handling; also how one gateway orders and submits many payers' transactions arriving together (A→B, Y→Z) while each faces its own online-sweep race, which is not yet researched ([gateway](components/gateway.md)) |
 | 5 | BitChat durability | **Decided 26 Oct:** `privateMessageV2` (≤44,000 B), gateway broadcast type, app retry queue, A and B both submit ([transport-bitchat](components/transport-bitchat.md)); fork patch and BLE tests remain; [Offline Protocol](https://www.offlineprotocol.com/docs/tech/networking) 0.30 evaluated 26 Oct: **stay on the BitChat fork for MVP** (Swift package iOS-only, custody refuses DMs, forged-ACK risk R10, AGPL/commercial); optional later Wi-Fi/gateway experiment (research) ([transport-bitchat](components/transport-bitchat.md)) |
-| 6 | Fleet fingerprint | Next after #5: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
-| 7 | Stack compatibility | Next after #6: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
-| 8 | Offline limits and phone proving cost | Next after #7: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
+| 6 | Fleet fingerprint | **Researched 26 Oct:** keep expiry, immediate send and standard tx shape; P12 plaintext acks kept for MVP/testnet (least work), encryption is a mainnet gate ([privacy-and-threats](privacy-and-threats.md)); was: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
+| 7 | Stack compatibility | **Gate 5 passed 26 Oct** on Zebra 7 regtest; decided: stay on 2.2.0 for MVP, move to Common 4.0 once before public testnet ([chain](components/chain.md)); was: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
+| 8 | Offline limits and phone proving cost | **Decided 26 Oct** (32-note inventory, ≥ floor needs escrow, 3 ZEC escrow cap per payee, foreground-only on iOS, co-signers on B/C/D; [offline-builder](components/offline-builder.md)); was: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
 | 9 | Policy values | Next after #8: measured exposure, freshness, anchor window, confirmations and loss appetite ([pending-tier](components/pending-tier.md)) |
 
 ### Decided 26 October (minimal build)
@@ -23,7 +23,7 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 - **#3:** proposals 1 (shutdown profile, 72,576 blocks), 2, 3, 5–9, 11, 12 accepted; 4 for A's automatic re-issue only; 10 and B's `ozc1:rq:` deferred; 13 rejected ([expiry-reissue](components/expiry-reissue.md#proposals-and-owner-decisions-26-october)).
 - **#2 leftovers:** counters reset at `confirmed` (10) on both networks; `checked (single-source)` is Receipt state bit 0x80 ([pending-tier](components/pending-tier.md)).
 - **Delivery:** gateways at hubs plus app copies, no carrier protocol yet. **Demo:** 4 co-signer processes across the four Macs, two on one Mac for the demo only.
-- Before **co-signer safety claims**, write the group's failure model and resolve the randomizer / DKG gates ([double-spend Open](components/double-spend.md#open)).
+- Before **co-signer safety claims**, test the group's [failure model](components/double-spend.md#failure-model-gate-1-written-26-october-reasoned-not-yet-tested) (written 26 Oct) and resolve the randomizer / DKG gates ([double-spend Open](components/double-spend.md#open)).
 
 ## Build MVP v1 (in order)
 
@@ -58,7 +58,7 @@ The Regtest harness has no proof of work, so only the Equihash/difficulty/timest
 2. Deliberate conflicting spend: B reports "conflicted", not "final". ([double-spend](components/double-spend.md))
 3. A sends to B → B confirms only after saving → A disappears → B restarts → D appears later → B delivers, D submits, confirmation returns. ([transport-bitchat](components/transport-bitchat.md))
 4. Packet capture: no plaintext amounts, payees or keys on the mesh. ([privacy-and-threats](privacy-and-threats.md))
-5. Same tx bytes accepted by Zebra 7, not only Zakura. ([chain](components/chain.md))
+5. Same tx bytes accepted by Zebra 7, not only Zakura. **Passed 26 Oct (scoped):** official Zebra 7.0.0 (`e8db87e`) fresh NU7 Regtest; a Common 2.2.0 payer + 3-of-4 FROST 9,166-byte v6 spend (txid `72beac5d…49d7`) was accepted to the mempool and mined at 103 (#7 research). Public testnet and mainnet untested. ([chain](components/chain.md))
 6. BitChat delivery time for a 9,166-byte tx plus statement (base64 ≈ 12.7 KB) over 1 and 3 hops. ([transport-bitchat](components/transport-bitchat.md))
 7. A statement with a wrong `auth_digest`, wrong amount, replayed `seq` or non-fleet fee is refused with the right reason code; a receipt is sent only after the payee's store is fsynced. ([pending-tier](components/pending-tier.md))
 8. **New-payment acceptance** anchors inside/outside the provisional 100-block window: accept/refuse with reason 6. Not a consensus age bound; test existing-family historical-root renewal separately after #3 approval. ([payee-verifier](components/payee-verifier.md))
