@@ -2,7 +2,8 @@
 //!
 //! `run_link` works on any `AsyncRead + AsyncWrite` stream and talks to the node only through
 //! `Node::link_up`, `Node::on_link_msg` and `Node::link_down`. The TCP listener and dialer below are
-//! the only transport today; a LAN-discovery or BLE link would add its own way to obtain a stream.
+//! the only transport today; LAN discovery (`discovery.rs`) finds peers and dials them with
+//! `dial_once`. A BLE link would add its own way to obtain a stream.
 
 use std::{
     collections::HashMap,
@@ -80,20 +81,32 @@ pub(crate) async fn dial_forever(target: String, node: Arc<Node>) {
             time::sleep(Duration::from_millis(500)).await;
             continue;
         }
-        match time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target.as_str())).await {
-            Ok(Ok(stream)) => {
-                stream.set_nodelay(true).ok();
-                let out = run_link(stream, true, &node).await;
-                last_peer = out.peer.or(last_peer);
-                if out.accepted {
-                    backoff = MIN_BACKOFF;
-                }
+        if let Some(out) = dial_once(&target, &node).await {
+            last_peer = out.peer.or(last_peer);
+            if out.accepted {
+                backoff = MIN_BACKOFF;
             }
-            Ok(Err(e)) => debug!(%target, error = %e, "dial failed"),
-            Err(_) => debug!(%target, "dial timed out"),
         }
         time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// One dial attempt; runs the link until it ends. `None` if the connection failed.
+pub(crate) async fn dial_once(target: &str, node: &Arc<Node>) -> Option<Outcome> {
+    match time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target)).await {
+        Ok(Ok(stream)) => {
+            stream.set_nodelay(true).ok();
+            Some(run_link(stream, true, node).await)
+        }
+        Ok(Err(e)) => {
+            debug!(%target, error = %e, "dial failed");
+            None
+        }
+        Err(_) => {
+            debug!(%target, "dial timed out");
+            None
+        }
     }
 }
 

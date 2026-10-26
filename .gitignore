@@ -2,3 +2,4 @@
 .amp/portals/*
 target/
 bench/.state/
+bench/.state-lan/

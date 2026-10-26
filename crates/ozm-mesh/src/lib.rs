@@ -4,6 +4,7 @@
 //! Each node listens and/or dials its neighbours; the network (for example Docker networks)
 //! decides who is a neighbour. See `README.md` for the wire format and semantics.
 
+mod discovery;
 mod ids;
 mod link;
 mod node;
@@ -38,6 +39,28 @@ pub struct MeshConfig {
     pub store_ttl: Duration,
     /// JSON file for the store-and-forward cache and seen/acked ids; `None` keeps them in memory.
     pub store_path: Option<PathBuf>,
+    /// LAN peer discovery over UDP beacons; `None` (the default) only uses `listen` and `dial`.
+    pub discovery: Option<Discovery>,
+}
+
+/// LAN peer discovery: beacons to `239.255.77.77:port` and `255.255.255.255:port`, and a dial to
+/// every node of the same fleet tag that is heard. See `README.md`.
+#[derive(Clone, Debug)]
+pub struct Discovery {
+    /// UDP port for beacons (default 7778); every node of a fleet uses the same port.
+    pub port: u16,
+    /// Fleet tag: only nodes with the same tag connect to each other.
+    pub tag: [u8; 8],
+    /// Beacon period (default 2 s).
+    pub interval: Duration,
+    /// TCP port to advertise; default is the bound listen port (none: a dial-only node).
+    pub advertise_port: Option<u16>,
+}
+
+impl Default for Discovery {
+    fn default() -> Self {
+        Discovery { port: 7778, tag: [0; 8], interval: Duration::from_secs(2), advertise_port: None }
+    }
 }
 
 impl Default for MeshConfig {
@@ -51,6 +74,7 @@ impl Default for MeshConfig {
             frame_delay: Duration::ZERO,
             store_ttl: Duration::from_secs(24 * 60 * 60),
             store_path: None,
+            discovery: None,
         }
     }
 }
@@ -81,6 +105,8 @@ pub struct MeshStats {
     /// Packets currently held for store-and-forward (messages, broadcasts, acks).
     pub stored: usize,
     pub neighbors: usize,
+    /// Same-fleet peers whose discovery beacon was heard in the last 3 intervals.
+    pub discovered: usize,
 }
 
 /// Cloneable handle to a running mesh node.
@@ -94,6 +120,9 @@ impl Mesh {
     pub async fn start(cfg: MeshConfig) -> Result<(Mesh, mpsc::Receiver<MeshEvent>)> {
         ensure!((1..=u16::MAX as usize).contains(&cfg.mtu), "mtu must be 1..=65535");
         ensure!(cfg.default_ttl >= 1, "default_ttl must be at least 1");
+        if let Some(d) = &cfg.discovery {
+            ensure!(!d.interval.is_zero(), "discovery interval must be positive");
+        }
         let db = match &cfg.store_path {
             Some(path) => persist::load(path)?,
             None => persist::Db::default(),
@@ -116,6 +145,7 @@ impl Mesh {
         });
 
         let dial = cfg.dial.clone();
+        let discovery = cfg.discovery.clone();
         let node = Arc::new(Node::new(cfg, db, utx));
         info!(peer = %node.me, listen = ?listen_addr, ?dial, "mesh started");
         if let Some(l) = listener {
@@ -123,6 +153,10 @@ impl Mesh {
         }
         for target in dial {
             node.spawn(link::dial_forever(target, node.clone()));
+        }
+        if let Some(d) = discovery {
+            let port = d.advertise_port.or(listen_addr.map(|a| a.port())).unwrap_or(0);
+            discovery::start(d, port, listen_addr.map(|a| a.ip()), node.clone());
         }
         let n = node.clone();
         node.spawn(async move {
@@ -149,6 +183,12 @@ impl Mesh {
     /// Currently connected neighbours, sorted.
     pub fn neighbors(&self) -> Vec<PeerId> {
         self.node.neighbors()
+    }
+
+    /// Same-fleet peers heard through discovery in the last 3 beacon intervals, with the address
+    /// they can be dialed at (beacon source IP, advertised TCP port), sorted by PeerId.
+    pub fn discovered(&self) -> Vec<(PeerId, SocketAddr)> {
+        self.node.discovered()
     }
 
     pub fn peer_id(&self) -> PeerId {

@@ -22,3 +22,9 @@ Knobs: `FRAME_DELAY_MS` (default 20 ms per 512-byte frame, emulating BLE) and `A
 Talk to a device: `docker exec ozm-A ozm-node status | payments | events`, and `docker exec ozm-A ozm-node pay --to B --amount 0.05`.
 
 Evidence after a run is in `bench/.state/`: `results.jsonl`, `<device>.log`, `<device>/events.jsonl`, and `R/cap.pcap` (the capture checked by test 6).
+
+## LAN bench (v0.2.0)
+
+`bench/lan-bench.sh all` runs the tester path. Four devices `join` their invites and `start` on one internal Docker network (`ozm-lan`) with LAN discovery and no `--dial`. Only D, which is also on `ths-default`, reaches the chain. The checks cover discovery, sync and test funds over the mesh, paying, spending received funds, and rediscovery after a restart.
+
+Docker does not publish ports for containers that sit only on an internal network. Open A, B and C by container IP (`docker inspect lan-A -f '{{(index .NetworkSettings.Networks "ozm-lan").IPAddress}}'`, port 7780) or with `docker exec lan-A ozm-node status`. D's UI is on `127.0.0.1:7794`.

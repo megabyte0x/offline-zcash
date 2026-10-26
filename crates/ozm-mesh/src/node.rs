@@ -3,11 +3,12 @@
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
+    net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, ensure, Result};
@@ -64,13 +65,15 @@ pub(crate) struct Node {
     state: Mutex<State>,
     tasks: Mutex<Vec<AbortHandle>>,
     next_link_id: AtomicU64,
+    /// Discovery beacons heard: peer -> (dial address, last heard).
+    discovered: Mutex<HashMap<PeerId, (SocketAddr, Instant)>>,
 }
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -85,6 +88,7 @@ impl Node {
             state: Mutex::new(State { links: HashMap::new(), db, events: Some(events) }),
             tasks: Mutex::new(Vec::new()),
             next_link_id: AtomicU64::new(1),
+            discovered: Mutex::new(HashMap::new()),
         }
     }
 
@@ -132,6 +136,22 @@ impl Node {
         lock(&self.state).links.contains_key(&peer)
     }
 
+    /// Records a same-fleet discovery beacon.
+    pub fn heard(&self, peer: PeerId, addr: SocketAddr) {
+        lock(&self.discovered).insert(peer, (addr, Instant::now()));
+    }
+
+    /// Peers heard in the last 3 discovery intervals, sorted.
+    pub fn discovered(&self) -> Vec<(PeerId, SocketAddr)> {
+        let Some(d) = &self.cfg.discovery else { return Vec::new() };
+        let window = d.interval.saturating_mul(3).max(Duration::from_millis(1));
+        let mut map = lock(&self.discovered);
+        map.retain(|_, (_, at)| at.elapsed() < window);
+        let mut v: Vec<_> = map.iter().map(|(p, (a, _))| (*p, *a)).collect();
+        v.sort();
+        v
+    }
+
     pub fn stats(&self) -> MeshStats {
         let (stored, neighbors) = {
             let st = lock(&self.state);
@@ -149,6 +169,7 @@ impl Node {
             messages_delivered: get(&c.messages_delivered),
             stored,
             neighbors,
+            discovered: self.discovered().len(),
         }
     }
 

@@ -21,6 +21,14 @@ pub enum Body {
     /// result (a shielded transaction does not reveal payer or payee).
     Sub { tx: Vec<u8>, txid: String, notify: Vec<String> },
     Res(Signed<GatewayResult>),
+    /// v0.2.0: ask a gateway for blocks after `have` (height, hash) so a device with no internet can sync.
+    SyncReq { have_height: u32, have_hash: String },
+    /// v0.2.0: blocks from the gateway. `reset` means the requester's view is off the gateway's chain
+    /// (reorg) and the blocks start at height 1. More blocks follow while `chain_tip` is above the last one.
+    SyncRes { reset: bool, prev_hash: String, blocks: Vec<crate::wallet::BlockData>, chain_tip: u32 },
+    /// v0.2.0: ask a Regtest gateway for test funds, as `notes` notes of `amount_each` zatoshis.
+    FundReq { notes: u32, amount_each: u64 },
+    FundRes { ok: bool, detail: String },
 }
 
 impl Body {
@@ -30,6 +38,10 @@ impl Body {
             Body::Rcpt(_) => "rcpt",
             Body::Sub { .. } => "sub",
             Body::Res(_) => "res",
+            Body::SyncReq { .. } => "syncq",
+            Body::SyncRes { .. } => "syncr",
+            Body::FundReq { .. } => "fundq",
+            Body::FundRes { .. } => "fundr",
         }
     }
 }

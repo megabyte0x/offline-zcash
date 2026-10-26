@@ -40,7 +40,8 @@
     <h2>Wallet</h2>
     <div class="big" id="bal">…</div>
     <div class="mut" id="wal"></div>
-    <button id="syncb">Sync now (needs internet)</button>
+    <button id="syncb">Sync now</button>
+    <button id="fundb">Get test funds from the gateway (5 × 0.1 ZEC)</button>
     <div class="mut" id="syncmsg"></div>
   </section>
   <section>
@@ -85,7 +86,8 @@ async function refresh() {
     $('bal').textContent = zec(s.wallet.spendable);
     $('wal').textContent = `locked in pending payments: ${zec(s.wallet.locked)} · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
     $('addr').textContent = s.address || '';
-    $('syncb').style.display = s.online ? '' : 'none';
+    $('syncb').textContent = s.online ? 'Sync now (from the node)' : 'Sync now (from a gateway over the mesh)';
+    $('fundb').style.display = s.online ? 'none' : '';
     $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored}`;
     if (!fleetLoaded) {
       const f = await api('/api/fleet');
@@ -108,9 +110,15 @@ $('payb').onclick = async () => {
 };
 $('syncb').onclick = async () => {
   $('syncb').disabled = true; $('syncmsg').textContent = 'Syncing…';
-  try { const r = await api('/api/sync', {}); $('syncmsg').textContent = `Synced to ${r.tip}, ${r.new_notes} new notes`; }
+  try { const r = await api('/api/sync', {}); $('syncmsg').textContent = r.requested_from ? `Asked ${r.requested_from} for blocks; balance updates when they arrive` : `Synced to ${r.tip}, ${r.new_notes} new notes`; }
   catch (e) { $('syncmsg').textContent = e.message; }
   $('syncb').disabled = false; refresh();
+};
+$('fundb').onclick = async () => {
+  $('fundb').disabled = true; $('syncmsg').textContent = 'Asking the gateway for test funds…';
+  try { const r = await api('/api/fund', { notes: 5, amount: '0.1' }); $('syncmsg').textContent = `Asked ${r.requested_from}; funds arrive after they are mined (about a minute)`; }
+  catch (e) { $('syncmsg').textContent = e.message; }
+  $('fundb').disabled = false;
 };
 refresh(); setInterval(refresh, 2000);
 </script>

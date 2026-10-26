@@ -19,7 +19,7 @@ pub const MAGIC: &[u8; 4] = b"ozm1";
 pub const VERSION: u8 = 1;
 pub const PAD: usize = 4096;
 /// Largest plaintext accepted (protects against memory abuse).
-pub const MAX_PLAINTEXT: usize = 64 * 1024;
+pub const MAX_PLAINTEXT: usize = 512 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Inner {

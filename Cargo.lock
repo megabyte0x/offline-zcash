@@ -1119,6 +1119,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "incrementalmerkletree"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1319,20 +1329,22 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "ozm-mesh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hex",
+ "if-addrs",
  "rand 0.8.8",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "ozm-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2573,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "zcash-offline-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",

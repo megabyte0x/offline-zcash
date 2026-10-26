@@ -122,15 +122,32 @@ impl WalletState {
         Ok((path.into(), root.to_bytes()))
     }
 
+    /// Forgets the chain view for a rescan, keeping notes locked by offline
+    /// payments so a reorg never frees a note we already paid with.
+    pub fn reset_keep_locks(&mut self) {
+        let notes = std::mem::take(&mut self.notes);
+        *self = WalletState::default();
+        self.notes = notes
+            .into_iter()
+            .filter(|n| n.locked_by.is_some())
+            .map(|mut n| {
+                n.spent_in = None;
+                n
+            })
+            .collect();
+    }
+
     /// Scans new blocks from the node. Rescans from scratch after a reorg.
     pub fn sync(&mut self, rpc: &Rpc, fvk: &FullViewingKey) -> Result<SyncReport> {
+        self.sync_from(rpc, fvk)
+    }
+
+    /// Scans new blocks from any source: the node's RPC, or blocks a gateway sent over the mesh.
+    pub fn sync_from<S: BlockSource>(&mut self, rpc: &S, fvk: &FullViewingKey) -> Result<SyncReport> {
         let chain_tip = rpc.tip()?;
         let mut rescanned = false;
         if self.tip_height > 0 && (self.tip_height > chain_tip || rpc.block_hash(self.tip_height)? != self.tip_hash) {
-            let notes = std::mem::take(&mut self.notes);
-            *self = WalletState::default();
-            // Keep offline locks across the rescan, so a reorg never frees a note we already paid with.
-            self.notes = notes.into_iter().filter(|n| n.locked_by.is_some()).map(|mut n| { n.spent_in = None; n }).collect();
+            self.reset_keep_locks();
             rescanned = true;
         }
         let ivk = PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
@@ -194,6 +211,61 @@ impl WalletState {
             }
         }
         Ok(SyncReport { tip: self.tip_height, new_notes, rescanned })
+    }
+}
+
+/// True if the raw NU7 transaction carries an Ironwood bundle (the only transactions wallet sync needs).
+pub fn has_ironwood(raw: &[u8]) -> bool {
+    Transaction::read(raw, BranchId::Nu7).map(|tx| tx.ironwood_bundle().is_some()).unwrap_or(false)
+}
+
+/// Where wallet sync reads blocks from.
+pub trait BlockSource {
+    fn tip(&self) -> Result<u32>;
+    fn block_hash(&self, h: u32) -> Result<String>;
+    /// Block hash and raw transactions. Sources may omit transactions without an Ironwood bundle.
+    fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)>;
+}
+
+impl BlockSource for Rpc {
+    fn tip(&self) -> Result<u32> {
+        Rpc::tip(self)
+    }
+    fn block_hash(&self, h: u32) -> Result<String> {
+        Rpc::block_hash(self, h)
+    }
+    fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)> {
+        Rpc::block_txs(self, h)
+    }
+}
+
+/// A run of consecutive blocks a gateway sent over the mesh (gateway-reported, like its results).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BlockData {
+    pub height: u32,
+    pub hash: String,
+    /// Only transactions with an Ironwood bundle.
+    pub txs: Vec<Vec<u8>>,
+}
+
+pub struct ChunkSource {
+    /// Gateway's hash at `first - 1`, so the wallet can detect a reorg below the chunk.
+    pub prev: (u32, String),
+    pub blocks: Vec<BlockData>,
+}
+
+impl BlockSource for ChunkSource {
+    fn tip(&self) -> Result<u32> {
+        Ok(self.blocks.last().map_or(self.prev.0, |b| b.height))
+    }
+    fn block_hash(&self, h: u32) -> Result<String> {
+        if h == self.prev.0 {
+            return Ok(self.prev.1.clone());
+        }
+        self.blocks.iter().find(|b| b.height == h).map(|b| b.hash.clone()).ok_or_else(|| anyhow!("block {h} not in chunk"))
+    }
+    fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)> {
+        self.blocks.iter().find(|b| b.height == h).map(|b| (b.hash.clone(), b.txs.clone())).ok_or_else(|| anyhow!("block {h} not in chunk"))
     }
 }
 

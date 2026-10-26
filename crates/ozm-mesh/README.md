@@ -10,6 +10,8 @@ let (mesh, mut events) = Mesh::start(MeshConfig {
     listen: Some("0.0.0.0:7777".parse()?),
     dial: vec!["relay:7777".into()],
     store_path: Some("/data/mesh.json".into()),
+    // Optional: find same-fleet nodes on the LAN without `dial`.
+    discovery: Some(Discovery { tag: *b"fleet-01", ..Discovery::default() }),
     ..MeshConfig::default()
 }).await?;
 let id = mesh.send(gateway, sealed_tx).await?;
@@ -74,9 +76,74 @@ An Ack has its own random msg_id, is addressed to the original sender, and its p
   (temp file, fsync, rename) after every change and on `shutdown`. A restarted relay keeps
   forwarding, and a restarted recipient does not deliver again.
 
+## LAN discovery
+
+Off by default. With `MeshConfig.discovery = Some(Discovery { port, tag, interval, advertise_port })`
+(defaults: UDP port 7778, tag all zero, interval 2 s, advertise the bound listen port) nodes of
+one fleet on the same Wi-Fi or LAN find and link to each other without `dial`.
+
+**Beacon** (one UDP datagram, 23 bytes, sent every `interval`):
+
+| Field | Size |
+|---|---|
+| `"OZMD"` | 4 |
+| version (= 1) | 1 |
+| fleet tag | 8 |
+| sender PeerId | 8 |
+| TCP port to dial, `u16` (0 = the node does not listen) | 2 |
+
+Receivers ignore anything shorter, with another magic or version, or with another tag; extra bytes
+after the 23 are ignored so a later version can append fields.
+
+- **Interfaces.** If the TCP listen address is a specific IPv4 address, beacons use only that
+  address. Otherwise every up IPv4 interface is used (including self-assigned 169.254.x.x),
+  except loopback, which is used only when there is nothing else. Interfaces are listed again
+  every 10 s, so a Wi-Fi joined later is picked up and a vanished one is dropped.
+- **Sending.** Each interface gets its own socket bound to its address, with `SO_BROADCAST`,
+  `IP_MULTICAST_IF` set to that address, multicast loop on and TTL 1. Every beacon goes to that
+  interface's directed broadcast (`ip | !netmask`, e.g. `192.168.1.255`; none for /31 and /32),
+  the multicast group `239.255.77.77:port`, and the limited broadcast `255.255.255.255:port`. No
+  default route is needed (an offline Wi-Fi LAN or a Docker `--internal` network has none), and
+  a multi-homed node beacons on every network. The source address of each beacon is the
+  interface address, which is what peers dial.
+- **Receiving.** One socket bound to `0.0.0.0:port` with `SO_REUSEADDR` (and `SO_REUSEPORT` on
+  unix), so several nodes on one host share the port. It joins the group on each interface
+  address (not `INADDR_ANY`, which fails without a default route).
+- **Dialing.** A beacon from a same-tag PeerId that is not ours, not a connected neighbour and not
+  already being dialed by discovery is dialed once at `source_ip:advertised_port`, through the same
+  dial code as `dial` (`link::dial_once`). At most one discovery dial per peer per 2 s. While that
+  link lives the peer counts as being dialed; once it drops, a later beacon dials again. When both
+  sides discover each other at once, the duplicate-link rule above keeps one link per pair.
+- **Visibility.** `Mesh::discovered()` lists `(PeerId, dial address)` for peers heard in the last
+  3 intervals, and `MeshStats.discovered` counts them.
+- **Failures never stop the node.** A failed interface listing, socket, group join or beacon
+  send is logged as a warning at most once per target per minute (debug in between, info when it
+  works again) and retried; the other destinations keep working. If the receive socket cannot
+  be bound the node only beacons. A node ignores its own beacons by PeerId; beacons from another
+  node on the same host (same source IP, other PeerId) are used, so several nodes can share a
+  laptop.
+
+Platform caveats:
+
+- Checked with four containers on a Docker `--internal` network (no default route), with one node
+  also on a second bridge: every node linked to the other three, and a restarted node relinked.
+  Which of the three destinations carried the beacons there was not measured; multicast on a
+  bridge depends on its IGMP snooping. Beacons are not routed between networks, and Docker
+  Desktop on macOS runs containers in a VM that does not hear the LAN; use `dial` across those
+  boundaries.
+- Some Wi-Fi access points (guest networks, "client isolation" or "AP isolation") block all
+  traffic between clients; discovery and TCP links both fail there.
+- macOS asks the user to allow "local network" access the first time a binary sends to the LAN;
+  until the user allows it, sends fail with a rate-limited warning and the node keeps running.
+- The tests run three nodes on `127.0.0.1` with one shared UDP port: loopback is the listen
+  address, so beacons go to `127.255.255.255`, to the group with `IP_MULTICAST_IF 127.0.0.1`
+  and to `255.255.255.255` from a loopback-bound socket. All three reach the other nodes on
+  Linux. On macOS, `lo0` supports multicast, so the group path should work there; that has not
+  been run on macOS yet.
+
 ## Link layer boundary
 
 `src/link.rs` runs a link over any `AsyncRead + AsyncWrite` stream (`run_link`) and talks to the
 mesh only through `Node::link_up`, `on_link_msg` and `link_down`. TCP listen and dial are the only
-transports today. A LAN-discovery or BLE link only needs to produce a stream (or call those three
-methods).
+transports today; LAN discovery only finds peers and dials them over TCP. A BLE link only needs
+to produce a stream (or call those three methods).
