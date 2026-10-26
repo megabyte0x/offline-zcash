@@ -16,7 +16,7 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 | 6 | Fleet fingerprint | **Researched 26 Oct:** keep expiry, immediate send and standard tx shape; P12 plaintext acks kept for MVP/testnet (least work), encryption is a mainnet gate ([privacy-and-threats](privacy-and-threats.md)); was: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
 | 7 | Stack compatibility | **Gate 5 passed 26 Oct** on Zebra 7 regtest; decided: stay on 2.2.0 for MVP, move to Common 4.0 once before public testnet ([chain](components/chain.md)); was: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
 | 8 | Offline limits and phone proving cost | **Decided 26 Oct** (32-note inventory, ≥ floor needs escrow, 3 ZEC escrow cap per payee, foreground-only on iOS, co-signers on B/C/D; [offline-builder](components/offline-builder.md)); was: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
-| 9 | Policy values | Next after #8: measured exposure, freshness, anchor window, confirmations and loss appetite ([pending-tier](components/pending-tier.md)) |
+| 9 | Policy values | **Decided 26 Oct** for harness/testnet (#9 research): current limits kept, 1 ZEC escrow cap per payer and per group, 3 ZEC combined ceiling, defaults in [pending-tier](components/pending-tier.md) and [gateway](components/gateway.md), fleet owner key signs checkpoints. Mainnet loss budget and delivery target still needed before launch; was: measured exposure, freshness, anchor window, confirmations and loss appetite ([pending-tier](components/pending-tier.md)) |
 
 ### Decided 26 October (minimal build)
 

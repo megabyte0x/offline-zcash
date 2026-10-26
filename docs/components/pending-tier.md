@@ -136,7 +136,12 @@ Initial values, **provisional** until measured and owner-approved; on the harnes
 | Parameter | Value | Why |
 |---|---|---|
 | Floor F | 0.5 ZEC per payment; a payment **≥ F** needs escrow (decided 26 Oct) | A 0.6 ZEC request shows a refusal |
-| Escrow cap | 3.0 ZEC outstanding per payee from escrow payments (decided 26 Oct) | Limits damage if the co-signer group is broken |
+| Escrow cap | 3.0 ZEC outstanding per payee from escrow payments; **1.0 ZEC per payer and 1.0 ZEC per certified co-signer group** at each payee (decided 26 Oct) | Limits damage if the co-signer group is broken; a group cap catches one broken group backing many payers |
+| Combined ceiling | **3.0 ZEC per payee across pending and escrow** (decided 26 Oct) | Without it the two 3 ZEC pots add to 6 ZEC |
+| Expiry margin M | 3,456 blocks (one target day): `E − H_B ≥ ⌈(S+U)/25 s⌉ + Q + M`, S = 30 min, Q = 10. Minimum remaining life: city 3,826, 20 km 5,266, mountains 13,906, cross-country 27,730 blocks | Planning budget, not a guarantee; #9 research |
+| App retry | Immediate, then 10, 20, 40, 80, 160, 320 min, then every 6 h; reconnect skips the wait | Decided 26 Oct |
+| Checkpoint and floor | Difficulty floor = checkpoint difficulty / 2; checkpoint refreshed daily, signed by the **fleet owner key** (enrolled at setup); no new acceptance if older than 7 days; gateways can never lower it | Decided 26 Oct; alarm, not a theorem |
+| Loss bound | Per payee ≤ min(T, k · v) with v = min(V, C·F) for k dishonest payer identities; per payer across P payees ≤ P · v. Nullifier sharing does not share payer counters | Correction 26 Oct: not "partitions × V" |
 | Per-payer outstanding count C | 3 | EMV UCOL-style cap; a 4th payment is refused |
 | Per-payer outstanding value V | 1.0 ZEC | 3 × 0.3 passes; a 4th fails |
 | Payee total outstanding T | 3.0 ZEC over all payers | Payee's appetite |
