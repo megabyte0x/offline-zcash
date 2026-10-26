@@ -22,7 +22,7 @@ This file holds the chain and protocol facts the other components depend on: siz
 | Configuration | Branch ID, expiry delta and fee come from configuration, never hard-coded | [decided] |
 | Fleet fee | 10,000 zats for 2 actions, which is what the wallet emits | [decided] |
 | Branch epoch | A tx is bound to its branch ID. Anything unmined at an upgrade dies and is re-issued. Expiry must never straddle a known activation height | [decided] |
-| `lock_time` | Ignored on fully shielded v6, so it cannot gate a refund (see Findings) | [decided] |
+| `lock_time` | Ignored on fully shielded v6. Transparent P2SH + CLTV is enforced on v6 (measured 26 Oct); CSV is not implemented. Neither stops a self-sweep (see Findings) | [decided] |
 | Mainnet | NU7 at height **3,543,405** (~5 Nov 2026, [ZIP 259](https://zips.z.cash/zip-0259)), so mainnet uses the same branch ID. Each mainnet send needs explicit approval. The library step (Common 4.x or custom params) is below | [decided] |
 
 Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` produced a v6 tx with only Ironwood actions: 2 actions, **9,166 bytes**, a **10,000-zat fee** (5,000 per action) and expiry about 40 blocks out (mined at height 106 with `expiryheight` 146). The same send on v0.3.0 under NU6.3 was also 9,166 bytes with a 10,000-zat fee.
@@ -57,7 +57,7 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 - Measured on `ths` v0.4.1: expiry 0 survived 1,000 deliberately empty blocks and mined; 499,999,999 mined; 500,000,000 was rejected. Zebra source agrees; live Zebra remains untested. No relative-delta cap or resident-age TTL was found in the inspected paths; long expiry does not guarantee retention/mining. [Evidence and source lines](expiry-reissue.md#consensus-expiry-versus-mempool-policy).
 - Expiry is effecting data: it is fixed at signing and committed by the txid ([ZIP 374](https://zips.z.cash/zip-0374)).
 - ZIP 218 recommends a 40 → 120 block default **after target height**, normally tip+1, at NU7. It preserves about 50 minutes of ordinary-wallet lifetime, not offline carriage. Zakura Common 2.2.0 still has `DEFAULT_TX_EXPIRY_DELTA = 40` (`crates/zcash_primitives/src/transaction/builder.rs` L54, [zakura-core/common@b6cf4ce](https://github.com/zakura-core/common/blob/b6cf4cefe38fdccc6d2b0dc868f7d6ef01683413/crates/zcash_primitives/src/transaction/builder.rs)); Common 4.0.0 uses 120. At the 25 s target, 40 blocks is about 17 min.
-- 3,456 blocks/day at the 25 s target. Fleet profile **not selected**: proposed daily-uplink courier delta 10,368 (~3 days), proposed shutdown default 72,576 (~21 days) only with ≤7-day uplink promise. These preserve already accepted payments, not new-acceptance freshness. [Problem #3 proposals 1 and 6](expiry-reissue.md#proposed--awaiting-owner-decision).
+- 3,456 blocks/day at the 25 s target. Fleet profile **shutdown, 72,576 blocks (~21 days)**, assuming ≤7-day uplink (decided 26 Oct); the courier delta 10,368 was not chosen. These preserve already accepted payments, not new-acceptance freshness. [Problem #3 proposals 1 and 6](expiry-reissue.md#proposals-and-owner-decisions-26-october).
 
 ### Headers, proof of work and the history tree
 
@@ -75,6 +75,8 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 ### `lock_time`
 
 - Zakura v1.6.0 (`ebda15e`) `zakura-chain/src/transaction.rs` L620–644 returns `None` unless a transparent input has a non-final sequence. Zebra main does the same ([reconciliation §3](../../archive/reports/Design%20review%20reconciliation.md)).
+- v6 carries transparent bundles (`transaction.rs` L149–170); P2SH|CHECKLOCKTIMEVERIFY enabled (`zakura-script/src/lib.rs` L173–177; Zebra 7 `zebra-script/src/lib.rs` L177–182); opcode 0xb2 (CSV) is still NOP3. Measured on `ths`: a CLTV-120 spend was rejected at tips 106/119 and mined at 121 (bond research).
+- zcashd (v6.20.0/master) has no Ironwood/NU7 support.
 
 ### Fees ([ZIP 317](https://zips.z.cash/zip-0317))
 

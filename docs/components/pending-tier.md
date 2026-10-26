@@ -1,10 +1,10 @@
 # Pending tier: statement, receipt, nullifier sharing, policy
 
 The pending tier is how MVP v1 accepts a payment before it is mined: the payer signs a fixed-size **PaymentStatement** with a device-bound key, the payee answers with a signed **Receipt**, payees in the same mesh partition share pending nullifiers, and card-style limits bound the loss.
-Nothing here prevents a double-spend. It makes a conflict attributable to a known device key and keeps the exposure per payer and per payee small. Prevention is the v1.1 co-signer in [double-spend.md](double-spend.md).
+Nothing here prevents a double-spend. It makes a conflict attributable to a known device key and keeps the exposure per payer and per payee small. Pending applies below the floor only; above it, prevention is the v1.1 co-signer group in [double-spend.md](double-spend.md).
 Decided 25 October 2026 from R3 pending tier; the full spec with sources is kept at `.amp/in/artifacts/pending-tier-spec.md` in this thread's orb. Checks that consume these formats are in [payee-verifier.md](payee-verifier.md); the builder that emits the statement is in [offline-builder.md](offline-builder.md).
 
-Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its family, repair and unresolved-expiry policies are **proposed, awaiting owner decision**; existing binary layouts are not changed here. Counter reset and single-source receipt encoding also remain owner decisions from problem #2.
+Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its family, A-initiated repair and expired-unresolved policies were **accepted 26 October** (B-initiated repair requests deferred). Counter reset is `confirmed` on both networks; single-source is a flag bit in the Receipt state byte (both decided 26 October).
 
 ## Decided
 
@@ -17,8 +17,8 @@ Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its
 | Receipt | A 260-byte body signed by the payee's payment key: state, reason, H and block hash at H, statement hash |
 | Nullifier sharing | Built in MVP v1. About 104 B per payment as a BitChat group message to a fleet-payee group, carrying txid, expiry and nullifiers only. A hit makes the payee refuse pending acceptance |
 | Sequence number | `seq` and `prev_stmt_hash` in the statement; the payee enforces only that `seq` increases per payer. No cap is based on it |
-| Initial policy | Floor 0.5 ZEC; per payer 3 payments and 1.0 ZEC outstanding; 3.0 ZEC outstanding per payee. Thirty-minute freshness is provisional, not a sourced safety bound. Counter reset is unresolved (`included` versus `confirmed`); see policy table and [open-work](../open-work.md) |
-| Harness roles | Four Macs: A payer, B payee, C co-signer and second payee (both offline), D gateway (online, signs bundles with its enrollment payment key). C is the second payee for the sharing test |
+| Initial policy | Floor 0.5 ZEC; per payer 3 payments and 1.0 ZEC outstanding; 3.0 ZEC outstanding per payee. Thirty-minute freshness is provisional, not a sourced safety bound. Counters reset at `confirmed` (10, provisional) on harness and mainnet |
+| Harness roles | Four Macs: A payer, B payee, C second payee (both offline), D gateway (online, signs bundles with its enrollment payment key). Co-signer processes for v1.1 run across the Macs ([double-spend.md](double-spend.md) open 6) |
 
 ### Keys [decided]
 
@@ -79,7 +79,7 @@ stmt_hash = H("OZC_PayStmt_v1__", body)
 - The invoice is made unique by a nonce in the ZIP 321 `memo`, which check 6 compares with the decrypted memo.
 - **Re-issue** (`flags.bit0`): retain `supersedes_txid`, payer/payee, amount and invoice binding. Correction: adjacent “at least one shared nullifier” does **not** ensure family-wide exclusion (`{a} → {a,b} → {b}`). Fresh rebuilds change dummy nullifiers, but retained state can keep actions/padding identical. Proposed #2 preserves canonical effects for ordinary renewal; any relaxed family rule requires a common nullifier across **all** versions. Count the obligation once, never remove/reset its exposure on renewal; any family version's inclusion settles it. **Awaiting owner decision**, including same-txid authorization refresh semantics; no wire change approved ([findings and proposals](expiry-reissue.md)).
 - **Fee check:** `valueBalanceIronwood` of an Ironwood-only tx (v6 has no fee field) must equal the fleet fee for its action count, 10,000 zats for 2 actions. This blocks a transaction built never to be mined.
-- Framing: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB, under the 60,000-character limit and covered by the outbox.
+- Framing: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB. Needs the fork's `privateMessageV2`: stock private text is capped at 255 bytes ([transport-bitchat.md](transport-bitchat.md), approved 26 Oct).
 
 ### Receipt v1 (B → A) [decided]
 
@@ -88,7 +88,8 @@ tag "OZC_Receipt_v1__", signed by the payee payment key
 off len field
   0   1 version = 1
   1   1 sig_alg = 1
-  2   1 state: 1 checked, 2 submitted, 3 included, 4 confirmed, 5 conflicted, 6 expired, 0x10 rejected
+  2   1 state: 1 checked, 2 submitted, 3 included, 4 confirmed, 5 conflicted, 6 expired-unresolved, 0x10 rejected;
+        bit 0x80 = single-source qualifier (chain view from one verified gateway) [decided 26 Oct]
   3   1 reason: 0 none, 1 over floor, 2 payer count cap, 3 payer value cap, 4 payee total cap,
         5 stale chain view, 6 anchor unknown, 7 expiry too near, 8 known pending conflict,
         9 bad statement, 10 invalid tx, 11 unknown/paid invoice, 12 seq regression,
@@ -109,11 +110,11 @@ off len field
 
 - `state = checked` renders as **"passes checks at height H; pending"**. B sends it only after the tx, the statement and the counter update are fsynced. Framing `"ozc1:rcpt:" + base64`, a BitChat `privateMessage`.
 - The receipt lets A prove later that B accepted the IOU.
-- The existing state-6 name `expired` is not proof of non-inclusion or cancellation. Proposed UI/state meaning is `expired-unresolved` when verified tip reaches expiry with no inclusion known; debt/reservations remain. Repair reasons/state encoding are pending (#4–5). `checked (single-source)` also has no slot: new state byte versus flag bit remains undecided.
+- State 6 is `expired-unresolved` [decided 26 Oct], not proof of non-inclusion or cancellation: the verified tip reached expiry when verified tip reaches expiry with no inclusion known; debt/reservations remain. Repair reasons/state encoding are pending (#4–5). `checked (single-source)` also has no slot: new state byte versus flag bit remains undecided.
 
 ### Nullifier sharing between payees [decided]
 
-- **Carrier:** a BitChat **group message** (`MessageType.groupMessage = 0x25`) to a fleet-payee group, ChaCha20-Poly1305 under the group key. Relays see only the group ID, epoch and nonce; the sender's BitChat Ed25519 key and signature are inside the ciphertext. Payees map that key to an enrolled payee through `bitchat_signing_pk`. Groups hold at most 16 members and are gossip-synced for 6 h (`GroupProtocol.swift` L350–510, `GossipSyncManager.swift` L73–94, `TransportConfig.swift` L391 at `04995f68`); iOS/macOS only.
+- **Carrier:** a BitChat **group message** (`MessageType.groupMessage = 0x25`) to a fleet-payee group, ChaCha20-Poly1305 under the group key. Relays see the group ID, epoch, nonce and the outer BitChat `senderID` (`BLEService.swift` L2839–2846, corrected 26 Oct); the sender's BitChat Ed25519 key and signature are inside the ciphertext. Payees map that key to an enrolled payee through `bitchat_signing_pk`. Groups hold at most 16 members and are gossip-synced for 6 h (`GroupProtocol.swift` L350–510, `GossipSyncManager.swift` L73–94, `TransportConfig.swift` L391 at `04995f68`); iOS/macOS only.
 - **Payload:** `"ozc1:nf:" + base64(version u8 ‖ op u8 (1 add, 2 remove) ‖ count u8 ‖ entries)`, entry = `txid 32 ‖ expiry_height u32 ‖ n u8 ‖ n × nullifier 32`. A 2-action payment is 104 B. No payer key, amount or payee address.
 - **Lifecycle:** post `add` after check 7 passes and before the receipt; re-post the open set every 4 h because gossip keeps 6 h. Transport claims have finite expiry; removing a claim at inclusion/expiry is **not** financial settlement or proof of non-inclusion. Durable family/exposure retention and renewal of the same sharer's entry are proposed (#2, #4–5); do not discard debt or old evidence when a gossip entry ages out.
 - **Acceptance rule:** any nullifier of an incoming tx that matches an entry from **another** sharer with a different txid is refused with reason 8. If at least one other fleet payee is connected, B waits **5 s** after posting before signing the receipt (Satoshi's "listen a few seconds"; Karame et al., CCS 2012).
@@ -139,10 +140,10 @@ Initial values, **provisional** until measured and owner-approved; on the harnes
 | Per-payer outstanding value V | 1.0 ZEC | 3 × 0.3 passes; a 4th fails |
 | Payee total outstanding T | 3.0 ZEC over all payers | Payee's appetite |
 | Stale chain view | Refuse **new** pending acceptance if bundle older than 30 min; provisional | No community-derived Zcash bound; longer expiry does not extend acceptance freshness. Proposal #6 / open item 2 |
-| Expiry margin | Historical initial `expiry_height ≥ H + 20`; **provisional, insufficient against allowed stale H** | 30 min ≈72 NU7 target blocks; proposed #6 replaces it with lag + uplink + confirmations + margin. Awaiting owner decision |
-| Anchor set | Last 100 blocks for **new-payment acceptance**, provisional | Not consensus; 10,375-block-old root mined. Existing-family repair treatment awaits proposal #6 |
+| Expiry margin | Historical initial `expiry_height ≥ H + 20`; **provisional, insufficient against allowed stale H** | 30 min ≈72 NU7 target blocks; replaced by lag + uplink + confirmations + margin (#6, decided 26 Oct) |
+| Anchor set | Last 100 blocks for **new-payment acceptance**, provisional | Not consensus; 10,375-block-old root mined. Existing-family repair may use a historical root or re-anchor (#6) |
 | Share wait | 5 s, only if another payee is connected | Nullifier sharing |
-| Counter reset | **Owner decision pending:** original harness `included` (1), mainnet `confirmed` (10); proposed unification to `confirmed` on both | Ten is provisional low-value demo policy, not universal finality ([prior art](../prior-art.md)); no reset rule chosen here |
+| Counter reset | `confirmed` (10 confirmations) on both harness and mainnet [decided 26 Oct] | Ten is provisional low-value demo policy, not universal finality ([prior art](../prior-art.md)); no reset rule chosen here |
 | `expired`, not re-issued | Stays counted; payer blocked for new obligations | Expiry does not erase debt. Proposed #5 keeps family counted through repair; proposed #6 permits valid existing-family repair/evidence despite block |
 | `conflicted` | Payer blocked at this payee; unblocked by hand; evidence kept | Never hot-list keys automatically |
 | Go online if possible | Past ⌈C/2⌉ outstanding, if the gateway is reachable, wait for `submitted` before handing over goods | EMV LCOL analogue |
@@ -158,7 +159,7 @@ Inputs: `L` the loss the fleet accepts per enrolled payer per detection window (
 - Floor: `F = min(p95, V)`
 - Count: `C = max(1, ⌊V / p50⌋)`; soft threshold `⌈C/2⌉`
 - Per payee total `T`: the payee's own appetite, at least V
-- Expiry delta: `Δ ≥ 3 × max uplink interval / block time` sizes **already-accepted settlement lifetime**, not new-acceptance freshness; stale-view limit ≤ W. The 10,368 / 72,576 profiles remain proposed, not selected ([expiry-reissue.md #1](expiry-reissue.md#proposed--awaiting-owner-decision)). Multi-day new acceptance would need separately approved risk limits.
+- Expiry delta: `Δ ≥ 3 × max uplink interval / block time` sizes **already-accepted settlement lifetime**, not new-acceptance freshness; stale-view limit ≤ W. The shutdown profile (72,576) was selected 26 Oct ([expiry-reissue.md #1](expiry-reissue.md#proposals-and-owner-decisions-26-october)). Multi-day new acceptance would need separately approved risk limits.
 
 Bounds: one dishonest payer loses the fleet at most `P · V = L`; k colluding payers `k · L`; one payee at most `T`. Sharing lowers P from payees to partitions; escrow removes the bound for escrowed payments. Example: L = 100, P = 5 gives V = 20; p95 = 10 gives F = 10; p50 = 3 gives C = 6.
 
@@ -172,7 +173,7 @@ Bounds: one dishonest payer loses the fleet at most `P · V = L`; k colluding pa
 - **Chain view:** last bundle height, hash and time; recent anchors; mined nullifiers since the oldest open payment.
 - **Ordering:** write the tx, the statement, the counter update and the share-post intent in one transaction; then post the share, wait, send the receipt.
 
-The payer persists the seq counter (write-ahead), the reserved-notes → statement mapping, and its outbox.
+The payer persists the seq counter (write-ahead), the reserved-notes → statement mapping, and its outbox. Store all of it encrypted at rest with a random database key wrapped by the platform keystore, opened fail-closed (pattern from Peers `KeystoreCrypto.kt` L12–67, Peers research); a PIN or duress wipe is not adopted without a funds-recovery policy.
 
 ## Findings
 
@@ -235,4 +236,4 @@ Pattern: a per-transaction cap is ¼ to ⅕ of the total cap, and only an online
 7. Policy numbers remain provisional; measure amounts, uplink intervals, partition counts and stale-view risk. Owner must decide problem #3 and unify the exposure reset threshold; do not advertise the initial values as mainnet safety guarantees.
 8. Decide when evidence fetching (`ozc1:evq/evr`) ships; it is after MVP v1 by default.
 9. Tests that gate MVP v1 for this tier: the demo script above runs end to end; a statement with a wrong `auth_digest`, wrong `amount_zat`, replayed `seq` or wrong fee is refused with the right reason; a receipt is only sent after the payee's store is fsynced (kill the payee between check and receipt); with one gateway the ⌈C/2⌉ cap is hard and a second agreeing gateway lifts it.
-10. Receipt v1 has no slot for `checked (single-source)`: decide between a new state byte and a flag bit before build-order step 3 ([payee-verifier.md](payee-verifier.md)).
+10. Resolved 26 Oct: `checked (single-source)` is state bit 0x80; the receipt stays 260 bytes.

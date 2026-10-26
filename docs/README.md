@@ -4,7 +4,7 @@ Offline Zcash payments: a signed, proven Ironwood transaction moves between devi
 
 Rule: the design target is mainnet with an untrusted gateway; the local `ths` Regtest chain is a test harness and never a reason to weaken a check ([design.md](design.md)).
 
-Current state (26 October 2026): problems #1 (double-spend) and #2 (chain trust) are settled; #3 expiry/re-issue research is complete but **awaits owner decision**. No expiry profile or repair protocol is ratified. Two #2 leftovers also await owner; next design problem is **#4 gateway protocol** ([open-work.md](open-work.md)).
+Current state (26 October 2026): problem #1 (double-spend) was **re-decided 26 October**: pending below the floor, payer + 3-of-4 co-signer group above it; #2 (chain trust) is settled; #3 expiry/re-issue and the #2 leftovers were decided 26 October for a minimal build (shutdown profile, A-initiated repair); next design problem is **#4 gateway protocol** ([open-work.md](open-work.md)).
 
 | Read | For |
 |---|---|
@@ -18,7 +18,7 @@ Current state (26 October 2026): problems #1 (double-spend) and #2 (chain trust)
 | [components/pending-tier.md](components/pending-tier.md) | PaymentStatement and Receipt formats, payment keys, nullifier sharing, limits |
 | [components/gateway.md](components/gateway.md) | Submission (Tor on mainnet), signed bundles, history-MMR rebuild, untrusted-gateway mitigations |
 | [components/transport-bitchat.md](components/transport-bitchat.md) | BitChat fork on four Macs, durability rules |
-| [components/double-spend.md](components/double-spend.md) | Acceptance tiers, nullifier-lock co-signer (v1.1), recovery (v1.2), dropped layers |
+| [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
 | [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
 | [later/logos.md](later/logos.md) | Logos phase (not MVP) |
 

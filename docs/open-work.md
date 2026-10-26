@@ -8,23 +8,22 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 
 | # | Problem | Status / owner |
 |---|---|---|
-| 1 | Offline double-spend | **Settled:** pending IOU tier now, exclusive nullifier-lock co-signer v1.1 ([double-spend](components/double-spend.md), [pending-tier](components/pending-tier.md)) |
-| 2 | Chain-state trust at B | **Settled**, with two owner decisions below still pending ([payee-verifier](components/payee-verifier.md)) |
-| 3 | Transaction expiry and re-issue | **Research complete; proposals awaiting owner decision**, not ratified or implemented ([expiry-reissue](components/expiry-reissue.md)) |
-| 4 | Gateway protocol | **Next design step:** bundle/receipt wire encoding, signature coverage, retries/idempotency and lag/fork handling ([gateway](components/gateway.md)) |
-| 5 | BitChat durability | Next after #4: app queue beyond transport TTL, ACK meaning, restart/retry ([transport-bitchat](components/transport-bitchat.md)) |
+| 1 | Offline double-spend | **Re-decided 26 Oct:** pending below the floor; payer + 3-of-4 co-signer group above it; receipt-gated near a gateway ([double-spend](components/double-spend.md), [pending-tier](components/pending-tier.md)) |
+| 2 | Chain-state trust at B | **Settled**; leftovers decided 26 Oct ([payee-verifier](components/payee-verifier.md)) |
+| 3 | Transaction expiry and re-issue | **Decided 26 Oct** for a minimal build (10 and B-initiated repair deferred); not implemented ([expiry-reissue](components/expiry-reissue.md)) |
+| 4 | Gateway protocol | **Spec v1 written 26 Oct** ([gateway Protocol v1](components/gateway.md#protocol-v1-owner-decisions-26-october-byte-layouts-proposed-not-implemented)): anyone submits, tip/conflicts broadcast mesh-wide, pulled catch-up; timing, PMv2, Tor isolation, limits and forwarding wording decided; header delivery = sampled proofs (heuristic, λ 64, 100-header suffix, post-NU7 checkpoint), byte layout still to write; must also run on public testnet; bundle/receipt wire encoding, signature coverage, retries/idempotency and lag/fork handling; also how one gateway orders and submits many payers' transactions arriving together (A→B, Y→Z) while each faces its own online-sweep race, which is not yet researched ([gateway](components/gateway.md)) |
+| 5 | BitChat durability | **Decided 26 Oct:** `privateMessageV2` (≤44,000 B), gateway broadcast type, app retry queue, A and B both submit ([transport-bitchat](components/transport-bitchat.md)); fork patch and BLE tests remain; [Offline Protocol](https://www.offlineprotocol.com/docs/tech/networking) 0.30 evaluated 26 Oct: **stay on the BitChat fork for MVP** (Swift package iOS-only, custody refuses DMs, forged-ACK risk R10, AGPL/commercial); optional later Wi-Fi/gateway experiment (research) ([transport-bitchat](components/transport-bitchat.md)) |
 | 6 | Fleet fingerprint | Next after #5: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
 | 7 | Stack compatibility | Next after #6: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
 | 8 | Offline limits and phone proving cost | Next after #7: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
 | 9 | Policy values | Next after #8: measured exposure, freshness, anchor window, confirmations and loss appetite ([pending-tier](components/pending-tier.md)) |
 
-### Awaiting owner decision
+### Decided 26 October (minimal build)
 
-- **Problem #3:** individually review the [twelve proposals plus optional #13](components/expiry-reissue.md#proposed--awaiting-owner-decision): courier/shutdown profiles (proposed shutdown default, not chosen), payment families/count-once, complete C locks/absolute epoch fence, proactive/requested repair, expired-unresolved/debt retention, four-clock budget, activation/config cap, hostage debt, zero refusal, encrypted pre-IO snapshot, A-only re-anchoring/tree updates, app re-queue. ZIP 318 buckets remain an unselected alternative, discussion leaned against v1.
-- The external **owner visual walkthrough** exists: [commentable expiry/re-issue guide](https://t-03h472h7xgrjhpyj2u0ruxd9v-p28781.onamp.dev/expiry-reissue.html) (guide thread). It covers two profiles, ten scenarios and rejection tradeoffs; not copied into this checkout. No ratification was recorded there.
-- **Problem #2 leftover A:** unify exposure reset to `confirmed` (**10 confirmations**, provisional low-value demo policy) on both harness and mainnet? Existing docs had `included` on harness versus `confirmed` on mainnet; no choice is made in this snapshot.
-- **Problem #2 leftover B:** Receipt v1 has no `checked (single-source)` slot: new state byte versus flag bit. Decide before finalizing gateway/receipt encoding.
-- Before **v1.1 safety claims**, write C's failure model (rollback/cloning/concurrent signing/replacement authorization and all recovery paths), and resolve FROST rerandomization / DKG derivation security gates. [Prior-art inventory, flaws, negative searches and contacts](prior-art.md) informs these decisions; cutoff 25 October 2026.
+- **#3:** proposals 1 (shutdown profile, 72,576 blocks), 2, 3, 5–9, 11, 12 accepted; 4 for A's automatic re-issue only; 10 and B's `ozc1:rq:` deferred; 13 rejected ([expiry-reissue](components/expiry-reissue.md#proposals-and-owner-decisions-26-october)).
+- **#2 leftovers:** counters reset at `confirmed` (10) on both networks; `checked (single-source)` is Receipt state bit 0x80 ([pending-tier](components/pending-tier.md)).
+- **Delivery:** gateways at hubs plus app copies, no carrier protocol yet. **Demo:** 4 co-signer processes across the four Macs, two on one Mac for the demo only.
+- Before **co-signer safety claims**, write the group's failure model and resolve the randomizer / DKG gates ([double-spend Open](components/double-spend.md#open)).
 
 ## Build MVP v1 (in order)
 
@@ -41,7 +40,7 @@ This is the implementation backlog, distinct from the problem-by-problem design 
 | 7 | Chain state, step 1: bundle wire format with every slot, signed with the gateway's enrollment payment key; gateway rebuilds the history MMR from `getblock h 0` + `z_gettreestate`, persists leaves, rebuilds on reorg; payee checks signature, anchor-in-window, expiry margin, txid branch, MMR anchor path to header N+1 | Tests 8–14 pass on `ths` | [gateway](components/gateway.md), [payee-verifier](components/payee-verifier.md) |
 | 8 | Chain state, step 2: Equihash (200,9) and difficulty checker against a pinned floor from a setup checkpoint; `regtest-no-pow` flag | Tests 15–16 pass | [payee-verifier](components/payee-verifier.md), [chain](components/chain.md) |
 | 9 | Chain state, step 3: two-gateway tip agreement; `checked (single-source)` with the stricter cap; targeted conflict notices; full nullifier list on request | Tests 17–19 pass with a second gateway process | [payee-verifier](components/payee-verifier.md), [pending-tier](components/pending-tier.md) |
-| 10 | Tor submission path on the gateway: fresh circuit per tx, random delay | A send reaches a public endpoint through Tor; endpoint sees only the exit IP | [gateway](components/gateway.md) |
+| 10 | Tor submission path on the gateway: fresh circuit per tx, immediate submission | A send reaches a public endpoint through Tor; endpoint sees only the exit IP | [gateway](components/gateway.md) |
 
 ## Problem #2, decided 25 October 2026: chain state without trusting the gateway
 
@@ -71,26 +70,24 @@ The Regtest harness has no proof of work, so only the Equihash/difficulty/timest
 14. Conflict notice: a deliberate conflicting spend delivered as `nf → T′` with T′'s bytes and branch ends as `conflicted` (extends test 2). ([payee-verifier](components/payee-verifier.md))
 15. A real mainnet header passes the Equihash (200,9) and difficulty check and a corrupted one fails, with `regtest-no-pow` off; with it on, a live 177-byte Regtest header is accepted and all other bundle checks still run. ([chain](components/chain.md))
 16. An anchor from before an upgrade activation is proved against the pre-activation tree; needs a mainnet-like chain (issue log #1 in [AGENTS.md](../AGENTS.md)). ([chain](components/chain.md))
-17. One lying gateway of two is detected: conflicting signed tips are kept as evidence and the payee refuses pending acceptance until they agree. ([gateway](components/gateway.md))
+17. Gateway equivocation (one key, one `seq`, two bodies) is kept as evidence; two different tips are treated as lag or reorg, and the payee refuses pending acceptance until they agree. ([gateway](components/gateway.md))
 18. With one gateway, the state is `checked (single-source)` and the ⌈C/2⌉ cap is a hard cap; a second agreeing gateway lifts it. ([pending-tier](components/pending-tier.md))
 19. The full nullifier list for the fleet window arrives on request and the payee finds the same conflict as the targeted notice. ([gateway](components/gateway.md))
 
-## Next phase (MVP v1.1): nullifier-lock co-signer
+## Next phase (MVP v1.1): co-signer group
 
-- One component: 2-of-2 FROST DKG through `zakura-reddsa`'s `frost` feature, escrow FVK from `FullViewingKey::from_bytes`, redacted PCZT, co-signer recomputes the sighash, durable nullifier lock and nonce store, expiry cap; about 400–700 lines of Rust plus Swift bindings. Deploy with mesh co-signer C first, then as the bilateral configuration. ([double-spend](components/double-spend.md))
-- Gating tests: a second spend of a locked nullifier to another payee is refused; **same-action/same-proof expiry renewal with fresh signatures is mined from real-funded FROST notes**, old bytes rejected after expiry; lock/nonce crash safety, restored-C immutable fence/reconciliation and `rk` group binding. Synthetic-tree FROST variants validated, not mined. [Ten problem #3 gates](components/expiry-reissue.md#ten-gating-tests-not-completed-by-the-research) add families, branches, reorgs, gateway disagreement, lifetime budgets and >24-hour transport.
-- Follow-up to [`poc/escrowcheck`](../poc/escrowcheck/README.md): fund the escrow address from a dev account on `ths`, spend with a real witness, and mine it.
-- Escrow-tier conflict notices use the same bundle slot as problem #2 above; the co-signer's lock store should also consume them. ([payee-verifier](components/payee-verifier.md))
+- Payer + 4 co-signers, threshold 7 of 8 identifiers (A holds 4), stock `zakura-reddsa` `frost` DKG, redacted PCZT, durable lock and nonce store; weighted signing already mined on `ths` ([double-spend](components/double-spend.md)).
+- Gates: the [Open list](components/double-spend.md#open) plus the [problem #3 gates](components/expiry-reissue.md#ten-gating-tests-not-completed-by-the-research).
 
 ## MVP v1.2
 
-- Co-signer recovery: 2-of-3 {payer, hot co-signer, cold fenced recovery share} or timelock-encrypted release of the co-signer's share. ([double-spend](components/double-spend.md))
+- Co-signer reconfiguration (replace a lost co-signer by sweeping escrow notes to a new group key online), proposed in [double-spend Open 3](components/double-spend.md#open). Replaces the fenced-cold-share / tlock options.
 
 ## Known gaps carried forward (not fixed by design)
 
 - The gateway is the first spy, and one gateway cannot prove that no conflict exists (completeness); ≥ 2 gateways, nullifier sharing and loss caps bound it. ([gateway](components/gateway.md))
 - Headers cannot prove the heaviest chain; the pinned difficulty floor must track mainnet. ([payee-verifier](components/payee-verifier.md))
 - Fleet transactions are fingerprintable on chain. ([privacy-and-threats](privacy-and-threats.md))
-- No expiry profile chosen: proposed 3-day courier assumes ≤1-day uplink; proposed 21-day shutdown assumes ≤7-day uplink. Neither covers arbitrary shutdowns, and thirty-minute **new-acceptance** freshness remains provisional/separate. Renewal needs A even in 2-of-2 escrow; refusal leaves a debt claim. ([expiry-reissue](components/expiry-reissue.md))
+- Shutdown profile chosen (21 days, assumes ≤7-day uplink). Neither covers arbitrary shutdowns, and thirty-minute **new-acceptance** freshness remains provisional/separate. Renewal needs A even in 2-of-2 escrow; refusal leaves a debt claim. ([expiry-reissue](components/expiry-reissue.md))
 - Mainnet needs Common 4.x or custom params with the NU7 height (library step). ([chain](components/chain.md))
 - Unmeasured: Equihash and Ironwood proving on Mac/iPhone; mainnet proof sizes. The 100-block new-payment anchor window, 20-block initial expiry margin, thirty-minute freshness and ten confirmations are **provisional** with the reasons above, not validated mainnet safety bounds. ([gateway](components/gateway.md), [pending-tier](components/pending-tier.md))

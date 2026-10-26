@@ -10,7 +10,7 @@ The design target is mainnet. In the harness D is the Mac that runs `ths`; on ma
 |---|---|---|
 | Trust | Untrusted on every network (ADV-G). The payee verifies every bundle fact itself; running on the local chain is never a reason to skip a check. The one harness exception is the `regtest-no-pow` flag ([chain.md](chain.md)), which disables only the Equihash, difficulty and timestamp check and is itself tested with mainnet header vectors | [decided] |
 | Submission (harness) | lightwalletd `SendTransaction` (`127.0.0.1:9067`, plaintext) or Zakura JSON-RPC `sendrawtransaction` (`127.0.0.1:18232`) | [decided] |
-| Submission (mainnet) | Over Tor, fresh circuit per transaction, to a public lightwalletd or Zebra endpoint; every send approved by the operator. Tor is part of the design, built after the loopback path works; it is not an optional later hardening | [decided] |
+| Submission (mainnet) | Over Tor, fresh circuit per transaction, to a public lightwalletd or Zebra endpoint; production gateways forward admitted third-party transactions immediately, without per-payment operator approval; developer mainnet tests and real-value broadcasts still need explicit approval (26 Oct). Tor is part of the design, built after the loopback path works; it is not an optional later hardening | [decided] |
 | Raw RPC | `ths rpc` is not in v0.4.1, so call JSON-RPC directly with `curl` (issue log #5 in [AGENTS.md](../../AGENTS.md)) | [decided] |
 | Input | Raw tx bytes only. No intent, payment details or payer identity reach relays or the gateway (gap G1, [reconciliation §5](../../archive/reports/Design%20review%20reconciliation.md)) | [decided] |
 | Identity | Exact-byte resends idempotent; cache/delivery dedupe on **(txid, auth_digest)**, because re-anchoring keeps txid. Family obligations are proposed (#3), not D's invoice/identity data | [decided, clarified] |
@@ -24,9 +24,68 @@ The design target is mainnet. In the harness D is the Mac that runs `ths`; on ma
 | Keys | No Zcash keys. Never broadcast from a node that also hosts a wallet | [decided] |
 | Proving | Never on the gateway: a prover sees the note data ([offline-builder.md](offline-builder.md)) | [decided] |
 | Loopback (harness) | `ths` binds every host service to `127.0.0.1` (issue log #3). Phones reach it through `socat TCP-LISTEN:9067,fork,bind=<lan-ip> TCP:127.0.0.1:9067`, `adb reverse tcp:9067 tcp:9067`, or an SSH tunnel, on a trusted network only (the dev keys are public) | [decided] |
-| Transport | The payee forwards the bytes to the gateway as a separate BitChat private message; a packet addressed to the payee stops there ([transport-bitchat.md](transport-bitchat.md)) | [decided] |
+| Submission timing | Submit **immediately** on arrival, in parallel, over a fresh Tor circuit per tx; **no random delay or batching** (they widen the sweep window). Rebroadcast until mined or expired. A signed gateway ack shows as `submitted` for the payee, never as `included`. Owner, 26 Oct; message formats are problem #4 research | [decided] |
+| Header delivery | **Sampled proofs** (FlyClient-style over the ZIP 221 history tree), not a full contiguous header chain. Owner, 26 Oct. Research: security is heuristic under Zcash's per-block difficulty adjustment (ZIP 221 Security); proposal = checkpoint + last 100 full headers + tail-biased Fiat–Shamir samples, each with its own prefix history commitment and recomputed DAA from 113 predecessor leaves; modelled ≈1.5 / 4.5 / 6.9 MB for 1 / 7 / 21 days offline (λ40) vs 5.1 / 36 / 108 MB full headers. Owner decisions 26 Oct: accepted as a **labelled heuristic** (no 2^-λ safety claims); λ = 64; 100-header full suffix; checkpoint after NU7, no cross-upgrade proofs for now; full-header fallback near hubs is allowed but not required for MVP; `regtest-no-pow` for the first harness, and the same proofs must also run on public testnet (NU7 at 4,465,026, [ZIP 259](https://zips.z.cash/zip-0259)) | [decided] |
+| Protocol defaults | Fresh Tor circuit = per-transaction circuit isolation (unique SOCKS credentials), not NEWNYM. Reconcile/resubmit every 3 blocks with backoff; keep raw bytes until expiry plus margin; per-sender rate limits and bounded queues; conflict index over the 72,576-block fleet window. Provisional until #9 (owner, 26 Oct; research) | [decided] |
+| Placement | Gateways at hubs where people gather (markets, bus terminals, valley exits); minimal delivery, no carrier protocol yet (owner, 26 Oct) | [decided] |
+| Mempool meaning | A mempool receipt says only that D's node accepted tx1 first. Zebra 7 rejects nullifier conflicts before insertion with no fee replacement (`verified_set.rs` L153–162 at `e8db87e`), but miners that saw tx2 first, or a block with tx2, override it (race research) | [finding] |
+| Transport | Payer and payee both send the bytes to the gateway as separate BitChat private messages (26 Oct); a packet addressed to the payee stops there ([transport-bitchat.md](transport-bitchat.md)) | [decided] |
 
 Build order (a sequence, not a security downgrade; each step has gating tests in [open-work.md](../open-work.md)): (1) bundle format with every slot, bundle signature, anchor-in-window, expiry margin, txid branch and the MMR anchor path (verifier exists: 15 lines in [`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md)); (2) Equihash and difficulty checker with the pinned floor and mainnet vectors; (3) two-gateway agreement and single-source degradation. The earlier "Mainnet (v2)" row that deferred Tor and the operator approval to a later stage is superseded by the rows above.
+
+## Protocol v1 (owner decisions 26 October; byte layouts proposed, not implemented)
+
+Carrier: BitChat fork `privateMessageV2` (≤ 44,000 decoded bytes), text `"ozc1:<kind>:" + base64(body ‖ sig)`. Integers little-endian; `sig = Ed25519(gateway_payment_sk, tag16 ‖ body)`, verified strictly, as in [pending-tier.md](pending-tier.md). `network`: 1 regtest, 2 testnet, 3 mainnet. Research: gateway protocol.
+
+| Rule | Decision |
+|---|---|
+| Who may submit | **Anyone** on the mesh, enrolled or not. D verifies each new `(txid, auth_digest)` variant's proof and signatures once (≈ 8 ms warm) before submitting. Bounded queues: per-sender quota keyed by BitChat peer ID, a global cap, and enrolled senders served first when the queue is full |
+| Ack recipient | **Broadcast to the whole mesh** (owner, 26 Oct) and re-sent on every status change, so payer, payee and carriers all see it. Privacy cost P12 |
+| Chain state to everyone | D **broadcasts** a signed tip announcement and conflict notices to the whole mesh, so every device knows the chain, not only payees. Large bundle chunks stay pulled on request |
+| Catch-up | Pulled: B sends `breq`, D returns at most 8 chunks in flight; B re-requests missing indices after a disconnect |
+| Equivocation | Same gateway key and `seq` over two different bodies. Two different tips alone can be lag or an honest reorg |
+
+```
+ozc1:sub  (unsigned; sender authenticated only by BitChat Noise)
+  0  1 version = 1
+  1  1 network
+  2 16 request_nonce
+ 18  4 tx_len
+ 22  n tx bytes
+
+ozc1:ack  (broadcast) tag "OZC_GwAck_v1____"; 249-byte body + 64 sig
+  0  1 version   1  1 sig_alg = 1   2  1 network
+  3 16 fleet_id
+ 19 32 gateway_pk
+ 51  8 seq                     durable, strictly increasing per gateway
+ 59 16 request_nonce
+ 75 32 txid
+107 32 requested_auth_digest
+139 32 observed_auth_digest   zeros if the node holds none
+171  1 result: 1 accepted, 2 already in mempool, 3 already mined, 4 conflict proved,
+              5 conflict reported (unproved), 6 rejected, 7 rate-limited, 8 expired
+172  1 error_class           node error class for 6, else 0
+173  4 tip_height
+177 32 tip_hash
+209  8 created_at_ms
+217 32 evidence_ref          conflicting txid (4, 5) or bundle id (3), else zeros
+249    end
+
+ozc1:tip  (broadcast) tag "OZC_GwTip_v1____": version, sig_alg, network, fleet_id 16,
+  gateway_pk 32, seq 8, tip header (1,487 B mainnet / 177 B regtest), tip_height 4,
+  created_at_ms 8 + 64 sig
+ozc1:cnf  (broadcast) tag "OZC_GwCnf_v1____": header fields as tip, nf 32, conflicting txid 32,
+  block height 4 + 64 sig; the tx bytes and branch follow in the next bundle on request
+ozc1:breq (unsigned) version, network, request_nonce 16, checkpoint hash 32, known tip hash 32,
+  first_chunk 4, window u8 (≤ 8), n_txids u8, n × txid 32
+ozc1:bun  tag "OZC_GwBun_v1____": header fields as ack, bundle_id 32, chunk_index 4,
+  chunk_count 4, total_len 4, bundle_hash 32, payload ≤ 32,768 + 64 sig per chunk
+```
+
+- B's state changes only on evidence: `submitted` from an ack (1, 2); `included`, `conflicted`, `expired-unresolved` only from verified bundle contents. Result 5 is a warning; a node error is never cancellation.
+- Bundle payload slots are as in the Decided table (sampled-header proof, anchor paths, txid branches, conflict notices); their inner layout is written with the sampled-proof parameters.
+- `request_nonce` is random per submission, so a broadcast ack names the txid but not the submitter; the submitter matches it by nonce.
+- Open: broadcast `ack`/`tip`/`cnf` size needs a fork broadcast type (stock limits unverified); broadcast cadence (proposed: every new tip, rate-limited to one per 25 s per gateway); privacy of broadcasting conflict nullifiers mesh-wide (they become public on chain anyway).
 
 ## Findings
 
@@ -39,7 +98,7 @@ Build order (a sequence, not a security downgrade; each step has gating tests in
 | Forge chain state | Fake tip, fake anchors or a fake "included" | The payee checks Equihash and difficulty against a pinned floor from a setup checkpoint, MMR paths for anchors, txid branches for inclusion; ≥ 2 gateways must agree on the tip. Headers still cannot prove heaviest chain ([payee-verifier.md](payee-verifier.md#chain-state-checks-no-trust-in-the-gateway-decided)) |
 | Omit a conflict | Hides that a nullifier was spent elsewhere | Not detectable from one gateway (completeness). ≥ 2 independent gateways for the same window, payee-to-payee nullifier sharing ([pending-tier.md](pending-tier.md)), loss caps |
 | Equivocate | Different tips to different payees | Signed bundles: two conflicting tips under one enrollment key are portable evidence; payees compare tips when they meet |
-| First spy | Sees every tx first, with timing and its mesh origin | Fresh Tor circuit per tx, random delay, batching |
+| First spy | Sees every tx first, with timing and its mesh origin | Fresh Tor circuit per tx (random delay and batching dropped 26 Oct: they widen the sweep window) |
 | Sees all txs | Can link fleet traffic (stale anchor, long expiry, bursts: gap G6) | Shared anchor heights; uniform fee |
 
 - Projects tied to one operator's relay died with that operator (goTenna, Samourai pushTx). Any device with backhaul should be able to act as a gateway, and the design runs two. txTenna gave the sender no confirmation path, so receipts are mandatory ([report, Gateways settle](../../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md)).

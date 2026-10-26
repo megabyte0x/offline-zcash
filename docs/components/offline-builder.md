@@ -35,10 +35,10 @@ Import under the upstream names, as `ths` does, for example `zcash_primitives = 
 - Proving stays on the payer's device, never on a gateway or shared prover. Delegating proving "reveals the private data of the notes being spent or created" ([ZIP 374](https://zips.z.cash/zip-0374)).
 - The output is the raw tx bytes plus the txid and auth digest. The payer then signs the 276-byte **PaymentStatement** ([pending-tier.md](pending-tier.md)) with its device-bound Ed25519 payment key, after persisting `seq + 1`, and sends tx plus statement to the payee only, over the Noise private channel. Relays and the gateway see tx bytes only.
 - **Escrow notes (v1.1)** are spent through the PCZT path instead: `DeferredPcztBuilder` or the standard builder emits a PCZT, the Redactor strips value, recipient, rseed, fvk, witness and rcv, the co-signer signs with FROST, and `Signer::apply_ironwood_signature` completes it ([double-spend.md](double-spend.md)). α is fixed in the PCZT by the payer before the co-signer commits nonces. Ordinary notes keep the direct path above.
-- A stuck payment is re-issued from **the same real notes**, so at most one conflicting version can mine on **one valid chain**, not across orphaned histories. Never re-pay from unrelated notes. Canonical effects and family-wide exclusion are [proposed, awaiting owner decision](expiry-reissue.md#proposed--awaiting-owner-decision); adjacent shared-nullifier overlap is insufficient.
+- A stuck payment is re-issued from **the same real notes**, so at most one conflicting version can mine on **one valid chain**, not across orphaned histories. Never re-pay from unrelated notes. Canonical effects and family-wide exclusion are [decided 26 Oct](expiry-reissue.md#proposals-and-owner-decisions-26-october); adjacent shared-nullifier overlap is insufficient.
 - One spending device per account. Two devices with the same key cannot see each other's reservations.
 
-### Note lifecycle [reservation decided; release/renewal policy awaiting owner]
+### Note lifecycle [reservation decided; family and A-initiated renewal decided 26 Oct]
 
 ```
  Available ──sign tx──▶ Reserved ──mined──▶ Spent
@@ -50,7 +50,7 @@ Import under the upstream names, as `ths` does, for example `zcash_primitives = 
 
 - While online, pre-split into 10+ confirmed notes. The number of notes caps the number of separate offline payments.
 - Reserve before signing, and persist the reservation so a crash cannot free it.
-- Correction: expiry plus trusted unspent reconciliation does **not cancel accepted debt**, and no bundle proves non-inclusion/non-spend ([payee-verifier.md](payee-verifier.md#what-headers-can-prove)). The old expiry-release rule is insufficient. Proposed #5 keeps reservations through renewal until settlement or explicit resolution; **awaiting owner decision**, not implemented.
+- Correction: expiry plus trusted unspent reconciliation does **not cancel accepted debt**, and no bundle proves non-inclusion/non-spend ([payee-verifier.md](payee-verifier.md#what-headers-can-prove)). The old expiry-release rule is insufficient. #5 (decided 26 Oct) keeps reservations through renewal until settlement or explicit resolution; not implemented.
 - Change becomes spendable only after a sync that includes its parent block.
 
 ## Findings
@@ -72,8 +72,8 @@ Import under the upstream names, as `ths` does, for example `zcash_primitives = 
 - [unverified] Production offline app plus separate payee process and wallet-DB path. Scratch direct-path compilation/mining and 9,166-byte v6 shape are established; they do not implement the end-to-end app.
 - [unverified] Phone proving time and memory on the Ironwood circuit with Zakura 2.2.0 (open check 9). Test: run the `ironwood_k11_prover` bench and an iOS build.
 - [unverified] Crash safety of reservations. Test: kill the app between reserve and sign, and between sign and send. The note must stay Reserved.
-- [awaiting owner] Fleet expiry profile: 10,368 only for ≤1-day uplink; proposed shutdown default 72,576 for ≤7-day uplink. Neither is chosen ([proposal #1](expiry-reissue.md#proposed--awaiting-owner-decision)).
+- [decided 26 Oct] Fleet expiry profile: shutdown, 72,576 blocks for ≤7-day uplink ([proposal #1](expiry-reissue.md#proposals-and-owner-decisions-26-october)).
 - [unverified] Whether to use a shared boundary anchor height (ZIP 318) to reduce anchor fingerprinting.
-- [awaiting owner / unimplemented] Family protocol, encrypted pre-IO snapshot, repair and release policy. Ordinary-signature renewal mined; real-funded FROST renewal, persistence and family-wide invariants remain [gating tests](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research).
+- [decided, unimplemented] Family protocol and A-initiated repair; encrypted pre-IO snapshot deferred (minimal renewal re-proves from the same notes). Ordinary-signature renewal mined; real-funded FROST renewal, persistence and family-wide invariants remain [gating tests](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research).
 - [unverified] Whether the rc7 wallet DB can import a FROST-derived UFVK and produce a PCZT; otherwise escrow notes use the direct `Builder`.
-- v1.1: the co-signer component (DKG, redacted PCZT, FROST signing, lock store), about 400–700 lines of Rust plus Swift bindings; details and gating tests in [double-spend.md](double-spend.md). The earlier "port frost-tools, 300–500 lines" item is superseded.
+- v1.1: the co-signer group component (weighted DKG, redacted PCZT, FROST signing, lock store), about 400–700 lines of Rust plus Swift bindings (estimate from the 2-of-2 design); details and gating tests in [double-spend.md](double-spend.md). The earlier "port frost-tools, 300–500 lines" item is superseded.
