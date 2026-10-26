@@ -12,12 +12,14 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 - [decided] B forwards the bytes to D as a **separate private message**. A packet addressed to B stops at B.
 - [decided] Relays and the gateway never receive payment intent (invoice, amount, payer signature). Payment details travel only inside A's private message to B.
 - [decided] All four Macs use the **same build configuration** (all Debug or all Release), because Debug and Release use different BLE service UUIDs.
-- [decided] Txid is the transport identity. Resending the same bytes is harmless.
+- [decided, identity corrected] Exact-byte resends are idempotent; deduplicate transaction variants by **(txid, auth_digest)**, not txid alone: v6 re-anchoring keeps txid but changes authorizing bytes. Grouping variants into one payment-family obligation is **proposed, awaiting owner decision** ([expiry-reissue.md #2](expiry-reissue.md#proposed--awaiting-owner-decision)).
 - [decided] Application messages are BitChat private-message texts with an `ozc1:` prefix: `ozc1:pay:` (tx + PaymentStatement, A→B), `ozc1:rcpt:` (Receipt, B→A), `ozc1:evq:`/`ozc1:evr:` (evidence request and reply, later). Pending-nullifier shares go as **group messages** (`0x25`) to a fleet-payee group, `ozc1:nf:`. Formats in [pending-tier.md](pending-tier.md).
 
 ## Findings
 
 Source: `permissionlesstech/bitchat@04995f68` (Swift, Unlicense), read in code. Line numbers below are from the re-check on 25 October 2026 and supersede those in the archived note.
+
+BitChat's sender outbox is bounded at **24 h / 8 attempts**, not a multi-day payment-delivery guarantee. Application persistence and re-enqueue beyond that limit are **proposal #12, awaiting owner decision**; private authenticated repair prefix `ozc1:rq:` is proposal #4, not an approved wire format ([expiry-reissue.md](expiry-reissue.md)). No restart-safe Zcash-over-BitChat payment queue was established by the [prior-art sweep](../prior-art.md).
 
 ### Store-and-forward
 
@@ -86,4 +88,4 @@ Source: `permissionlesstech/bitchat@04995f68` (Swift, Unlicense), read in code. 
 | 6 | D submits to the local chain | Node accepts; tx mined |
 | 7 | Confirmation returns over the mesh to B, then A | B marks final; A's outbox entry clears |
 
-Variant: B offline when A sends; A's outbox delivers when B appears (within 24 h and 8 attempts).
+Variant: B offline when A sends; BitChat's outbox delivers only within 24 h and 8 attempts. Add a >24-hour / exhausted-attempt restart case once application persistence/re-enqueue is approved (#12); current BitChat alone cannot meet that contract.

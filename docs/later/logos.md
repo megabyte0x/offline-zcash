@@ -1,7 +1,7 @@
 # Later: Logos phase (not MVP)
 
 After the BitChat MVP and mainnet, basecamps running Logos Delivery replace the Macs and BLE, and a logos-co Zebra module becomes the gateway.
-Logos Delivery is a real-time, IP-only pub/sub network with bounded catch-up, not a delay-tolerant one, so multi-day partitions rest on long Store retention plus our own resend loop keyed by txid.
+Logos Delivery is a real-time, IP-only pub/sub network with bounded catch-up, not a delay-tolerant one, so multi-day partitions rest on long Store retention plus our own resend loop keyed by **(txid, auth_digest)**. A compatible v6 re-anchor keeps txid but changes authorizing bytes ([expiry/re-issue findings](../components/expiry-reissue.md)).
 Nothing here is built or run. MVP transport: [../components/transport-bitchat.md](../components/transport-bitchat.md). Gateway: [../components/gateway.md](../components/gateway.md).
 
 ## Decided

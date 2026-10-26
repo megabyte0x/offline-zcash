@@ -13,8 +13,8 @@ The payee learns the tip, anchors, inclusion and conflicts only from the [gatewa
 | 1 | Version is v6 | tx header |
 | 2 | Ironwood-only: no transparent, Sapling or Orchard components | tx |
 | 3 | Branch ID equals the configured `0x77190AD9` | config ([chain.md](chain.md)) |
-| 4 | Expiry is above the payee's last known height, with margin | last verified chain bundle |
-| 5 | Anchor is in the payee's set of recent anchors, each proved by an MMR path to a verified header (table below) | last verified chain bundle |
+| 4 | Remaining expiry checked against verified height; initial H+20 is provisional/insufficient for the allowed stale view; replacement budget awaits owner (#3 proposal 6) | last verified chain bundle; [expiry-reissue](expiry-reissue.md) |
+| 5 | For **new payments**, anchor in the provisional recent set, proved by MMR path to verified header. This is acceptance policy, not consensus age validity; historical-root renewal treatment is proposed (#6) | last verified chain bundle |
 | 6 | Own output decrypts with the payee's ivk; recompute `cmx`; amount and memo (invoice nonce) match the invoice | payee keys |
 | 7 | Proofs and signatures are valid | `BatchValidator` |
 | 8 | Fee: `valueBalanceIronwood` equals the fleet fee for the action count (10,000 zats for 2 actions) | config |
@@ -29,7 +29,7 @@ Code path for 1–7 (functions read in source, not compiled): `Transaction::read
 - Receipt: the 260-byte **Receipt v1** in [pending-tier.md](pending-tier.md), signed by the payee's device-bound payment key, sent only after the payee's store is fsynced. Its `checked` state renders as **"passes checks at height H; pending"**, where H is the payee's last known height. Never "verified" or "funded".
 - The payee saves the bytes to its own storage on receipt, because BitChat timelines are memory-only. It then forwards them to the gateway as a separate private message.
 - After check 7 passes, the payee posts the tx's nullifiers to the fleet-payee group and, if another payee is connected, waits 5 s before signing the receipt ([pending-tier.md](pending-tier.md)).
-- Conflicts are settled only at mining, by nullifier. A nullifier mined in a different txid is **conflict evidence, not proof of fraud**: a re-issue and key theft look the same. With the payer's PaymentStatement it becomes a debt claim against the payer's device key under the fleet agreement. Hot lists hold nullifiers only, never payer keys, and nothing is hot-listed automatically.
+- Conflicts are settled only at mining, by nullifier. A mined **non-family** transaction spending a payment nullifier is conflict evidence, not proof of fraud: key theft and a restored seed look the same. An authorized same-obligation replacement is settlement, not conflict; exact family rules await owner approval ([proposal #2](expiry-reissue.md#proposed--awaiting-owner-decision)). With the PaymentStatement, unpaid non-family conflict becomes a debt claim under the fleet agreement. Hot lists hold nullifiers only, never payer keys; nothing is hot-listed automatically.
 - Counters are local loss controls only. They cannot cap total loss across partitions: one credential shown to N disconnected payees exposes N × the limit; nullifier sharing lowers N from payees to partitions.
 
 ### Chain-state checks, no trust in the gateway [decided]
@@ -51,7 +51,7 @@ Decided 25 October 2026 (problem #2 in [open-work.md](../open-work.md)). The gat
 - Build order inside v1 (a sequence, not a downgrade): (1) bundle format with every slot, signature, anchor-in-window, expiry margin, txid branch, MMR anchor verifier (15 lines exist in [`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md)); (2) Equihash/difficulty checker with the pinned floor and mainnet vectors; (3) two-gateway agreement and single-source degradation. Gating tests are under Open.
 - Verifier size: the prototype's anchor verifier is 15 lines; production estimate 100–150 lines on the payee [unverified].
 
-### Receipt states [decided]
+### Receipt states [decided base states; expiry/family corrections proposed]
 
 | State | Entered when | Old design term |
 |---|---|---|
@@ -60,12 +60,12 @@ Decided 25 October 2026 (problem #2 in [open-work.md](../open-work.md)). The gat
 | checked (single-source) | as `checked`, but H and the anchor set come from one verified gateway only; the stricter ⌈C/2⌉ cap applies until a second gateway's tip agrees | — |
 | submitted | gateway broadcast receipt for this txid arrives | pending |
 | included | txid Merkle branch to a PoW-verified header under the tip shows the txid in a block | pending |
-| confirmed | 10+ confirmations on PoW-verified headers ([ZIP 315](https://zips.z.cash/zip-0315)). On the harness the count is exercised but carries no security: one local miner, no PoW | final |
-| conflicted | one of the tx's nullifiers is mined in a different txid | conflicted |
-| expired | the chain passes the expiry height with the tx unmined; the payer re-issues from the same notes | — |
+| confirmed | Provisional **low-value demo policy**: 10+ confirmations, not universal finality. ZIP 315 concerns output spendability; Kraken listed 50 ([prior art](../prior-art.md)). Harness count carries no PoW security | final |
+| conflicted | a **non-family** transaction mines a payment nullifier; authorized replacement inclusion settles the same obligation (family rules pending) | conflicted |
+| expired (proposed: expired-unresolved) | verified selected-chain tip reaches E with no inclusion **known**, not proof none occurred; retain debt and prepare/request repair. Proposal #5, awaiting owner; wire encoding unchanged | — |
 | rejected | a check fails; the receipt carries the reason code ([pending-tier.md](pending-tier.md)) | — |
 
-State is keyed by txid. A re-anchored copy has the same txid, so the auth digest is stored alongside it. Counters reset when a payment reaches `included`; an `expired` payment that is not re-issued stays counted and blocks the payer at this payee.
+Store exact variants by `(txid, auth_digest)`: re-anchoring keeps txid but changes auth digest. Proposed #2 groups all invoice versions into one family, counted once; any version's inclusion settles it; reorgs reopen exposure. **Awaiting owner decision**, not an implemented state machine. Exposure reset is also unresolved from problem #2: unify to `confirmed` (10) on harness and mainnet, or retain the original 1/10 split? No silent reset at `included` is chosen here. An expired unpaid obligation stays counted; valid existing-family repair/evidence bypass is proposed #6.
 
 ## Findings
 
@@ -94,7 +94,7 @@ State is keyed by txid. A re-anchored copy has the same txid, so the auth digest
 ### Double-spend context
 
 - No published scheme prevents a fully disconnected payer from double-spending without trusted hardware or a co-signer. Layer status and staging are in [double-spend.md](double-spend.md).
-- After any uplink, the payee checks the bundle's conflict notices (and, on request, the full nullifier list) against its open payments' nullifiers. A notice that verifies (T′ bytes, txid branch to a verified header) with one of them in a different txid moves the state to conflicted.
+- After any uplink, verify notices (T′ bytes plus txid branch to verified header) against open nullifiers. A **non-family** spend means conflict; an authorized replacement settles the same obligation. Family matching and orphaned-inclusion accounting await proposal #2/#5; txid inequality alone cannot decide this.
 
 ## Open
 
@@ -102,9 +102,9 @@ State is keyed by txid. A re-anchored copy has the same txid, so the auth digest
 - [unverified] A deliberate conflicting spend ends as conflicted, not confirmed (open check 4). Test: on `ths`, mine a second tx that spends the same note.
 - [unverified] Payee restarts between receipt and forwarding; the gateway appears later and submits (open check 6).
 - Superseded (25 October 2026): the earlier open item "have the payee trust the gateway's bundle in MVP v1". The payee never trusts the bundle; the chain-state checks above are the design and the build order inside v1 is in [open-work.md](../open-work.md).
-- Initial values, not yet measured: recent-anchor set = roots from the last 100 blocks; expiry margin = 20 blocks ([pending-tier.md](pending-tier.md)). They apply to mainnet as well until measurement (anchor age distribution, uplink interval) replaces them.
+- Provisional values: recent-anchor set = last **100 blocks for new acceptance**, not consensus; expiry margin = **20 blocks**, inadequate against allowed thirty-minute (~72-target-block) view lag. Keep them visible, not as safety bounds; owner must decide [proposal #6](expiry-reissue.md#proposed--awaiting-owner-decision). Thirty-minute freshness and ten confirmations also remain provisional with separate risk models.
 - [unverified] Equihash (200,9) verify time on Mac and iPhone (96 µs/header on an orb Xeon); difficulty-floor pinning and refresh ([gateway.md](gateway.md#open)).
 - [unverified] Mainnet MMR path and txid-branch sizes; only Regtest is measured (1,109–2,778 B per anchor path).
 - [unverified] Whether `checked (single-source)` needs its own Receipt state byte or a flag bit; Receipt v1 in [pending-tier.md](pending-tier.md) has no slot for it yet.
 - Pending-tier open items (key edge cases, group messages, dummy-action nullifiers, gating tests) are in [pending-tier.md §Open](pending-tier.md).
-- Gating tests for the chain-state checks (merged with the list in [open-work.md](../open-work.md)): anchors just inside and just outside the 100-block window; a tampered bundle and a bundle signed by an unknown key are rejected; a txid branch verifies for a block with 3 transactions and fails for the wrong txid or position; expiry margin on both sides of the H + 20 boundary; real anchors verify against header N+1 and the tip while a flipped anchor, leaf, peak position or `authDataRoot` fails; a real mainnet header passes the Equihash/difficulty check and a corrupted one fails, with and without `regtest-no-pow`; one lying gateway of two is detected; single-source state applies the stricter cap; an anchor from before an upgrade activation is handled (needs a mainnet-like chain, issue log #1).
+- Gating tests for the chain-state checks (merged in [open-work.md](../open-work.md)): new-payment anchors inside/outside the provisional 100-block window; historical-root renewal separately; tampered/unknown-signature bundle refusal; 3-tx inclusion branch and wrong txid/position; expiry on both sides of the **owner-approved lag/uplink/confirmation budget** (H+20 remains only the initial provisional boundary); flipped anchor/leaf/peak/`authDataRoot`; real/corrupted mainnet headers with PoW flag off and harness headers with flag on; disagreeing gateways; single-source cap; pre-activation anchor history. [Ten problem #3 gates](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research) add family, crash, expiry, reorg and activation cases.

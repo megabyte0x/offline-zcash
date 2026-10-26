@@ -69,6 +69,13 @@ Record every `ths` bug, missing feature or workaround here as you hit it, so it 
 - **Workaround:** the gateway rebuilds the history tree from `getblock h 0` plus `z_gettreestate` per height, persists the leaves, rebuilds after `ths reorg` / `ths rollback` and computes paths itself ([`poc/mmr-anchor-poc`](poc/mmr-anchor-poc/README.md)); for inclusion it builds the txid branch from `getblock h 1` and reads `authdigest` from verbose `getrawtransaction`. This is a gateway duty in the design ([docs/components/gateway.md](docs/components/gateway.md)), not a harness-only step.
 - **Upstream feature:** a Zakura RPC for a history-tree path at height N (or a leaf list), and a recent-anchors RPC. This is a Zakura issue rather than a `ths` one.
 
+### 10. Maximum-expiry rejection message describes an exclusive bound (wording bug, Zakura)
+
+- **What:** on ths v0.4.1, expiry 500,000,000 is rejected with “must be less than the maximum Height(499999999)”, but **499,999,999 itself is accepted and mined**. The consensus maximum is inclusive; this is misleading error text, not a consensus failure.
+- **Where:** Zakura v1.6.0 `ebda15e23ed0189787e21b4625c6e4f62d10932f`, `crates/zakura-consensus/src/transaction/check.rs` L628–645 (bound check; rejection text observed through `sendrawtransaction`). [Measured evidence and source revisions](docs/components/expiry-reissue.md#consensus-expiry-versus-mempool-policy).
+- **Workaround:** test/use the inclusive bound from ZIP 203, not the error's “less than” wording. Application zero-expiry refusal and tighter fleet caps remain proposed policy, not node restrictions.
+- **Upstream fix:** change the Zakura error wording to “at most” / “less than or equal to” and keep an equality regression case. No launcher/version change needed here.
+
 ## Offline builder
 
 Build on Zakura Common **2.2.0**, the version `ths` v0.4.1 uses. The 2.2.0, 3.x and 4.x type families cannot be mixed in one binary, so pin every crate exactly; `zakura-client-*` rc7 asks for `^2.0.0` and would otherwise float.
@@ -85,7 +92,7 @@ Build on Zakura Common **2.2.0**, the version `ths` v0.4.1 uses. The 2.2.0, 3.x 
 
 Import them under their upstream names, as `ths` does, for example `zcash_primitives = { package = "zakura-primitives", version = "=2.2.0" }`.
 
-Function sequence (functions verified in source at v2.2.0 / rc7; not yet compiled):
+Function sequence (source at v2.2.0 / rc7; direct builder compiled/mined in scratch research, wallet-DB and production payee app still unverified; [evidence and pending expiry policies](docs/components/expiry-reissue.md)):
 
 - **Network:** `LocalNetwork { .., nu6_3: Some(1), nu7: Some(1) }` matching the `ths` chain. `BranchId::for_height` then selects NU7.
 - **Payer, offline:** `Builder::new(net, target_height, BuildConfig::Standard { ironwood_anchor: Some(anchor), .. })` → `add_ironwood_spend(fvk, note, merkle_path)` (notes must be `NoteVersion::V3`) → `add_ironwood_output(ovk, addr, value, memo)` → `with_expiry_height(h)` → `build(..)` → `BuildResult::transaction()` → `Transaction::write`. With the wallet DB instead: `propose_transfer` → `create_proposed_transactions(.., expiry_height: Some(h))` → `get_transaction(txid)` → `write`.

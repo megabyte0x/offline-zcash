@@ -32,7 +32,7 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 |---|---|---|
 | On chain | Nullifiers, note commitments, action count, anchor, expiry height, `valueBalance`, exact size; no fee field. 820 B per action | [ZIP 229](https://zips.z.cash/zip-0229), [ZIP 225](https://zips.z.cash/zip-0225) |
 | On chain | Ironwood formal verification covers soundness and balance, not privacy | [crypto.news](https://crypto.news/zcash-ironwood-upgrade-whats-changed-after-the-orchard-bug/) |
-| On chain | Standard wallets use anchor H−3 and expiry H+40; a stale anchor or long delta marks "built offline". Non-standard fees reveal wallets | [ZIP 315](https://zips.z.cash/zip-0315), [ZIP 317](https://zips.z.cash/zip-0317) |
+| On chain | ZIP 315 recommends anchor H−3 for its wallet policy; expiry defaults are version/height dependent: pinned Common 2.2.0 uses target+40, NU7 upstream default target+120 (~50 min). Long expiry/old anchors distinguish classes, not proof a tx was offline; fees also fingerprint | [ZIP 315](https://zips.z.cash/zip-0315), [ZIP 218](https://zips.z.cash/zip-0218), [ZIP 317](https://zips.z.cash/zip-0317), [prior art](prior-art.md) |
 | Broadcast | The first node to broadcast is the apparent origin; Zcash txs deanonymized from timing "with a high level of accuracy" (pre-Zebra) | [Biryukov & Tikhomirov 2019](https://orbilu.uni.lu/bitstream/10993/39724/1/biryukov-tikhomirov-deanonymization-and-linkability) |
 | Broadcast | Long-lived nodes over Tor face exit-banning and fingerprinting; a global passive adversary defeats Tor | [Biryukov & Pustogarov 2015](https://arxiv.org/abs/1410.6079), [Kappos & Piotrowska 2019](https://arxiv.org/pdf/1902.07337) |
 | Light client | lightwalletd learns IP, sync height and full-tx fetches; may show fake payments if headers are not validated | [ZIP 307](https://zips.z.cash/zip-0307), [Hornby deck](https://defuse.ca/downloads/Fixing%20Privacy%20Problems%20in%20the%20Zcash%20Light%20Wallet%20Protocol.pdf) |
@@ -64,7 +64,7 @@ Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Of
 
 | Threat | Mitigation | Residual |
 |---|---|---|
-| Payer double-spends while offline | Pending tier with caps and the device-bound PaymentStatement; nullifier sharing inside a partition; final only when mined; nullifier-lock co-signer in v1.1 | High at pending; none for escrow notes while the co-signer is honest |
+| Payer double-spends while offline | Pending tier with caps/PaymentStatement and partition-local nullifier sharing; v1.1 nullifier locks | High at pending; escrow prevention conditional on honest **non-rollbackable** C and every spend/recovery path using the lock. Written failure model and tests required before claiming safety |
 | Gateway first-spy and chain-state liar | Tor, fresh circuit per tx; ≥ 2 gateways; PoW-validated headers, MMR anchor paths, txid branches, signed bundles; `checked (single-source)` with one gateway | Medium (first-spy); omitted conflicts remain undetectable from one source |
 | Fleet fingerprint (anchor, expiry, padding, uplink bursts) | Freshest anchor; one fleet expiry; standard 10,000-zat fee; 2-action padding; spread broadcasts | Medium |
 | Mesh topology and origin via stable peer IDs and announcements | Private messages only; same-size traffic | Medium–High (tiny set) |
@@ -85,7 +85,7 @@ The design is written for the right-hand column. The left-hand column says only 
 | Gateway is honest | The design does not assume it, here or on mainnet. The harness gateway is a Mac we control, so lying-gateway tests inject forged bundles deliberately | Assume ADV-G: every bundle fact verified; ≥ 2 gateways |
 | Proof of work on headers | Cannot be exercised: Regtest has `with_disable_pow(true)` (issue log #8). Checked with mainnet header vectors under the `regtest-no-pow` flag ([chain.md](components/chain.md)) | Equihash and difficulty against a pinned floor on every header the payee accepts |
 | Gateway can reach the network | Loopback to `ths` | Intermittent; Tor is often blocked in shutdowns, so the gateway may be exposed or absent |
-| Uplink comes before expiry | Holds | Often fails: a 3-day expiry is short against real outages (G8); re-issue needs the payer |
+| Uplink comes before expiry | Explicit mining exercises block age, not real outage availability | Profile not selected: proposed 3-day courier assumes ≤1-day uplink; proposed 21-day shutdown assumes ≤7 days. Neither covers arbitrary shutdowns. Re-issue needs A even under 2-of-2; debt remains ([expiry/re-issue](components/expiry-reissue.md)) |
 | No radio adversary | BLE, one room | Fails: ADV-L can locate and jam transmitters |
 | Anonymity set | Worthless coins, so untested | Fleet users only; small |
 | Keys | Public dev keys (all-zero entropy, P8) | Real seeds, hardware or FROST-held |
@@ -98,7 +98,7 @@ The design is written for the right-hand column. The left-hand column says only 
 3. [unverified] Whether BitChat private messages leak recipient identity to relays beyond the routing header; peer-ID rotation cost for the outbox.
 4. [unverified] Tor reachability from the gateway in a real shutdown; fallback transports (bridges) not evaluated. Source for "often blocked" was the review, not an archive note.
 5. [unverified] `schema.rs` L42 all-zero entropy: from the reviews; ths file path and commit not re-checked here.
-6. [unverified] Size of the fingerprint: how distinct a fleet expiry delta and anchor age are on mainnet.
+6. [partly measured] Clustered pre-NU7 sample: only 4/1,500 mined txs had ≥10,368 blocks left at inclusion. Supports concern, not a representative anchor-age or future-NU7 distribution. Expired/replaced nullifiers stay linkable; quantify joint expiry/anchor/burst distinction in problem #6 ([expiry research](components/expiry-reissue.md#lifetime-freshness-privacy-and-upgrades)).
 7. [unverified] Duress or hidden-wallet support for shielded Zcash on any hardware signer.
 
 ### Corrections to archive text

@@ -1,6 +1,6 @@
 # MVP v1 design
 
-Status: agreed 25 October 2026, before implementation. Only the local chain runs today. This file is the system view; each component's details, findings and open items are in [components/](components/). History and full sources are in [../archive/](../archive/README.md).
+Status: problems #1 and #2 agreed 25 October 2026, before app implementation. Research PoCs run on the local chain. Problem #3 research is complete but its [expiry/re-issue proposals](components/expiry-reissue.md) **await owner decision**; no default or repair protocol is ratified. This file is the system view; details/findings/open items are in [components/](components/). History is in [../archive/](../archive/README.md).
 
 **Rule: design for mainnet; the local chain is the harness.** Every check is specified for Zcash mainnet under NU7 with an untrusted gateway. The `ths` Regtest chain and the four Macs exist to run that design, not to simplify it. Where Regtest cannot exercise a check (proof of work), an explicit test flag covers the gap and mainnet vectors test the check itself ([chain.md](components/chain.md)). Phases below are a build order, never a security downgrade.
 
@@ -34,6 +34,7 @@ Four Macs (macOS 13+), each running the BitChat fork, plus the local chain. A, B
 | Pending tier | Device-bound PaymentStatement and Receipt formats, payee-to-payee nullifier sharing, limits | [pending-tier.md](components/pending-tier.md) | Spec decided |
 | Gateway | Untrusted. Submits (over Tor on mainnet), rebuilds the history MMR, returns signed bundles: tip, anchor paths, txid branches, conflict notices | [gateway.md](components/gateway.md) | To build; MMR rebuild proven in [`poc/mmr-anchor-poc`](../poc/mmr-anchor-poc/README.md) |
 | Double-spend controls | Pending tier now; nullifier-lock co-signer (2-of-2 FROST) in v1.1; recovery in v1.2 | [double-spend.md](components/double-spend.md) | Decided; FROST signing proven in [`poc/escrowcheck`](../poc/escrowcheck/README.md) |
+| Expiry and re-issue | Settlement lifetime, families, repair, re-anchoring and signer fence | [expiry-reissue.md](components/expiry-reissue.md) | Research complete; **awaiting owner decision**, not implemented |
 | Privacy | Threat model and leaks | [privacy-and-threats.md](privacy-and-threats.md) | Reference |
 
 ## One payment
@@ -46,7 +47,7 @@ Four Macs (macOS 13+), each running the BitChat fork, plus the local chain. A, B
 | 3 | A sends the transaction plus its signed PaymentStatement (invoice hash, amount, txid, auth digest, seq) to B as a private message. Relays and D only ever see raw transaction bytes | Mesh |
 | 4 | B checks it, posts the pending nullifiers to the fleet-payee group, waits 5 s if another payee is connected, and replies with a signed Receipt: "passes checks at height H; pending" | Mesh |
 | 5 | B forwards the bytes to D as a separate private message; D submits and returns a mempool receipt; the node mines | Gateway |
-| 6 | A signed bundle returns: tip header, txid branch, anchor paths, conflict notices. B checks the signature, proof of work (mainnet) and the paths, then marks `included`, later `confirmed`. On expiry, A re-issues from the same notes | Mesh |
+| 6 | A signed bundle returns: tip header, txid branch, anchor paths, conflict notices. B verifies signature, PoW (mainnet) and paths, then `included`, later `confirmed` (ten is provisional demo policy). Expiry is not proof of non-inclusion; exact repair/debt states await problem #3 | Mesh |
 | 2′ | v1.1, escrow notes: A sends the redacted PCZT to C, which locks the nullifiers and returns its FROST share before A proves and continues at step 3 | Mesh |
 
 ## Finalized decisions
@@ -55,8 +56,8 @@ Both independent reviews agreed on these; build around them.
 
 - A builds, proves and signs; B checks and stores; D (the gateway) submits bytes and holds no spending or viewing key. The co-signer C (v1.1) holds one FROST share and no viewing key.
 - Payer and payee each have a device-bound Ed25519 payment key, enrolled in person; it signs the PaymentStatement and Receipt. The keys and formats are in [pending-tier.md](components/pending-tier.md).
-- Txid identifies the payment for transport; resubmission is harmless. Caches key on txid plus auth digest, because a v6 re-anchor keeps the txid.
-- A stuck payment is re-issued from the same notes, so at most one version can be mined. Never re-pay from different notes.
+- Exact-byte resubmission is idempotent. Caches/delivery dedupe use **(txid, auth_digest)** because a v6 re-anchor keeps txid. One-obligation payment families are proposed, not ratified (#3).
+- A stuck payment uses the same real notes, so at most one conflicting version can mine on **one valid chain**, not across orphaned histories. Never re-pay from unrelated notes. Canonical-effects/family-wide rules and reservation resolution await #3.
 - Received funds cannot be re-spent offline; pre-split notes cap the number of offline payments.
 - "Pending" is an IOU from a known payer. "Final" only after mining.
 - Branch ID, expiry delta and fee come from configuration. Fee is 10,000 zats for 2 actions (what the wallet emits). A transaction unmined at a network upgrade dies and is re-issued.
@@ -80,3 +81,5 @@ Stages are a build order. Every stage is designed for mainnet and run on the har
 | Logos phase | Mainnet | Basecamps and Logos Delivery; Zebra module as gateway; quorum committees |
 
 What to work on next: [open-work.md](open-work.md).
+
+Current design order: #1 double-spend and #2 chain trust settled; #3 expiry/re-issue researched, awaiting owner; **#4 gateway protocol next**, then #5 BitChat durability, #6 fleet fingerprint, #7 stack compatibility, #8 offline limits/phone proving, #9 policy values. Two #2 leftovers also await owner: reset exposure at `confirmed` on both networks, and single-source Receipt state byte versus flag. [Dated community prior art](prior-art.md) informs the remaining work.

@@ -13,7 +13,7 @@ The design target is mainnet. In the harness D is the Mac that runs `ths`; on ma
 | Submission (mainnet) | Over Tor, fresh circuit per transaction, to a public lightwalletd or Zebra endpoint; every send approved by the operator. Tor is part of the design, built after the loopback path works; it is not an optional later hardening | [decided] |
 | Raw RPC | `ths rpc` is not in v0.4.1, so call JSON-RPC directly with `curl` (issue log #5 in [AGENTS.md](../../AGENTS.md)) | [decided] |
 | Input | Raw tx bytes only. No intent, payment details or payer identity reach relays or the gateway (gap G1, [reconciliation §5](../../archive/reports/Design%20review%20reconciliation.md)) | [decided] |
-| Identity | Txid. Resubmitting the same bytes through any relay or gateway is harmless. Cache on txid + auth digest, because a re-anchored copy keeps the txid | [decided] |
+| Identity | Exact-byte resends idempotent; cache/delivery dedupe on **(txid, auth_digest)**, because re-anchoring keeps txid. Family obligations are proposed (#3), not D's invoice/identity data | [decided, clarified] |
 | Returns | (1) a broadcast receipt for the txid; (2) signed chain bundles (contents below) carrying the tip, anchor paths, inclusion proofs and conflict notices | [decided] |
 | Bundle contents | Tip (height, hash, full header); `authDataRoot(N+1)` (32 B) for each anchor block N; MMR path from leaf N to `hashBlockCommitments` of header N+1 for each anchor in use; recent-anchor set (height → Ironwood root) for the fleet window; inclusion proofs (header + txid Merkle branch) for every txid the payee forwarded; targeted conflict notices; signature. Every slot is present from step 1 of the build order, empty when nothing applies | [decided] |
 | Signing key | The gateway signs every bundle with its enrollment payment key, the same per-device Ed25519 scheme as payer and payee (role bit 4 in the enrollment record, [pending-tier.md](pending-tier.md)). Two conflicting signed tips from one key are portable evidence of misbehaviour | [decided] |
@@ -45,7 +45,8 @@ Build order (a sequence, not a security downgrade; each step has gating tests in
 - Projects tied to one operator's relay died with that operator (goTenna, Samourai pushTx). Any device with backhaul should be able to act as a gateway, and the design runs two. txTenna gave the sender no confirmation path, so receipts are mandatory ([report, Gateways settle](../../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md)).
 - Bundles are broadcast rather than queried, which keeps the [ZIP 307](https://zips.z.cash/zip-0307) property that sync does not reveal interest. Compact blocks carry every Ironwood nullifier and commitment (`ironwoodActions`, [compact_formats.proto](https://github.com/zcash/lightwallet-protocol/blob/main/walletrpc/compact_formats.proto) L74, L131–132).
 - Consensus rejects a duplicate Ironwood nullifier (Zebra `DuplicateIronwoodNullifier`, `zebra-consensus/src/error.rs` L200–201), so at most one of two conflicting versions is mined.
-- Tor submission on mainnet follows Zodl's Tor mode: a fresh circuit per transaction ([Zodl Tor](https://support.zodl.com/article/17-enabling-tor-protection)).
+- The fresh-circuit-per-transaction rule is **our design requirement**, not verified behavior of every wallet broadcast. Reuse SDK isolation/fail-closed plumbing but test D's actual send/retry path; Zashi's documented per-txid isolation concerned enhancement requests ([prior art](../prior-art.md)). Tor does not hide bytes/ingress timing from D itself.
+- Pinned Zakura rejected later-expiry same-input renewal while the original sat in its mempool; it accepted/mined the replacement after expiry eviction. Long expiry guarantees neither resident retention nor mining. Compatible re-anchoring keeps txid/signatures but needs new witnesses/proof on A; D cannot refresh expiry/branch without authorization ([expiry/re-issue findings](expiry-reissue.md)).
 
 ### Bundle sizes (mainnet, 3,456 blocks/day at the 25 s target)
 
@@ -85,6 +86,7 @@ These are for later; the logos-co modules play no part in MVP v1 ([logos_zcash_m
 
 ## Open
 
+- **Next design problem #4:** specify gateway wire protocol and signature coverage, submission ACK versus inclusion, retry/idempotency and ordinary tip lag versus competing forks. Problem #3 repair/family/config proposals remain unratified; no such protocol is implemented. Gateway duties from problem #2 stay decided ([open-work.md](../open-work.md)).
 - [unverified] A phone gateway through `socat` or an SSH tunnel to `ths` lightwalletd. Test: `SendTransaction` from an iOS build over Wi-Fi.
 - [unverified] Gateway behaviour on resubmitting an already-mined or already-pooled txid (expected: a harmless error). Test both RPC paths on `ths`.
 - [unverified] Payee restarts, then the gateway appears hours later and submits (open check 6, [MVP v1 design](../../archive/reports/MVP%20v1%20design.md)).

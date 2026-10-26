@@ -46,16 +46,18 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 
 ### Anchors ([ZIP 258](https://zips.z.cash/zip-0258), [ZIP 229](https://zips.z.cash/zip-0229))
 
-- `anchorIronwood` "MUST refer to some earlier block's final Ironwood-pool treestate". There is no age bound. Zebra accepts any historical root (`zebra-state/src/service/check/anchors.rs` L120–160; local checkout, commit not recorded). The anchor block must stay on the best chain; Zebra's `MAX_BLOCK_REORG_HEIGHT` is 1,000.
+- `anchorIronwood` "MUST refer to some earlier block's final Ironwood-pool treestate". There is no consensus age bound. Zebra accepts historical roots (`zebra-state/src/service/check/anchors.rs` L120–160 at [1e03ee7](https://github.com/ZcashFoundation/zebra/tree/1e03ee753fbc72d70882cdfd3c8bdd58b80f0f97)). The root must remain a valid historical root on the selected chain; the same root may occur in several blocks. Zebra's 1,000-block rollback window is local node policy, not consensus finality (`zebra-chain/src/parameters/constants.rs` L20–33 at that revision).
 - In v6 the anchor is **authorizing data**. Re-anchoring keeps the txid, and the proofs still bind the anchor. Caches therefore key on txid plus auth digest, as Zakura does ([reconciliation §1](../../archive/reports/Design%20review%20reconciliation.md)).
 - Funds received in a block cannot be spent in that same block, because the anchor must come from an earlier block ([ZIP 326](https://zips.z.cash/zip-0326)).
+- Measured on `ths` v0.4.1: anchor at 1,113 mined at 11,488, **10,375 blocks old**, not three elapsed days. After a reorg removed another root, the node returned `unknown Ironwood anchor`; fresh witnesses/anchor/proof with **all old ordinary signatures** mined with the same txid. Retained-FROST-signature re-anchoring remains unexecuted. If the input note itself disappears, a new witness cannot repair it. [Evidence and pinned source lines](expiry-reissue.md#old-roots-reorgs-and-re-anchoring).
 
 ### Expiry ([ZIP 203](https://zips.z.cash/zip-0203), [ZIP 218](https://zips.z.cash/zip-0218))
 
-- `nExpiryHeight` is in 1..499,999,999, or 0 for no expiry. Expiry N means the tx must be included in block N or earlier.
+- `nExpiryHeight` is in 1..499,999,999 **inclusive**, or 0 for no expiry. Expiry N permits inclusion in N. Pinned Zakura accepted tip+1 and mined exactly at expiry (no three-block expiring-soon refusal in this path); it evicts resident txs when `tip >= N`, because the next block is too late.
+- Measured on `ths` v0.4.1: expiry 0 survived 1,000 deliberately empty blocks and mined; 499,999,999 mined; 500,000,000 was rejected. Zebra source agrees; live Zebra remains untested. No relative-delta cap or resident-age TTL was found in the inspected paths; long expiry does not guarantee retention/mining. [Evidence and source lines](expiry-reissue.md#consensus-expiry-versus-mempool-policy).
 - Expiry is effecting data: it is fixed at signing and committed by the txid ([ZIP 374](https://zips.z.cash/zip-0374)).
-- ZIP 218 recommends a 40 → 120 block default at NU7. Zakura Common 2.2.0 still has `DEFAULT_TX_EXPIRY_DELTA = 40` (`crates/zcash_primitives/src/transaction/builder.rs` L54, [zakura-core/common@b6cf4ce](https://github.com/zakura-core/common/blob/b6cf4cefe38fdccc6d2b0dc868f7d6ef01683413/crates/zcash_primitives/src/transaction/builder.rs)); Common 4.0.0 uses 120. At the 25 s target, 40 blocks is about 17 min and 120 blocks about 50 min.
-- 3,456 blocks/day at the 25 s target. The old report's example fleet delta (daily uplink + 2-day margin) is 3 × 3,456 = 10,368 blocks.
+- ZIP 218 recommends a 40 → 120 block default **after target height**, normally tip+1, at NU7. It preserves about 50 minutes of ordinary-wallet lifetime, not offline carriage. Zakura Common 2.2.0 still has `DEFAULT_TX_EXPIRY_DELTA = 40` (`crates/zcash_primitives/src/transaction/builder.rs` L54, [zakura-core/common@b6cf4ce](https://github.com/zakura-core/common/blob/b6cf4cefe38fdccc6d2b0dc868f7d6ef01683413/crates/zcash_primitives/src/transaction/builder.rs)); Common 4.0.0 uses 120. At the 25 s target, 40 blocks is about 17 min.
+- 3,456 blocks/day at the 25 s target. Fleet profile **not selected**: proposed daily-uplink courier delta 10,368 (~3 days), proposed shutdown default 72,576 (~21 days) only with ≤7-day uplink promise. These preserve already accepted payments, not new-acceptance freshness. [Problem #3 proposals 1 and 6](expiry-reissue.md#proposed--awaiting-owner-decision).
 
 ### Headers, proof of work and the history tree
 
@@ -68,6 +70,7 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 
 - The v6 txid and auth digests are personalised with the branch ID (`ZcashTxHash_` / `ZTxAuthHash_` ‖ branch, [ZIP 229](https://zips.z.cash/zip-0229)). Re-anchoring cannot rescue a tx signed under the wrong epoch.
 - Zebra 7.0.0-rc.0 does not penalise peers that relay the previous or next branch ID within about 50 min of an activation (Zebra CHANGELOG L69).
+- No NU8-or-later activation height was found in the pinned ZIP/Zebra revisions as of **25 October 2026**. This is not a future validity promise. The proposed signing/renewal rule caps at next known activation − 1 and requires authenticated, fresh fleet configuration; `with_expiry_height` does not enforce this itself ([expiry-reissue.md](expiry-reissue.md#lifetime-freshness-privacy-and-upgrades)).
 
 ### `lock_time`
 
@@ -97,8 +100,6 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 - [unverified] `regtest-no-pow` test vectors: a real mainnet header passes the Equihash (200,9) and difficulty check and a corrupted one fails, both with the flag off; with the flag on, a live 177-byte Regtest header is accepted and the rest of the bundle checks still run.
 - [unverified] Zakura's history-tree commitment in the mainnet NU7 activation block; Zebra 7 RPC behaviour for `getblock h 0`, `z_gettreestate` and verbose `getrawtransaction`.
 - [unverified] Zebra 7 accepts v6 bytes built with Zakura 2.2.0 (gap G7; [reconciliation §2](../../archive/reports/Design%20review%20reconciliation.md)). Test: submit the same bytes to a Zebra 7 Regtest node.
-- [unverified] Zebra and Zakura behaviour with `nExpiryHeight = 0` and with very large expiries. Test both on `ths`.
-- [unverified] A stale-anchor, long-expiry tx is mined days later. Test: build against an old anchor, mine past it, then submit.
+- [unverified] Live Zebra expiry boundaries/mempool and old-anchor acceptance with the same bytes; Zakura results are in Findings, not open. Real multi-day wall-clock residence, restart/congestion policy and mainnet reorg risk remain untested.
 - [unverified] Upstream librustzcash (`zcash_primitives` 0.31) transactions are accepted by Zakura, and the reverse (issue log #4).
-- [unverified] Whether another upgrade after NU7 is scheduled; this caps the safe expiry.
-- Test: `ths reorg` deeper than a payment's anchor block, to confirm the tx is rejected and re-issued.
+- Pending owner decisions, eight research open items and ten renewal/reorg/activation gates: [expiry-reissue.md](expiry-reissue.md#open). Recheck upgrade schedules at signing/renewal; no activation-crossing experiment was run.
