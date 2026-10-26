@@ -6,8 +6,11 @@ Rule: the design target is mainnet with an untrusted gateway; the local `ths` Re
 
 Current state (26 October 2026): problem #1 (double-spend) was **re-decided 26 October**: pending below the floor, payer + 3-of-4 co-signer group above it; #2 (chain trust) is settled; #3 expiry/re-issue and the #2 leftovers were decided 26 October for a minimal build (shutdown profile, A-initiated repair); next design problem is **#4 gateway protocol** ([open-work.md](open-work.md)).
 
+**v0.1.0 is built (26 October 2026):** a payment built offline crosses a four-device mesh (A–R–B–D, each device in its own container) and is mined on the local chain. All seven gating tests pass. See [mvp-v0.1.0.md](mvp-v0.1.0.md), with code in [../crates/](../crates/) and the bench in [../bench/](../bench/README.md).
+
 | Read | For |
 |---|---|
+| [mvp-v0.1.0.md](mvp-v0.1.0.md) | What v0.1.0 runs, measured timeline, gating test results, decisions and limits |
 | [design.md](design.md) | System view, payment flow, finalized decisions, stages |
 | [open-work.md](open-work.md) | What to build and test next, in order |
 | [prior-art.md](prior-art.md) | Dated community sweep: borrow/don't-borrow inventory, flaws, negative searches and contacts (cutoff 25 October 2026) |

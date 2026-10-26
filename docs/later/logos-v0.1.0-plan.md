@@ -1,5 +1,7 @@
 # Logos pathway v0.1.0: implementation plan (proposed)
 
+**Status update, 26 October 2026 (later):** the owner redefined v0.1.0 as the mesh proof in sandboxes. It was built from this plan's core, roles and tests, using our own mesh crate instead of the Offline Protocol sidecar ([../mvp-v0.1.0.md](../mvp-v0.1.0.md)). Milestones 5–7 below (Logos packaging, Basecamp UI, Macs) are no longer part of v0.1.0.
+
 **Status:** Proposed, 26 October 2026. Owner chose `mesh_offlineprotocol` as the first backend. The design is in [logos-modules.md](logos-modules.md); this file orders the build. Nothing is built yet.
 
 ## Goal

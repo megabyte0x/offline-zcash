@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline Zcash</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e7e9ee; --mut:#8a93a6; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#f4b728; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; } header h1 span { color:var(--acc); }
+  .pill { padding:2px 8px; border-radius:99px; background:var(--card); border:1px solid var(--line); color:var(--mut); font-size:12px; }
+  main { padding:20px; display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); max-width:1200px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:0 0 10px; }
+  .big { font-size:26px; font-weight:600; }
+  .mut { color:var(--mut); } .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all; }
+  label { display:block; margin:8px 0 4px; color:var(--mut); }
+  input, select, button { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0c0e12; color:var(--fg); font:inherit; }
+  button { background:var(--acc); color:#111; font-weight:600; border:0; margin-top:12px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .wide { grid-column: 1 / -1; }
+  table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mut); font-weight:500; font-size:12px; }
+  .st { font-weight:600; } .st.mined { color:var(--ok); } .st.refused, .st.gateway-rejected { color:var(--bad); } .st.accepted-pending, .st.submitted, .st.delivered, .st.sent, .st.in-mempool { color:var(--warn); }
+  details summary { cursor:pointer; color:var(--mut); }
+  #msg { margin-top:8px; min-height:1.4em; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>ⓩ</span> Offline Zcash <span class="mut" id="ver"></span></h1>
+  <span class="pill" id="who">…</span>
+  <span class="pill" id="online">…</span>
+  <span class="pill" id="nbrs">…</span>
+</header>
+<main>
+  <section>
+    <h2>Wallet</h2>
+    <div class="big" id="bal">…</div>
+    <div class="mut" id="wal"></div>
+    <button id="syncb">Sync now (needs internet)</button>
+    <div class="mut" id="syncmsg"></div>
+  </section>
+  <section>
+    <h2>Pay offline</h2>
+    <label for="to">To</label><select id="to"></select>
+    <label for="amt">Amount (ZEC)</label><input id="amt" value="0.01" inputmode="decimal">
+    <button id="payb">Build, prove and send over the mesh</button>
+    <div id="msg" class="mut"></div>
+  </section>
+  <section>
+    <h2>Receive</h2>
+    <div class="mono" id="addr"></div>
+    <p class="mut">Payments arrive over the mesh. They are checked offline and shown as pending until a gateway reports them mined.</p>
+  </section>
+  <section class="wide">
+    <h2>Payments</h2>
+    <table><thead><tr><th>When</th><th>Direction</th><th>With</th><th>Amount</th><th>State</th><th>Transaction</th></tr></thead><tbody id="pays"></tbody></table>
+    <div id="refs" class="mut"></div>
+  </section>
+  <section class="wide">
+    <h2>Mesh</h2>
+    <div class="mono" id="mesh"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const zec = (z) => (z / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' ZEC';
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+let fleetLoaded = false;
+async function refresh() {
+  try {
+    const s = await api('/api/status');
+    $('ver').textContent = 'v' + s.version;
+    $('who').textContent = s.name + ' · ' + s.role;
+    $('online').textContent = s.online ? 'gateway / online' : 'offline';
+    $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbors.join(', ') || 'none');
+    $('bal').textContent = zec(s.wallet.spendable);
+    $('wal').textContent = `locked in pending payments: ${zec(s.wallet.locked)} · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
+    $('addr').textContent = s.address || '';
+    $('syncb').style.display = s.online ? '' : 'none';
+    $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored}`;
+    if (!fleetLoaded) {
+      const f = await api('/api/fleet');
+      $('to').innerHTML = f.devices.filter(d => d.name !== s.name && d.role.includes('payee')).map(d => `<option>${d.name}</option>`).join('');
+      fleetLoaded = true;
+    }
+    const p = await api('/api/payments');
+    $('pays').innerHTML = p.payments.sort((a, b) => b.created_ms - a.created_ms).map(x => `
+      <tr><td>${new Date(x.created_ms).toLocaleTimeString()}</td><td>${x.direction}</td><td>${x.counterparty}</td><td>${zec(x.amount)}</td>
+      <td><span class="st ${x.state}">${x.state}</span><details><summary>history</summary>${x.history.map(h => `<div class="mut">${new Date(h.ms).toLocaleTimeString()} ${h.event}</div>`).join('')}</details></td>
+      <td class="mono">${x.txid}</td></tr>`).join('') || '<tr><td colspan="6" class="mut">No payments yet</td></tr>';
+    $('refs').innerHTML = p.refusals.map(r => `Refused from ${r.from}: code ${r.reject.code} ${r.reject.reason}`).join('<br>');
+  } catch (e) { $('who').textContent = 'node not reachable: ' + e.message; }
+}
+$('payb').onclick = async () => {
+  $('payb').disabled = true; $('msg').textContent = 'Proving…';
+  try { const p = await api('/api/pay', { to: $('to').value, amount: $('amt').value }); $('msg').textContent = 'Sent ' + p.txid.slice(0, 16) + '…'; }
+  catch (e) { $('msg').textContent = e.message; }
+  $('payb').disabled = false; refresh();
+};
+$('syncb').onclick = async () => {
+  $('syncb').disabled = true; $('syncmsg').textContent = 'Syncing…';
+  try { const r = await api('/api/sync', {}); $('syncmsg').textContent = `Synced to ${r.tip}, ${r.new_notes} new notes`; }
+  catch (e) { $('syncmsg').textContent = e.message; }
+  $('syncb').disabled = false; refresh();
+};
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

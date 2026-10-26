@@ -2,6 +2,13 @@
 
 This repository holds research and, next, a proof of concept for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what to do next. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
 
+## Code (v0.1.0)
+
+- `crates/zcash-offline-core`: wallet sync, offline builder, payee checks, `ozm1` sealing, signed messages. No transport code.
+- `crates/ozm-mesh`: BitChat-style mesh (TTL flood, 512-byte frames, store-and-forward, acks) over TCP links; see its README for the wire format.
+- `crates/ozm-node`: the daemon (roles payer, relay, payee, gateway), local HTTP API and web UI on `127.0.0.1:7780`.
+- `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)). Run `cargo clippy --workspace --all-targets` and `cargo test --workspace` before committing.
+
 ## Current target
 
 - **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
@@ -54,6 +61,7 @@ Record every `ths` bug, missing feature or workaround here as you hit it, so it 
 
 ### 7. Externally submitted transactions are not mined automatically (behaviour to confirm)
 
+- **Confirmed 26 October 2026 (v0.1.0 bench):** submitted transactions stay in the mempool until a block is generated; the v0.1.0 gateway calls `generate 1` after each submission (`--mine`). Resubmitting answers "transaction already exists in mempool" or "...transaction was committed to the best chain"; the gateway treats both as success.
 - **What:** the chain stayed at one height while idle after `sendrawtransaction`; `ths` appears to mine only on demand (`crates/ths-server/src/payments/attempt.rs` L83–97 at v0.4.1, and `ths mine`). A gateway that submits raw bytes must therefore also trigger `generate` or `ths mine` for the demo. [unverified: observed once on 2026-10-25, not reproduced deliberately]
 - **Workaround:** the gateway calls `ths mine` (or the `generate` RPC) after each submission.
 - **Upstream feature:** an optional auto-mine interval, or mining whenever the mempool is non-empty.

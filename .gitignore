@@ -1,2 +1,4 @@
 .DS_Store
 .amp/portals/*
+target/
+bench/.state/
