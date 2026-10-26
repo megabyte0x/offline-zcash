@@ -1,7 +1,7 @@
 # Offline builder
 
 The payer's builder creates, proves and signs a v6 Ironwood-only transaction with no network. It takes the fleet expiry, fee and branch ID from configuration and outputs the raw bytes.
-It is Rust on Zakura Common `=2.2.0` (the stack `ths` v0.4.1 uses) behind our own Swift wrapper for iOS. The app and wrapper are not built. Scratch research compiled the direct builder and mined ordinary-signature transactions; FROST PCZT variants validated on a synthetic tree, not mined ([expiry-reissue.md](expiry-reissue.md)). The wallet-DB path remains unverified.
+It is Rust on Zakura Common `=2.2.0` (the stack `ths` v0.4.1 uses) behind our own mobile wrapper (Swift for iOS or Kotlin/JNI for Android; the first phone platform is not decided). The app and wrapper are not built. Scratch research compiled the direct builder and mined ordinary-signature transactions; FROST PCZT variants validated on a synthetic tree, not mined ([expiry-reissue.md](expiry-reissue.md)). The wallet-DB path remains unverified.
 Chain and protocol constants are in [chain.md](chain.md). Checking the result on the payee side is in [payee-verifier.md](payee-verifier.md).
 
 ## Decided
