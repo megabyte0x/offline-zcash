@@ -21,5 +21,7 @@ Current state (26 October 2026): problem #1 (double-spend) was **re-decided 26 O
 | [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
 | [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
 | [later/logos.md](later/logos.md) | Logos phase (not MVP) |
+| [later/logos-modules.md](later/logos-modules.md) | Logos pathway module designs (proposed): `mesh_transport` contract and backends, `zcash_offline_module`, BLE mesh, upstream issue drafts |
+| [later/logos-v0.1.0-plan.md](later/logos-v0.1.0-plan.md) | Logos pathway v0.1.0 build plan (proposed): `mesh_offlineprotocol` first, milestones and gating tests |
 
 Each component uses **Decided** (build around it), **Findings** (with sources), **Open** (unverified items/tests); **Proposed** means awaiting owner approval, not implemented. Provisional numerical policies are not measured safety guarantees. Repository rules and the `ths` issue log stay in [../AGENTS.md](../AGENTS.md). Original long-form research is in [../archive/](../archive/README.md), read-only. Throwaway feasibility crates live in [../poc/](../poc/): `escrowcheck` (FROST co-signing on the Zakura 2.2.0 pins) and `mmr-anchor-poc` (ZIP 221/258 anchor proofs against the live `ths` chain).

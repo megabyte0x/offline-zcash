@@ -160,6 +160,8 @@ Setup: prebuilt `logosdeliverynode` v0.39.2 (`waku-v0.39.2-amd64-linux.tar.gz`, 
 - **MeshCore LoRa** carries about 160 bytes per packet with no fragmentation, so Peers mirrors short text instead of tunnelling (`docs/mesh-transport.md`). That is far too small for a 9,166-byte transaction.
 - **Fit.** It is evidence for the BitChat pathway (phone BLE mesh, Logos-independent) and a working reference for embedding `liblogosdelivery` on Android. It does not make the Logos pathway offline-capable. Reusable ideas: BLE flood plus fragmentation for a roughly 12 KB envelope (about 55 fragments at 247 MTU, so the TTL-3, 6-link limits need testing), the "logos-online" advert bit as gateway discovery, and the bridge envelope with an origin and loop marker (`lr1:`, `docs/bridge-scenarios.md`). No iOS target.
 
+**Module designs (proposed):** [logos-modules.md](logos-modules.md). The Zcash module codes against a `mesh_transport` contract with three swappable backends: `delivery_module`, `libp2p_module` (no online monitor, so no DNS blocker, but no Store), and our own `ble_mesh_module` ported from Peers' flood and fragmentation design. A fourth option, `mesh_offlineprotocol`, wraps the Offline Protocol Mesh SDK (AGPL), which has multi-hop store and forward built in and was benched in the orb. The file also holds the upstream issue drafts.
+
 **Open for the Logos pathway:**
 
 - [unverified] Our own windowed `storeQuery` catch-up after a 7-day partition, and recovery after the 5-failed-dial limit.
