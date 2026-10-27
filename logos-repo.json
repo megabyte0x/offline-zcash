@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "offline-zcash",
+  "displayName": "Offline Zcash",
+  "description": "Offline Zcash service and Basecamp apps. Local NU7 Regtest, test coins only. Unsigned experimental packages.",
+  "homepage": "https://github.com/megabyte0x/offline-zcash",
+  "indexUrl": "https://github.com/megabyte0x/offline-zcash/releases/latest/download/index.json",
+  "trustedSigners": []
+}

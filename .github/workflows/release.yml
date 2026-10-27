@@ -12,6 +12,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/test-release-notes.py
+      - name: Require matching changelog section
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/release-notes.py "$TAG" > release-notes.md
+
   android:
     uses: ./.github/workflows/android.yml
 
@@ -158,15 +169,51 @@ jobs:
   publish:
     name: publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, lgx, android]
+    needs: [notes, build, lgx, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=
+
+      - uses: actions/checkout@v4
+        with:
+          repository: logos-co/logos-modules-release-tool
+          ref: 94462e6633f2b536424c10ceda3c371f7ec8e09d
+          path: catalogue-tool
+
+      - name: Merge platforms and generate verified catalogue
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Same logos-package revision as the module-builder lock; hashes already exist.
+          nix build github:logos-co/logos-package/c25a1167578aef5cbd9a9b6f822ffe2ae4fd6a89#lgx -o lgx-tool
+          export PATH="$PWD/lgx-tool/bin:$PATH"
+          version="${TAG#v}"
+          : > catalogue-urls.txt
+          for m in zcash_offline_module zcash_offline_ui zcash_offline_organiser zcash_offline_gateway; do
+            # One version/root per name: clients select versions before platform variants.
+            lgx merge dist/"$m-$version-"{linux-amd64,linux-arm64,darwin-arm64}.lgx -o "dist/$m-$version.lgx" -y
+            lgx verify "dist/$m-$version.lgx"
+            lgx manifest "dist/$m-$version.lgx" --json | jq -e --arg v "$version" '.version == $v'
+            printf '%s %s\n' "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$m-$version.lgx" "dist/$m-$version.lgx" >> catalogue-urls.txt
+          done
+          python3 catalogue-tool/index.py build catalogue-urls.txt --fetch none --name offline-zcash --icons-dir '' -o dist/index.json
+          python3 catalogue-tool/index.py validate dist/index.json --full --pairs-file catalogue-urls.txt --fetch none
+          python3 catalogue-tool/index.py validate-repo logos-repo.json
+          jq --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/index.json" '.indexUrl = $url' logos-repo.json > dist/logos-repo.json
+          (cd dist && sha256sum *.lgx *.json *.png > catalogue.sha256)
 
       - name: Create or update release
         env:
@@ -174,8 +221,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          python3 scripts/release-notes.py "$TAG" > release-notes.md
           ls -l dist
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file release-notes.md
           fi
-          gh release upload "$TAG" dist/*.tar.gz dist/*.lgx dist/*.apk dist/*.sha256 --clobber
+          gh release upload "$TAG" dist/*.tar.gz dist/*.lgx dist/*.apk dist/*.sha256 dist/*.json dist/*.png --clobber
+          gh release edit "$TAG" --notes-file release-notes.md --draft=false --latest

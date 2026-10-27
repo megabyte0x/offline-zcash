@@ -1,7 +1,7 @@
 {
   "name": "zcash_offline_module",
   "display_name": "Offline Zcash service",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "core",
   "interface": "cdylib",
   "category": "wallet",

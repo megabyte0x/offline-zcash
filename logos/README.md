@@ -20,6 +20,42 @@ Installing Gateway never grants authority: its controls and the engine reject
 non-gateway invites. The existing fleet/invite format is trusted organiser setup,
 not organiser-signed enrollment; it is unchanged in v0.5.0.
 
+## Install by name
+
+Released Basecamp 0.3.2 supports custom catalogues under **Settings → Package
+Repositories**. Add this public URL, Refresh, then search `zcash` in **Manage
+Packages** and install the service and your chosen apps:
+
+```text copy Copy Catalogue URL
+https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+```
+
+For released `logosctl` (its own session, separate from Basecamp):
+
+```sh copy Copy Catalogue Install
+logosctl daemon start --detach
+logosctl catalog add https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+logosctl catalog refresh
+logosctl package search zcash
+logosctl package install zcash_offline_module --yes
+logosctl package install zcash_offline_ui --yes
+logosctl package install zcash_offline_organiser --yes
+logosctl package install zcash_offline_gateway --yes
+logosctl module load zcash_offline_module
+logosctl call zcash_offline_module status
+```
+
+No GitHub authentication is required. Packages are unsigned experimental Regtest
+builds: expect a warning, not a trusted Logos publisher signature. The catalogue
+uses the upstream schema-v2 index generator, full manifest and Merkle root
+bindings; it merges the three portable variants into one package per name.
+The stable identity card points to the latest release's `index.json`. Each
+release also includes four merged LGXs, twelve platform-specific LGXs, icon
+sidecars and `catalogue.sha256` alongside the existing CLI/APK assets.
+
+Manual `.lgx` installation remains a [fallback](../docs/basecamp-install.md#manual-lgx-fallback).
+The official-catalogue submission is [prepared separately](../docs/logos-catalogue-submission.md).
+
 ## Module API
 
 Every method returns a JSON string, and failures are `{"error": "..."}`. The device lives in `<instance persistence path>/ozm`.
@@ -49,7 +85,7 @@ done
 
 The module flake copies `crates/{zcash-offline-core,ozm-mesh,ozm-ble,ozm-node}` into the crate before building, because the builder copies only `rust-lib/`. For plain `cargo` in `rust-lib/`, run `dev-stage.sh` first. Do not run clippy on `rust-lib/`: the generated scaffold has lints. Linux BLE statically bundles libdbus using Cargo's vendored feature; BlueZ and system D-Bus remain host services. [Linux Bluetooth setup and hardware limits](../docs/basecamp-install.md#bluetooth-on-linux).
 
-`.#lgx` builds the `-dev` variant, which dev builds of Basecamp and `logosctl` accept. `.#lgx-portable` builds the variant that released Basecamp builds accept.
+`.#lgx` builds the `-dev` variant, which dev builds of Basecamp and `logosctl` accept. `.#lgx-portable` builds the variant that released Basecamp builds accept. Both already contain content hashes with the pinned builder; no bundler replacement is needed. Release packages remain portable-only: a dual package would still require the development machine's matching Nix closure, so build `.#lgx` locally for dev runtimes.
 
 ## Run
 

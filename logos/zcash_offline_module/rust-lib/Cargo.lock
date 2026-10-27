@@ -1606,7 +1606,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "ozm-ble"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "bluer",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "ozm-mesh"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "hex",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "ozm-node"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3030,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "zcash-offline-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3080,7 +3080,7 @@ dependencies = [
 
 [[package]]
 name = "zcash_offline_module"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "axum",

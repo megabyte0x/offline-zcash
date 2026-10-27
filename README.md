@@ -12,14 +12,26 @@ It runs in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line
 
 ## Try it
 
-- **[Install it in Basecamp](docs/basecamp-install.md):** install the app, join a session with your invite, get test coins and pay someone.
+- **[Install by name in Basecamp](docs/basecamp-install.md#install-by-name-recommended):** add the public catalogue in Settings → Package Repositories, search `zcash` in Manage Packages, and install the service and apps. No GitHub token needed.
 - **[Use the command-line node](docs/install.md):** install `ozm-node`, then `ozm-node join <invite.json>` and `ozm-node start`.
 - **[Try the Android test APK](docs/android-install.md):** Android 10+ arm64, native BLE + LAN, invite join and payments. No real-phone/radio validation yet.
 - **[Run a three-laptop Basecamp session](docs/basecamp-install.md#a-three-mac-session-without-an-ozm-node-terminal):** create invites in Organiser and start Gateway in Basecamp. CLI sessions remain [supported](docs/mvp-v0.2.0.md#running-a-session).
 
-Downloads are on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
+Catalogue URL (also accepted by `logosctl catalog add`):
 
-v0.5.0 ships **four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. macOS `.lgx` packages have **not run on a real Mac**; Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
+```text copy Copy Catalogue URL
+https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+```
+
+With a running released `logosctl` daemon, add that URL, run `logosctl catalog
+refresh`, then `logosctl package install zcash_offline_ui --yes` (it installs the
+shared service too). [Full CLI commands](logos/README.md#install-by-name).
+Packages are unsigned; install only if you trust this test build.
+
+Manual `.lgx` downloads remain a [fallback](docs/basecamp-install.md#manual-lgx-fallback)
+on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
+
+v0.5.1 ships **four merged catalogue packages and four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. See [CHANGELOG.md](CHANGELOG.md) for release notes. macOS `.lgx` packages have **not run on a real Mac**; Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
 
 ## For developers
 

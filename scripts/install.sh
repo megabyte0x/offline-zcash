@@ -6,7 +6,6 @@
 # Environment:
 #   OZM_VERSION      version to install, e.g. 0.2.0 (default: latest release)
 #   OZM_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
-#   GITHUB_TOKEN     token with read access, needed while the repository is private
 #   OZM_DRY_RUN=1    print what would be downloaded and installed, then stop
 set -eu
 
@@ -64,14 +63,12 @@ api_get() {
   fi
 }
 
-private_hint="If the repository is still private, set GITHUB_TOKEN to a token that can read $REPO."
-
 # --- version -----------------------------------------------------------------
 
 version="${OZM_VERSION:-}"
 if [ -z "$version" ]; then
   json="$(api_get "$API/releases/latest" -H "Accept: application/vnd.github+json")" ||
-    err "could not look up the latest release. $private_hint Or set OZM_VERSION."
+    err "could not look up the latest release. Check connectivity or set OZM_VERSION."
   version="$(printf '%s' "$json" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   [ -n "$version" ] || err "could not read tag_name from the latest release"
 fi
@@ -102,7 +99,7 @@ tmp="$(mktemp -d 2>/dev/null || mktemp -d -t ozm-node)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-  # Private repositories only serve assets through the API asset URL.
+  # Use API asset URLs when the caller supplies API authentication.
   release_json="$(api_get "$API/releases/tags/$tag" -H "Accept: application/vnd.github+json")" ||
     err "release $tag not found, or GITHUB_TOKEN cannot read $REPO"
   # asset_url NAME: print the API URL of the asset called NAME. In each asset
@@ -126,7 +123,7 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
 else
   for f in "$tarball" "$checksum"; do
     curl -fsSL -o "$tmp/$f" "$base_url/$f" ||
-      err "download of $base_url/$f failed. Check that release $tag exists and has a $target build. $private_hint"
+      err "download of $base_url/$f failed. Check that release $tag exists and has a $target build."
   done
 fi
 

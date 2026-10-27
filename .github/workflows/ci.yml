@@ -28,6 +28,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Release notes contract
+        run: |
+          python3 scripts/test-release-notes.py
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          python3 scripts/release-notes.py "v$version"
       # The Zakura crates (zakura-orchard and friends) take a few minutes to compile.
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

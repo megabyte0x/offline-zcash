@@ -10,15 +10,7 @@ Run:
 curl -fsSL https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/scripts/install.sh | sh
 ```
 
-The script picks the right build for your machine. It downloads the latest release, checks its SHA-256 checksum and installs `ozm-node` to `~/.local/bin`.
-
-While the repository is private, you need a GitHub token that can read it. Export it first:
-
-```sh
-export GITHUB_TOKEN=<your token>
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/scripts/install.sh | sh
-```
+The script picks the right build for your machine. It downloads the latest public release, checks its SHA-256 checksum and installs `ozm-node` to `~/.local/bin`. No GitHub account or token is needed.
 
 You can set these options:
 
@@ -26,7 +18,6 @@ You can set these options:
 |---|---|---|
 | `OZM_VERSION` | Version to install, for example `0.2.0` | latest release |
 | `OZM_INSTALL_DIR` | Folder for the binary | `~/.local/bin` |
-| `GITHUB_TOKEN` | Token for a private repository | none |
 | `OZM_DRY_RUN=1` | Show what would be downloaded, then stop | off |
 
 If `~/.local/bin` is not on your `PATH`, the script tells you how to add it.

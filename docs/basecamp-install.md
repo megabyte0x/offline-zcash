@@ -34,10 +34,53 @@ Use [Basecamp 0.3.2 or newer](https://github.com/logos-co/logos-basecamp/release
   **glibc 2.39+** (Ubuntu 24.04+, not Debian 12/Ubuntu 22.04). If
   `libOpenGL.so.0` is missing, install `libopengl0`.
 
-From [Offline Zcash v0.5.0](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.5.0),
-download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`:
+### Install by name (recommended)
 
-1. `zcash_offline_module-0.5.0-<platform>.lgx` — **Offline Zcash service**, always needed.
+In Basecamp 0.3.2, open **Settings → Package Repositories**, paste this URL and
+click **Add**, then **Refresh**:
+
+```text copy Copy Catalogue URL
+https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+```
+
+Open **Manage Packages**, search `zcash`, and install **Offline Zcash service**
+and the apps from the table above. Basecamp resolves the shared dependency.
+Accept the unsigned-package warning only if you trust this experimental build.
+The public catalogue and downloads need no GitHub account or token. This is
+our catalogue, not the official Logos catalogue.
+
+For the headless runtime, install
+[released logosctl 0.3.2](https://docs.logos.co/core/build-modules/build-and-run-a-logos-core-module)
+(Linux needs glibc 2.39+, for example Ubuntu 24.04), then:
+
+```sh copy Copy Catalogue Install
+logosctl daemon start --detach
+logosctl catalog add https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+logosctl catalog refresh
+logosctl package search zcash
+logosctl package install zcash_offline_module --yes
+logosctl package install zcash_offline_ui --yes
+logosctl package install zcash_offline_organiser --yes
+logosctl package install zcash_offline_gateway --yes
+logosctl module load zcash_offline_module
+logosctl call zcash_offline_module status
+```
+
+`logosctl` installs into its own session, **not Basecamp's data directory**.
+Use Basecamp's Package Repositories screen for Basecamp installs. The catalogue
+selects the newest release; add `--version 0.5.1` to pin a CLI install.
+Its identity card points to `releases/latest/download/index.json`; every release
+also attaches its own index, merged packages and `catalogue.sha256`. Content
+roots bind the index to the downloaded packages, but do not authenticate the
+publisher. Packages are unsigned (`trustedSigners` is empty).
+
+### Manual LGX fallback
+
+From [Offline Zcash v0.5.1](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.5.1),
+download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`
+(or the merged `<name>-0.5.1.lgx` files, which contain all three):
+
+1. `zcash_offline_module-0.5.1-<platform>.lgx` — **Offline Zcash service**, always needed.
 2. The apps from the table above: `zcash_offline_ui`,
    `zcash_offline_organiser`, `zcash_offline_gateway`, with the same version/platform suffix.
 
@@ -58,6 +101,9 @@ ls out-*/*.lgx
 ```
 
 Use portable packages with released Basecamp; `.#lgx` is for dev builds only.
+We retain the already-hashed portable builder outputs rather than switching
+bundlers. Released catalogue packages do not include `-dev` variants; build
+`.#lgx` on your development machine when using a Nix/dev Basecamp runtime.
 
 ## A three-Mac session, without an ozm-node terminal
 
