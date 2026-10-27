@@ -9,6 +9,23 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-27
+
+User-interface release: no changes to the core, mesh, wire formats, module API or node behaviour.
+
+### Changed
+- Every wallet UI (web, Basecamp and Android) labels payment states the same way, with a one-line explanation per state: submitted, in mempool, retrying, included and mined (both marked gateway-reported), refused by payee, rejected by gateway, expired and conflict, each with its own colour and a legend.
+- The Basecamp wallet's first screen explains starting without an invite in three steps; the organiser invite and connection options (birthday, dial, listen, Bluetooth) are optional, collapsed sections.
+- Pay forms warn when an address does not match the wallet's network prefix, check the amount before proving, and show the Max builder fee next to the amount.
+- A chain-view box shows the selected gateway, hops, tip and mesh ID, whether chain sources are cross-checked, and the gateway trust warning as a highlighted note.
+- Prepare for offline is its own card with the three steps (prepare online, wait for mined, sync then go offline), input checks and a visible error.
+- Clearer loading, empty, unreachable-node and error messages that say what to do next; refusals note that the payment may still be mined until expiry.
+- Organiser groups setup into Session, Devices and Export, checks names, roles, birthday and the join name before creating, warns when no device is the gateway, and highlights that invites contain private test keys.
+- Gateway shows join, role refusal, chain-service checks, wallet funding and each submission's result with a gateway-reported label.
+- One palette, button and field style across the web UI and the three Basecamp apps; layouts stack at narrow widths, and payment tables become cards on phones.
+- Accessibility: every control has a label, focus is visible for keyboard users, status messages are announced, and muted text has higher contrast.
+- Android version is 0.7.1 (version code 10).
+
 ## [0.7.0] - 2026-10-27
 
 ### Added
@@ -135,7 +152,8 @@ It is not security reviewed and does not support real funds.
 - Offline payee checks, signed pending receipts, idempotent gateway submission/mining and signed gateway-reported results.
 - Four-container benchmarks for multi-hop delivery, restart recovery and payment handling.
 
-[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.0...v0.5.1

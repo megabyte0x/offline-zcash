@@ -6,78 +6,152 @@
 <meta name="ozm-api-token" content="__OZM_API_TOKEN__">
 <title>Offline Zcash</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e7e9ee; --mut:#8a93a6; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#f4b728; }
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e7e9ee; --mut:#9aa3b5; --ok:#3fb950; --warn:#e3a72f; --info:#58a6ff; --bad:#ff6b63; --acc:#f4b728; --field:#0c0e12; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
-  header h1 { font-size:18px; margin:0; } header h1 span { color:var(--acc); }
-  .pill { padding:2px 8px; border-radius:99px; background:var(--card); border:1px solid var(--line); color:var(--mut); font-size:12px; }
-  main { padding:20px; display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); max-width:1200px; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:8px 12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 8px 0 0; } header h1 .z { color:var(--acc); }
+  .pill { padding:2px 10px; border-radius:99px; background:var(--card); border:1px solid var(--line); color:var(--mut); font-size:12px; overflow-wrap:anywhere; }
+  .pill.ok { color:var(--ok); border-color:#2d5a36; } .pill.warn { color:var(--warn); border-color:#5c4718; }
+  #reach { margin:16px 20px 0; max-width:1160px; }
+  main { padding:20px; display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); max-width:1200px; }
   section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; min-width:0; }
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:0 0 10px; }
   .big { font-size:26px; font-weight:600; }
-  .mut { color:var(--mut); } .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all; }
-  label { display:block; margin:8px 0 4px; color:var(--mut); }
-  input, select, button { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0c0e12; color:var(--fg); font:inherit; }
+  .mut { color:var(--mut); } .small { font-size:12px; } .nowrap { white-space:nowrap; }
+  .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-wrap:anywhere; word-break:break-all; }
+  label { display:block; margin:10px 0 4px; color:var(--mut); }
+  input, button { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--field); color:var(--fg); font:inherit; }
+  input[aria-invalid="true"] { border-color:var(--bad); }
   button { background:var(--acc); color:#111; font-weight:600; border:0; margin-top:12px; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:wait; }
-  .wide { grid-column: 1 / -1; overflow-x:auto; }
-  table { width:100%; min-width:720px; border-collapse:collapse; } td, th { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  button.secondary { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  button.secondary:hover:not(:disabled) { border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  :focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  .row { display:flex; gap:8px; align-items:stretch; } .row input { flex:1; min-width:0; } .row button { width:auto; margin-top:0; padding:9px 14px; }
+  .box { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-top:10px; }
+  .note { padding:8px 10px; border-radius:8px; margin-top:10px; border:1px solid var(--line); }
+  .note.warn { border-color:#5c4718; color:var(--warn); background:#d2992214; }
+  .note.bad { border-color:#6b2b28; color:var(--bad); background:#f8514914; }
+  .note:empty { display:none; }
+  .msg { margin-top:8px; min-height:1.4em; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--ok); }
+  .hint { margin-top:4px; font-size:12px; min-height:1.2em; color:var(--mut); } .hint.bad { color:var(--bad); } .hint.warn { color:var(--warn); }
+  ol.steps { margin:6px 0 0; padding-left:20px; color:var(--mut); } ol.steps li { margin:2px 0; }
+  .wide { grid-column: 1 / -1; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
   th { color:var(--mut); font-weight:500; font-size:12px; }
-  .st { font-weight:600; } .st.mined { color:var(--ok); } .st.refused, .st.gateway-rejected { color:var(--bad); } .st.accepted-pending, .st.submitted, .st.delivered, .st.sent, .st.in-mempool { color:var(--warn); }
+  .st { font-weight:600; } .st.ok { color:var(--ok); } .st.included { color:var(--info); } .st.pending { color:var(--warn); } .st.warn { color:var(--warn); } .st.bad { color:var(--bad); }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:10px; font-size:12px; }
   details summary { cursor:pointer; color:var(--mut); }
-  #msg { margin-top:8px; min-height:1.4em; }
+  .refusal { color:var(--bad); margin-top:6px; overflow-wrap:anywhere; }
+  @media (max-width: 640px) {
+    header { padding:12px; } main { padding:12px; }
+    #payments thead { display:none; }
+    #payments tr, #payments td { display:block; }
+    #payments tr { border-top:1px solid var(--line); padding:6px 0; }
+    #payments td { border:0; padding:3px 0; }
+    #payments td[data-label]::before { content:attr(data-label); display:block; color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1><span>ⓩ</span> Offline Zcash <span class="mut" id="ver"></span></h1>
-  <span class="pill" id="who">…</span>
+  <h1><span class="z" aria-hidden="true">ⓩ</span> Offline Zcash <span class="mut" id="ver"></span></h1>
+  <span class="pill" id="who">Connecting…</span>
   <span class="pill" id="online">…</span>
-  <span class="pill" id="nbrs">…</span>
+  <span class="pill" id="nbrs">mesh neighbours: …</span>
 </header>
+<div id="reach" class="note bad" role="alert"></div>
 <main>
-  <section>
-    <h2>Wallet</h2>
-    <div class="big" id="bal">…</div>
+  <section aria-labelledby="h-wallet">
+    <h2 id="h-wallet">Wallet</h2>
+    <div class="big" id="bal">Loading…</div>
     <div class="mut" id="wal"></div>
-    <div class="mut" id="gateway"></div>
-    <button id="syncb">Sync now</button>
-    <button id="fundb">Get test funds from the gateway (5 × 0.1 ZEC)</button>
-    <p id="faucet" class="mut" hidden>Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; service may fail). No gateway faucet.</p>
-    <label for="notes">Prepare for offline · equal notes</label><input id="notes" type="number" min="2" max="100" value="10">
-    <label for="notevalue">TAZ / ZEC per note</label><input id="notevalue" value="0.0101" inputmode="decimal">
-    <button id="prepareb">Prepare for offline</button>
-    <p class="mut">Splits one mined note; fee grows with action count. Wait for mined and sync before going offline. Never spend unmined change.</p>
-    <div class="mut" id="syncmsg"></div>
+    <div class="box">
+      <div class="small mut">Chain view (gateway-reported, not independently proved)</div>
+      <div id="gateway">Finding a gateway…</div>
+      <div class="small" id="sources"></div>
+    </div>
+    <div id="gwwarn" class="note warn" role="status"></div>
+    <button id="syncb" class="secondary">Sync now</button>
+    <button id="fundb" class="secondary">Get test funds from the gateway (5 × 0.1 ZEC)</button>
+    <p id="faucet" class="mut small" hidden>Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; the service may fail). Gateways do not hand out testnet funds.</p>
+    <div class="msg mut" id="syncmsg" role="status" aria-live="polite"></div>
   </section>
-  <section>
-    <h2>Pay offline</h2>
-    <label for="to">Recipient Zcash address</label><input id="to" placeholder="uregtest…" autocomplete="off" spellcheck="false">
-    <label for="amt">Amount (ZEC)</label><input id="amt" value="0.01" inputmode="decimal">
-    <button id="maxb">Max</button>
+  <section aria-labelledby="h-pay">
+    <h2 id="h-pay">Pay offline</h2>
+    <label for="to">Recipient Zcash address</label>
+    <input id="to" placeholder="uregtest1…" autocomplete="off" spellcheck="false" aria-describedby="tohint">
+    <div class="hint" id="tohint">Paste the unified address the recipient shared with you.</div>
+    <label for="amt">Amount (ZEC)</label>
+    <div class="row"><input id="amt" value="0.01" inputmode="decimal" autocomplete="off" aria-describedby="fee"><button id="maxb" class="secondary" aria-label="Use maximum spendable amount">Max</button></div>
+    <div class="hint" id="fee"></div>
     <button id="payb">Build, prove and send over the mesh</button>
-    <div id="msg" class="mut"></div>
+    <div id="msg" class="msg mut" role="status" aria-live="polite"></div>
+    <p class="mut small">A known mesh payee answers with a receipt. An unknown address is still submitted, but you get no payee receipt. Included and mined are reported by the gateway.</p>
   </section>
-  <section>
-    <h2>Receive</h2>
-    <div class="mono" id="addr"></div>
-    <button id="copyb">Copy your address</button>
-    <p class="mut">Open or unknown payers are not accepted pending. Wait for gateway-reported inclusion; it is not independent chain verification.</p>
+  <section aria-labelledby="h-recv">
+    <h2 id="h-recv">Receive</h2>
+    <div class="mono" id="addr">Loading…</div>
+    <button id="copyb" class="secondary">Copy your address</button>
+    <div class="msg mut small" id="copymsg" role="status" aria-live="polite"></div>
+    <p class="mut small">Open or unknown payers are not accepted while pending. Wait for gateway-reported inclusion; it is not independent chain verification.</p>
   </section>
-  <section class="wide">
-    <h2>Payments</h2>
-    <table><thead><tr><th>When</th><th>Direction</th><th>With</th><th>Amount</th><th>State</th><th>Transaction</th></tr></thead><tbody id="pays"></tbody></table>
-    <div id="refs" class="mut"></div>
+  <section class="wide" aria-labelledby="h-prep"><div style="max-width:720px">
+    <h2 id="h-prep">Prepare for offline</h2>
+    <p class="mut" style="margin:0">Split one mined note into equal notes so you can make several payments without a connection.</p>
+    <ol class="steps">
+      <li>Prepare while a gateway is reachable.</li>
+      <li>Wait until the split shows <b>mined</b> (10 confirmations on testnet).</li>
+      <li>Sync, then go offline. Never spend unmined change.</li>
+    </ol>
+    <div class="row" style="margin-top:4px">
+      <div style="flex:1"><label for="notes">Number of notes</label><input id="notes" type="number" min="2" max="100" value="10"></div>
+      <div style="flex:1"><label for="notevalue">ZEC per note</label><input id="notevalue" value="0.0101" inputmode="decimal" autocomplete="off"></div>
+    </div>
+    <div class="hint">The split fee grows with the number of notes.</div>
+    <button id="prepareb" class="secondary">Prepare for offline</button>
+    <div class="msg mut" id="prepmsg" role="status" aria-live="polite"></div>
+  </div></section>
+  <section class="wide" aria-labelledby="h-pays">
+    <h2 id="h-pays">Payments</h2>
+    <div class="scroll"><table id="payments"><thead><tr><th>When</th><th>Direction</th><th>With</th><th>Amount</th><th>State</th><th>Transaction</th></tr></thead><tbody id="pays"><tr><td colspan="6" class="mut">Loading…</td></tr></tbody></table></div>
+    <div id="refs"></div>
+    <div class="legend mut" aria-label="State colours">
+      <span><span class="st pending">●</span> waiting</span><span><span class="st included">●</span> included (gateway-reported)</span><span><span class="st ok">●</span> mined (gateway-reported)</span><span><span class="st bad">●</span> refused, rejected, expired or conflict</span>
+    </div>
   </section>
-  <section class="wide">
-    <h2>Mesh</h2>
+  <section class="wide" aria-labelledby="h-mesh">
+    <h2 id="h-mesh">Mesh</h2>
     <div class="mono" id="mesh"></div>
   </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const zec = (z) => (z / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' ZEC';
+const zec = (z) => (Number(z || 0) / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' ZEC';
+// [label, tone, explanation]. Chain results are always marked gateway-reported.
+const STATES = {
+  'built': ['Built', 'pending', 'Proof built on this device; not sent yet.'],
+  'sent': ['Sent over the mesh', 'pending', 'Waiting for the payee device to receive it.'],
+  'delivered': ['Delivered', 'pending', 'The payee device received it; waiting for its receipt.'],
+  'accepted-pending': ['Accepted, pending', 'pending', 'An invited payee accepted it before inclusion. It is not on chain yet.'],
+  'awaiting-inclusion': ['Awaiting inclusion', 'pending', 'Checked on this device; waiting for the gateway to report inclusion.'],
+  'submitted': ['Submitted', 'pending', 'A gateway submitted it; not included yet.'],
+  'submitted, no payee receipt': ['Submitted · no payee receipt', 'pending', 'Sent to a gateway for an address with no mesh payee. No receipt will come.'],
+  'in-mempool': ['In mempool', 'pending', "In the gateway's mempool (gateway-reported)."],
+  'retrying': ['Retrying', 'warn', 'The gateway hit a retryable error and will resubmit.'],
+  'included': ['Included · gateway-reported', 'included', 'The gateway reports fewer than 10 confirmations. Not independently proved.'],
+  'mined': ['Mined · gateway-reported', 'ok', 'The gateway reports it mined. Not independently proved.'],
+  'expired': ['Expired', 'bad', 'The gateway reports it expired. Locked notes return after your sync passes the expiry height.'],
+  'conflict': ['Conflict', 'bad', 'The gateway reports another transaction spending the same note.'],
+  'gateway-rejected': ['Rejected by gateway', 'bad', 'The gateway refused to submit it. See history for the reason.'],
+  'refused, may still mine until expiry': ['Refused by payee', 'bad', 'The payee refused it. It may still be mined until it expires.'],
+};
+const stateInfo = (s) => STATES[s] || [s, 'pending', ''];
+const DIRECTIONS = { sent: 'Sent', received: 'Received', prepare: 'Prepare (split to self)' };
+const PREFIX = { regtest: 'uregtest1', testnet: 'utest1', mainnet: 'u1' };
+let network = 'regtest';
 async function api(path, body) {
   const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-ozm-token': document.querySelector('meta[name="ozm-api-token"]').content }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const j = await r.json();
@@ -90,80 +164,123 @@ function element(tag, text, cls) {
   if (cls) node.className = cls;
   return node;
 }
+function say(id, text, tone) { $(id).textContent = text; $(id).className = 'msg ' + (tone || 'mut') + ($(id).classList.contains('small') ? ' small' : ''); }
 async function refresh() {
   try {
     const s = await api('/api/status');
+    $('reach').textContent = '';
+    network = s.network || 'regtest';
     $('ver').textContent = 'v' + s.version;
-    $('who').textContent = s.name + ' · ' + s.role + ' · ' + s.network;
-    $('online').textContent = s.online ? 'gateway / online' : 'offline';
+    $('who').textContent = s.name + ' · ' + s.role + ' · ' + network;
+    $('online').textContent = s.online ? 'gateway / online' : s.selected_gateway ? 'offline · gateway via mesh' : 'offline · no gateway yet';
+    $('online').className = 'pill ' + (s.online || s.selected_gateway ? 'ok' : 'warn');
     $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');
     $('bal').textContent = zec(s.wallet.spendable);
-    $('wal').textContent = `locked in pending payments: ${zec(s.wallet.locked)} · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
+    $('wal').textContent = `spendable · ${zec(s.wallet.locked)} locked in pending payments · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
     const g = s.selected_gateway;
-    $('gateway').textContent = g ? `Gateway ${g.name} · ${g.peer_id} · ${g.hops} hops · tip ${g.tip} (gateway-reported)` : s.online ? 'Chain service · results are gateway-reported' : 'Finding a gateway · sync and results are gateway-reported';
-    if (s.gateway_warning) $('gateway').textContent += ' · WARNING: ' + s.gateway_warning;
-    $('gateway').textContent += s.single_source ? ' · WARNING: single source (or not connected)' : ' · compared sources: ' + s.chain_sources.length;
-    $('addr').textContent = s.address || '';
-    $('syncb').textContent = s.online ? 'Sync now (from the node)' : 'Sync now (from a gateway over the mesh)';
-    $('fundb').style.display = s.online || s.network === 'testnet' ? 'none' : '';
-    $('faucet').hidden = s.network !== 'testnet';
-    $('to').placeholder = s.network === 'testnet' ? 'utest1…' : 'uregtest…';
-    $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored} · Bluetooth ${s.ble ? (s.ble_running ? 'on' : 'stopped — restart node') : 'off'}`;
+    $('gateway').textContent = g ? `Gateway ${g.name} · ${g.hops} hops · tip ${g.tip} · mesh ID ${g.peer_id}` : s.online ? 'This device is the gateway (chain service).' : 'Finding a gateway over the mesh…';
+    const sources = s.chain_sources || [];
+    $('sources').textContent = s.single_source ? (sources.length ? 'Single chain source: not cross-checked.' : 'No chain source connected yet.') : `Cross-checked against ${sources.length} chain sources.`;
+    $('sources').className = 'small ' + (s.single_source ? 'mut' : '');
+    $('gwwarn').textContent = s.gateway_warning || '';
+    $('addr').textContent = s.address || 'No address yet.';
+    $('syncb').textContent = s.online ? 'Sync now (from the chain service)' : 'Sync now (from a gateway over the mesh)';
+    $('fundb').hidden = s.online || network === 'testnet';
+    $('faucet').hidden = network !== 'testnet';
+    $('to').placeholder = (PREFIX[network] || 'u1') + '…';
+    checkTo();
+    $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored} · Bluetooth ${s.ble ? (s.ble_running ? 'on' : 'stopped, restart the node') : 'off'}`;
     const p = await api('/api/payments');
     $('pays').replaceChildren();
     for (const x of p.payments.sort((a, b) => b.created_ms - a.created_ms)) {
       const row = element('tr');
-      row.append(element('td', new Date(x.created_ms).toLocaleTimeString()), element('td', x.direction), element('td', x.counterparty, 'mono'), element('td', zec(x.amount)));
-      const state = element('td');
-      state.append(element('span', x.state + (['included', 'mined'].includes(x.state) ? ' (gateway-reported)' : ''), 'st ' + (['mined', 'refused', 'gateway-rejected'].includes(x.state) ? x.state : 'submitted')));
-      if (x.direction === 'sent' && !x.receipt_peer) state.append(element('div', 'No payee receipt', 'mut'));
+      const cell = (label, text, cls) => { const c = element('td', text, cls); c.dataset.label = label; return c; };
+      row.append(cell('When', new Date(x.created_ms).toLocaleTimeString(), 'nowrap'), cell('Direction', DIRECTIONS[x.direction] || x.direction), cell('With', x.counterparty, 'mono'), cell('Amount', zec(x.amount), 'nowrap'));
+      const [label, tone, why] = stateInfo(x.state);
+      const state = cell('State');
+      state.append(element('span', label, 'st ' + tone));
+      if (why) state.append(element('div', why, 'mut small'));
+      if (x.direction === 'sent' && !x.receipt_peer && x.state !== 'submitted, no payee receipt') state.append(element('div', 'No payee receipt', 'mut small'));
       const details = element('details');
       details.append(element('summary', 'history'));
-      for (const h of x.history) details.append(element('div', new Date(h.ms).toLocaleTimeString() + ' ' + h.event, 'mut'));
+      for (const h of x.history) details.append(element('div', new Date(h.ms).toLocaleTimeString() + ' ' + h.event, 'mut small'));
       state.append(details);
-      row.append(state, element('td', x.txid, 'mono'));
+      row.append(state, cell('Transaction', x.txid, 'mono'));
       $('pays').append(row);
     }
     if (!p.payments.length) {
-      const cell = element('td', 'No payments yet', 'mut'); cell.colSpan = 6;
+      const cell = element('td', 'No payments yet. Payments you send or receive appear here with their state.', 'mut'); cell.colSpan = 6;
       const row = element('tr'); row.append(cell); $('pays').append(row);
     }
-    $('refs').replaceChildren(...p.refusals.map(r => element('div', `Refused, may still mine until expiry — from ${r.from}: code ${r.reject.code} ${r.reject.reason}`)));
-  } catch (e) { $('who').textContent = 'node not reachable: ' + e.message; }
+    $('refs').replaceChildren(...p.refusals.map(r => element('div', `Refused by ${r.from}: code ${r.reject.code}, ${r.reject.reason}. It may still be mined until it expires.`, 'refusal')));
+  } catch (e) {
+    $('who').textContent = 'node not reachable';
+    $('reach').textContent = `Cannot reach this node: ${e.message}. Is ozm-node still running? Retrying every 2 seconds.`;
+  }
 }
+function amountError(v) {
+  if (!/^\d+(\.\d{1,8})?$/.test(v.trim())) return 'Enter an amount like 0.01 (up to 8 decimals).';
+  if (Number(v) <= 0) return 'Enter an amount greater than 0.';
+  return '';
+}
+function checkTo() {
+  const v = $('to').value.trim(), want = PREFIX[network];
+  const wrong = v && want && !v.startsWith(want);
+  $('to').setAttribute('aria-invalid', wrong ? 'true' : 'false');
+  $('tohint').className = 'hint' + (wrong ? ' warn' : '');
+  $('tohint').textContent = wrong ? `This does not look like a ${network} unified address (expected ${want}…).` : 'Paste the unified address the recipient shared with you.';
+  updatePay();
+}
+function updatePay() {
+  const err = amountError($('amt').value);
+  $('amt').setAttribute('aria-invalid', err ? 'true' : 'false');
+  if (err) { $('fee').textContent = err; $('fee').className = 'hint bad'; }
+  else if ($('fee').className === 'hint bad') { $('fee').textContent = ''; $('fee').className = 'hint'; }
+  if (!$('payb').dataset.busy) $('payb').disabled = !$('to').value.trim() || !!err;
+}
+$('to').oninput = checkTo;
+$('amt').oninput = () => { $('fee').textContent = ''; $('fee').className = 'hint'; updatePay(); };
 $('payb').onclick = async () => {
-  $('payb').disabled = true; $('msg').textContent = 'Proving…';
-  try { const p = await api('/api/pay', { to: $('to').value, amount: $('amt').value }); $('msg').textContent = 'Sent ' + p.txid.slice(0, 16) + '…'; }
-  catch (e) { $('msg').textContent = e.message; }
-  $('payb').disabled = false; refresh();
+  $('payb').dataset.busy = '1'; $('payb').disabled = true; $('payb').textContent = 'Proving on this device…';
+  say('msg', 'Building and proving. This can take a few seconds.');
+  try {
+    const p = await api('/api/pay', { to: $('to').value.trim(), amount: $('amt').value.trim() });
+    say('msg', `Sent ${p.txid.slice(0, 16)}… · ${stateInfo(p.state)[0]}. Follow it under Payments.`, 'ok');
+  } catch (e) { say('msg', 'Payment not sent: ' + e.message, 'bad'); }
+  delete $('payb').dataset.busy; $('payb').textContent = 'Build, prove and send over the mesh'; updatePay(); refresh();
 };
 $('maxb').onclick = async () => {
-  try { const r = await api('/api/max'); $('amt').value = r.amount; $('msg').textContent = `Builder fee: ${zec(r.fee_zat)}. Quote changes if your spendable notes change.`; }
-  catch (e) { $('msg').textContent = e.message; }
+  $('maxb').disabled = true;
+  try { const r = await api('/api/max'); $('amt').value = r.amount; updatePay(); $('fee').textContent = `Max after the builder fee of ${zec(r.fee_zat)}. Changes if your spendable notes change.`; $('fee').className = 'hint'; }
+  catch (e) { $('fee').textContent = 'Cannot compute Max: ' + e.message; $('fee').className = 'hint bad'; }
+  $('maxb').disabled = false;
 };
 $('copyb').onclick = async () => {
-  try { await navigator.clipboard.writeText($('addr').textContent); $('copyb').textContent = 'Copied'; }
-  catch (_) { $('copyb').textContent = 'Select and copy the address above'; }
+  try { await navigator.clipboard.writeText($('addr').textContent); say('copymsg', 'Address copied.', 'ok'); }
+  catch (_) { getSelection().selectAllChildren($('addr')); say('copymsg', 'Clipboard blocked: the address is selected, press Ctrl+C (⌘C).'); }
 };
 $('syncb').onclick = async () => {
-  $('syncb').disabled = true; $('syncmsg').textContent = 'Syncing…';
-  try { const r = await api('/api/sync', {}); $('syncmsg').textContent = r.requested_from ? `Asked ${r.requested_from} for blocks; balance updates when they arrive` : `Synced to ${r.tip}, ${r.new_notes} new notes`; }
-  catch (e) { $('syncmsg').textContent = e.message; }
+  $('syncb').disabled = true; say('syncmsg', 'Syncing…');
+  try { const r = await api('/api/sync', {}); say('syncmsg', r.requested_from ? `Asked ${r.requested_from} for blocks; the balance updates when they arrive.` : `Synced to height ${r.tip}, ${r.new_notes} new notes.`, 'ok'); }
+  catch (e) { say('syncmsg', 'Sync failed: ' + e.message, 'bad'); }
   $('syncb').disabled = false; refresh();
 };
 $('fundb').onclick = async () => {
-  $('fundb').disabled = true; $('syncmsg').textContent = 'Asking the gateway for test funds…';
-  try { const r = await api('/api/fund', { notes: 5, amount: '0.1' }); $('syncmsg').textContent = `Asked ${r.requested_from}; funds arrive after they are mined (about a minute)`; }
-  catch (e) { $('syncmsg').textContent = e.message; }
+  $('fundb').disabled = true; say('syncmsg', 'Asking the gateway for test funds…');
+  try { const r = await api('/api/fund', { notes: 5, amount: '0.1' }); say('syncmsg', `Asked ${r.requested_from}. Funds appear after they are mined (about a minute).`, 'ok'); }
+  catch (e) { say('syncmsg', 'Test funds not requested: ' + e.message, 'bad'); }
   $('fundb').disabled = false;
 };
 $('prepareb').onclick = async () => {
-  $('prepareb').disabled = true; $('syncmsg').textContent = 'Proving split…';
-  try { const p = await api('/api/prepare', { notes: Number($('notes').value), amount: $('notevalue').value }); $('syncmsg').textContent = `Split ${p.txid}. Wait for mined (10 confirmations on testnet), then sync before going offline.`; }
-  catch (e) { $('syncmsg').textContent = e.message; }
+  const count = Number($('notes').value), err = amountError($('notevalue').value);
+  if (!Number.isInteger(count) || count < 2 || count > 100) return say('prepmsg', 'Choose between 2 and 100 notes.', 'bad');
+  if (err) return say('prepmsg', err, 'bad');
+  $('prepareb').disabled = true; say('prepmsg', 'Proving the split…');
+  try { const p = await api('/api/prepare', { notes: count, amount: $('notevalue').value.trim() }); say('prepmsg', `Split ${p.txid.slice(0, 16)}… submitted. Wait for mined (10 confirmations on testnet), then sync before going offline.`, 'ok'); }
+  catch (e) { say('prepmsg', 'Not prepared: ' + e.message, 'bad'); }
   $('prepareb').disabled = false; refresh();
 };
-refresh(); setInterval(refresh, 2000);
+updatePay(); refresh(); setInterval(refresh, 2000);
 </script>
 </body>
 </html>
