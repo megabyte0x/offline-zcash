@@ -78,3 +78,26 @@ Follow the session guide, [mvp-v0.2.0.md](mvp-v0.2.0.md). In short:
 ozm-node join <invite.json>
 ozm-node start
 ```
+
+## Bluetooth on Linux
+
+The development build adds experimental BLE; released v0.4.0 binaries do not have
+it. Start with `ozm-node start --ble` (or `OZM_BLE=true`). You need BlueZ's
+`bluetoothd` running, system D-Bus, Bluetooth powered on and an LE adapter that
+supports simultaneous scanning and peripheral advertising. No pairing is needed.
+The default adapter is used (`hci0` if present); one node process should own it.
+
+Run as your desktop user. The distribution's D-Bus/polkit policy must allow access
+to `org.bluez`, GATT registration, advertising and discovery; if denied, ask the
+administrator to grant those specific permissions rather than running the wallet
+as root or opening the whole system bus. Sandboxed desktop launchers also need
+system-bus access. libdbus is bundled into the binary; BlueZ is not.
+
+The web UI lists neighbours as `Name (BLE)` or `Name (TCP)` and shows Bluetooth
+on/off. Same-fleet Android and Linux devices should appear within a few seconds;
+LAN links may win the mesh's duplicate-link selection. Missing/off adapters or a
+failed registration/scan produce a startup error; restart without `--ble` for LAN
+only. macOS returns an unsupported-platform error for `--ble`.
+
+**Untested on real hardware until D1 passes.** Protocol/in-memory tests do not prove
+radio compatibility, throughput or durability. See [desktop BLE gates](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open).

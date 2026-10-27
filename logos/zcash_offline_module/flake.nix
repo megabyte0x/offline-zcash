@@ -29,7 +29,7 @@
           cp -r ${noBuildOutputs ./.} $out
           chmod -R u+w $out
           mkdir -p $out/rust-lib/workspace-crates
-          for c in zcash-offline-core ozm-mesh ozm-node; do
+          for c in zcash-offline-core ozm-mesh ozm-ble ozm-node; do
             cp -r ${noBuildOutputs ../../crates}/$c $out/rust-lib/workspace-crates/$c
           done
         '';

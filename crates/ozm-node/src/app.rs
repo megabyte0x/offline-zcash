@@ -115,6 +115,7 @@ pub type EventHook = Box<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
 pub struct App {
     pub cfg: Config,
     pub mesh: Mesh,
+    pub(crate) ble: std::sync::OnceLock<ozm_ble::Ble>,
     pub x25519: x25519_dalek::StaticSecret,
     pub state: Mutex<(WalletState, Book)>,
     /// Serializes proving so two pays never pick the same note.
@@ -145,6 +146,7 @@ impl App {
         };
         let x25519 = cfg.me.x25519_secret()?;
         Ok(Arc::new(App { cfg, mesh, x25519, state: Mutex::new((wallet, book)),
+            ble: Default::default(),
             pay_lock: Default::default(),
             block_cache: Default::default(),
             last_sync_req: Default::default(),
@@ -860,6 +862,8 @@ impl App {
             "peer_id": self.mesh.peer_id().to_string(),
             "address": me.map(|d| d.address.clone()),
             "online": self.cfg.rpc.is_some(),
+            "ble": self.ble.get().is_some(),
+            "ble_running": self.ble.get().is_some_and(ozm_ble::Ble::is_running),
             "neighbors": neighbors,
             "neighbor_links": self.mesh.neighbor_links().into_iter().map(|(p, kind)| json!({"name": self.peer_name(p), "peer_id": p.to_string(), "kind": kind})).collect::<Vec<_>>(),
             "mesh": self.mesh.stats(),

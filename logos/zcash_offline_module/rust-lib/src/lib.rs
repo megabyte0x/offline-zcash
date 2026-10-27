@@ -10,7 +10,7 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Installs an invite file's JSON (fleet plus this device's keys). Returns `{"ok":true,"message":...}`.
     fn join(&mut self, invite_json: String) -> String;
 
-    /// Starts the device. Options JSON, all optional: listen, dial, rpc, mine, discover, discovery_port, api. Idempotent; returns status.
+    /// Starts the device. Options JSON, all optional: listen, dial, rpc, mine, discover, ble (Linux only), discovery_port, api. Idempotent; returns status.
     fn start(&mut self, options_json: String) -> String;
 
     /// Device status (GET /api/status) plus joined, running and home. Works before join and start.
@@ -67,6 +67,7 @@ struct StartOptions {
     rpc: Option<String>,
     mine: Option<bool>,
     discover: Option<bool>,
+    ble: Option<bool>,
     discovery_port: Option<u16>,
     api: Option<String>,
 }
@@ -134,6 +135,7 @@ impl Node {
         opts.rpc = o.rpc.clone().filter(|r| !r.is_empty());
         opts.mine = o.mine.unwrap_or(false);
         opts.discover = o.discover.unwrap_or(true);
+        opts.ble = o.ble.unwrap_or(false);
         if let Some(p) = o.discovery_port {
             opts.discovery_port = p;
         }

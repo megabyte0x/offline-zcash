@@ -53,6 +53,9 @@ enum Cmd {
         /// Gateway on Regtest: mine a block after each submission and serve test funds.
         #[arg(long, env = "OZM_MINE")]
         mine: bool,
+        /// Enable Bluetooth LE scanning and advertising (Linux / BlueZ only).
+        #[arg(long, env = "OZM_BLE")]
+        ble: bool,
         #[arg(long, env = "OZM_API", default_value = "127.0.0.1:7780")]
         api: SocketAddr,
         #[arg(long, env = "OZM_LISTEN", default_value = "0.0.0.0:7777")]
@@ -137,10 +140,10 @@ async fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::FleetInit { out, devices, name } => fleet_init(&out, &devices, &name),
         Cmd::Join { invite, home } => join(&invite, home),
-        Cmd::Start { home, dial, rpc, mine, api, listen, no_open } => {
+        Cmd::Start { home, dial, rpc, mine, ble, api, listen, no_open } => {
             let home = home_dir(home)?;
             anyhow::ensure!(home.join("secret.json").exists(), "no device in {}; run `ozm-node join <invite.json>` first", home.display());
-            run(RunOpts { listen, dial, rpc, mine, api, open: !no_open, ..RunOpts::for_home(&home) })
+            run(RunOpts { listen, dial, rpc, mine, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
             .await
         }
         Cmd::Run(o) => run(o).await,

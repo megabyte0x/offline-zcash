@@ -13,7 +13,7 @@ cd "$here"
 
 rm -rf rust-lib/workspace-crates logos-rust-sdk-src
 mkdir -p rust-lib/workspace-crates
-for c in zcash-offline-core ozm-mesh ozm-node; do
+for c in zcash-offline-core ozm-mesh ozm-ble ozm-node; do
   cp -r "$repo/crates/$c" rust-lib/workspace-crates/
 done
 

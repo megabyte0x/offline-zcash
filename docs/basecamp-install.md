@@ -69,6 +69,33 @@ Money you receive can be spent once it shows `mined` and your balance has update
 
 ## Problems
 
+### Bluetooth on Linux
+
+Development packages add a **Bluetooth LE (Linux only, experimental)** toggle in
+Setup; leave it off for LAN only. Enable it before **Join and start** / **Start
+node**, or call the service's `start` with `{"ble":true}`. The choice is saved for
+Basecamp restarts. Start is idempotent; changing an already running node requires
+a restart (the auto-started node otherwise keeps its saved choice).
+
+You need `bluetoothd` running, system D-Bus, Bluetooth powered on and a default LE
+adapter supporting simultaneous scanning and advertising. No pairing is needed.
+Your desktop user's D-Bus/polkit policy and any Basecamp sandbox must permit
+`org.bluez` access, GATT registration, advertising and discovery. Grant only the
+needed permissions; do not run Basecamp as root. libdbus is statically bundled in
+the portable module; BlueZ remains a host requirement. Avoid running the CLI and
+Basecamp on the same adapter at once.
+
+The header shows each neighbour's **BLE/TCP** kind and Mesh shows Bluetooth status.
+Same-fleet Linux CLI and Android devices should connect; a LAN link may win
+duplicate selection. Unavailable Bluetooth causes **Start failed** with a reason;
+turn the toggle off to use LAN. BLE on macOS is not implemented yet and additionally
+needs Basecamp's `NSBluetoothAlwaysUsageDescription` support ([upstream issue #527](https://github.com/logos-co/logos-basecamp/issues/527)).
+
+**Untested on real hardware until D1 passes; Basecamp radio integration is D2.**
+These controls are not in the v0.4.0 release packages. See the [desktop BLE milestones](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open).
+
+### Troubleshooting
+
 | What you see | What to do |
 |---|---|
 | Basecamp does not start on Linux (`GLIBC_2.38' not found`) | Your Linux is older than glibc 2.39. Use Ubuntu 24.04 or newer, or a Mac |

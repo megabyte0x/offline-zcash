@@ -44,6 +44,9 @@ pub struct RunOpts {
     /// Find fleet devices on the local network (UDP beacons) and connect to them.
     #[arg(long, env = "OZM_DISCOVER")]
     pub discover: bool,
+    /// Scan and advertise Bluetooth LE alongside LAN (Linux / BlueZ only).
+    #[arg(long, env = "OZM_BLE")]
+    pub ble: bool,
     #[arg(long, env = "OZM_DISCOVERY_PORT", default_value_t = 7778)]
     pub discovery_port: u16,
     /// Zakura JSON-RPC URL. Only online devices (gateway) set this.
@@ -87,6 +90,7 @@ impl RunOpts {
             listen: "0.0.0.0:7777".parse().unwrap(),
             dial: vec![],
             discover: true,
+            ble: false,
             discovery_port: 7778,
             rpc: None,
             mine: false,
@@ -178,6 +182,13 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         },
         mesh,
     )?;
+    if o.ble {
+        let hint = app.cfg.fleet.discovery_tag()[..4].try_into().expect("four bytes");
+        match ozm_ble::Ble::start(app.mesh.clone(), hint).await {
+            Ok(ble) => { let _ = app.ble.set(ble); }
+            Err(e) => { app.mesh.shutdown(); return Err(e); }
+        }
+    }
     app.event("started", json!({"role": app.cfg.me.role, "peer_id": pubme.peer_id, "online": app.cfg.rpc.is_some(), "discover": o.discover, "version": env!("CARGO_PKG_VERSION")}));
 
     let a = app.clone();

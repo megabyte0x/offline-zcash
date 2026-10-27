@@ -82,13 +82,13 @@ async function refresh() {
     $('ver').textContent = 'v' + s.version;
     $('who').textContent = s.name + ' · ' + s.role;
     $('online').textContent = s.online ? 'gateway / online' : 'offline';
-    $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbors.join(', ') || 'none');
+    $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');
     $('bal').textContent = zec(s.wallet.spendable);
     $('wal').textContent = `locked in pending payments: ${zec(s.wallet.locked)} · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
     $('addr').textContent = s.address || '';
     $('syncb').textContent = s.online ? 'Sync now (from the node)' : 'Sync now (from a gateway over the mesh)';
     $('fundb').style.display = s.online ? 'none' : '';
-    $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored}`;
+    $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored} · Bluetooth ${s.ble ? (s.ble_running ? 'on' : 'stopped — restart node') : 'off'}`;
     if (!fleetLoaded) {
       const f = await api('/api/fleet');
       $('to').innerHTML = f.devices.filter(d => d.name !== s.name && d.role.includes('payee')).map(d => `<option>${d.name}</option>`).join('');

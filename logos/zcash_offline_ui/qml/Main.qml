@@ -193,7 +193,8 @@ Rectangle {
                 }
                 Pill {
                     visible: root.running
-                    text: "mesh neighbours: " + (root.st && root.st.neighbors && root.st.neighbors.length ? root.st.neighbors.join(", ") : "none")
+                    text: "mesh neighbours: " + (root.st && root.st.neighbor_links && root.st.neighbor_links.length
+                          ? root.st.neighbor_links.map(function (n) { return n.name + " (" + n.kind.toUpperCase() + ")" }).join(", ") : "none")
                 }
             }
         }
@@ -253,7 +254,18 @@ Rectangle {
                     Field { id: dial; objectName: "dialInput"; placeholderText: "host:port of mesh neighbours, comma-separated, e.g. 192.168.1.20:7790" }
                     Label2 { text: "Listen address (optional)" }
                     Field { id: listenAddr; objectName: "listenInput"; placeholderText: "mesh listen host:port, default 0.0.0.0:7777" }
+                    Switch {
+                        id: bluetooth
+                        objectName: "bluetoothToggle"
+                        text: "Bluetooth LE (Linux only, experimental)"
+                        palette.windowText: root.fg
+                        palette.text: root.fg
+                        checked: false
+                        Accessible.name: text
+                    }
+                    Muted { text: "Requires Bluetooth enabled and a BlueZ adapter with advertising support. Real-radio testing is still pending." }
                     Btn {
+                        objectName: "startNodeButton"
                         text: setup.busy ? "Working…" : (root.joined ? "Start node" : "Join and start")
                         enabled: !setup.busy && (root.joined || invite.text.trim() !== "")
                         onClicked: {
@@ -261,6 +273,7 @@ Rectangle {
                             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
                             var opts = peers.length ? { dial: peers } : {}
                             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
+                            opts.ble = bluetooth.checked
                             var startNode = function () {
                                 setup.msg = "Starting…"
                                 root.call("start", [JSON.stringify(opts)], function (r) {
@@ -528,6 +541,10 @@ Rectangle {
                                   : ""
                         }
                         Muted { visible: root.lastEvent !== ""; text: "last event: " + root.lastEvent; font.pixelSize: 12 }
+                        Muted {
+                            text: "Bluetooth: " + (root.st && root.st.ble
+                                  ? (root.st.ble_running ? "on" : "stopped — restart node") : "off")
+                        }
                     }
                 }
                 Item { implicitHeight: 12 }

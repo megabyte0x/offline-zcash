@@ -16,7 +16,7 @@ Every method returns a JSON string, and failures are `{"error": "..."}`. The dev
 | Method | Returns |
 |---|---|
 | `join(invite_json)` | `{"ok":true,"message":...}` |
-| `start(options_json)` | Status. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `discovery_port`, `api` (also serves the web UI). They are saved, and a restart resumes with them |
+| `start(options_json)` | Status. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). They are saved, and a restart resumes with them |
 | `status()` | As `GET /api/status`, plus `joined`, `running` and `home` |
 | `fleet()`, `list_payments()` | As `GET /api/fleet` and `GET /api/payments` |
 | `pay(to, amount_zec)` | The payment |
@@ -32,7 +32,7 @@ Both builds need Nix with flakes; the Logos binary cache (`https://cache.nix.log
 (cd logos/zcash_offline_ui && nix flake update zcash_offline_module && nix build .#lgx)
 ```
 
-The module flake copies `crates/{zcash-offline-core,ozm-mesh,ozm-node}` into the crate before building, because the builder copies only `rust-lib/`. For plain `cargo` in `rust-lib/`, run `dev-stage.sh` first. Do not run clippy on `rust-lib/`: the generated scaffold has lints.
+The module flake copies `crates/{zcash-offline-core,ozm-mesh,ozm-ble,ozm-node}` into the crate before building, because the builder copies only `rust-lib/`. For plain `cargo` in `rust-lib/`, run `dev-stage.sh` first. Do not run clippy on `rust-lib/`: the generated scaffold has lints. Linux BLE statically bundles libdbus using Cargo's vendored feature; BlueZ and system D-Bus remain host services. [Linux Bluetooth setup and hardware limits](../docs/basecamp-install.md#bluetooth-on-linux).
 
 `.#lgx` builds the `-dev` variant, which dev builds of Basecamp and `logosctl` accept. `.#lgx-portable` builds the variant that released Basecamp builds accept.
 

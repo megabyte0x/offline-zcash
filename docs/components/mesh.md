@@ -37,7 +37,7 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 ### Decided (27 October)
 
 - **Option A: keep `ozm-mesh` and add a native BLE link per platform; do not fork the BitChat apps.** The link only moves bytes between neighbours; routing, store-and-forward, acks, sealing and receipts stay in the Rust core, unchanged, so TCP, LAN and BLE neighbours mix in one mesh.
-- **Android first, then iOS.** Desktops keep LAN discovery for now; Rust has no mature BLE peripheral crate (btleplug and bluest are central-only; ble-peripheral-rust is young).
+- **Android first; Linux desktops next, then macOS and iOS.** Linux uses BlueZ via `bluer`, which supports both central and peripheral roles. btleplug and bluest are central-only.
 - **Why not a BitChat fork** (read at bitchat `04995f68`, bitchat-android `eed88190`, 27 October; research):
   - private messages are capped at 255 bytes on both apps, so a 12.3 KB payment needs a new payload type in two forks;
   - only the sender stores a private message (outbox: 100 per peer, 24 h, 8 attempts); relays hold single frames for 60 s and never hold fragments, and conversations are memory-only. Our mesh lets every device hold a sealed message until the recipient appears;
@@ -121,8 +121,69 @@ Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d
 
 Rough effort (*estimate*): B1 1.5–2 weeks; Android link and app to B4 about 3 weeks; tuning and field tests 2–3 weeks. iOS adds about 3 weeks.
 
+## Linux desktop BLE (implementation, radio gates open)
+
+`crates/ozm-ble` runs a BlueZ GATT server and connectable LE advertisement alongside
+an LE scanner and GATT client. `ozm-node start --ble` and the Basecamp module's
+`start('{"ble":true}')` opt in; TCP/LAN remains available. Startup fails clearly if
+the system bus, bluetoothd, powered adapter, GATT registration, advertising or scan
+is unavailable. With BLE off, neither BlueZ nor an adapter is required. No version
+bump or new release is implied by this implementation.
+
+- **Android wire compatibility:** the exact service/stream UUIDs above, BlueZ's
+  automatic CCCD, write-without-response central → peripheral and notify in the
+  reverse direction. No extra chunk header. Four fleet-hint bytes in 128-bit service
+  data are the discovery filter, not authentication. Linux omits the UUID list to
+  keep the primary advertisement within 31 bytes; Android's scan filter uses service
+  data. No extended advertising is required.
+- **Per-device streams:** BlueZ `AcquireWrite`/`AcquireNotify` supply separate
+  flow-controlled fds per device, including Android clients using ordinary GATT.
+  The shared characteristic Value/StartNotify callback would broadcast bytes to all
+  subscribers and is deliberately not used. Both directions feed a bounded 64 KiB
+  Tokio duplex into `Mesh::attach`, retaining BLE 15/60 s timers and mesh dedup/acks.
+  One chunk is submitted at a time, with a 15 s local-write deadline; failure, EOF,
+  duplicate rejection or cancellation drops both halves. Local queue acceptance is
+  not remote delivery. Mesh inventory repairs interrupted transfers.
+- **MTU:** BlueZ negotiates it; default ATT MTU 23 remains usable. Chunks are
+  `min(ATT MTU − 3, 512)`. Pinned BlueR 0.17.4 reports writer MTU minus **five**;
+  the backend takes ownership of its fd and restores the Android-compatible minus
+  three calculation instead of sending 18-byte chunks at the default MTU. PHY is
+  left to BlueZ/controller policy, not forced to 2M.
+- **Lifecycle:** at most six application GATT links, counting pending central
+  attempts and peripheral setups from the first acquired fd. Scans skip active
+  addresses and full slots. Incoming setup evicts the longest-idle slot; half-open
+  setup expires after 15 s. BlueZ owns physical ACL connections (including other
+  desktop Bluetooth applications), so this is not a system-wide six-ACL cap.
+  Simultaneous central/peripheral streams are allowed during a race; mesh Hello
+  selects one peer link across BLE and TCP. Linux scans continuously while running.
+  Stop/restart the node to change BLE; Basecamp saves the start option for restart.
+- **Packaging:** `dbus`'s `vendored` feature statically bundles libdbus into the CLI
+  and module staticlib; no new host libdbus dependency or Nix-store path is needed
+  by the portable `.lgx`. BlueZ and the system D-Bus daemon are still host services.
+  Backend modules are platform-separated; unsupported platforms return a clear
+  error. A macOS CoreBluetooth backend is not implemented.
+
+Protocol tests run without BlueZ: chunk limits/fleet filtering, bounded writes and
+stalls, cancellation/disconnect, slot limits, stale completion after reconnect,
+multi-hop store-and-forward and end-to-end ack. Existing in-memory mesh and real
+Regtest TCP/LAN/Kotlin benches remain regression gates, not radio evidence.
+The orb has no `/dev/vhci`. BlueZ's [test-runner](https://github.com/bluez/bluez/wiki/test%E2%80%90runner)
+can use `btvirt` with a VHCI-enabled kernel (or a custom-kernel QEMU VM), but a
+working hosted GitHub Actions controller setup has not been established here;
+CI runs the protocol tests and compiles the Linux backend, not a speculative radio
+job. Virtual controllers would not close the following real-hardware gates.
+
+| # | Milestone | Passes when |
+|---|---|---|
+| D1 | ozm-node Linux ↔ Linux and Linux ↔ Android | Real adapters/phone, both central/peripheral directions; same-fleet discovery and wrong-fleet skip; 12.3 KB payment/receipt/mined; default and negotiated MTU; no LAN shortcut; per-hop timings and six-slot/reconnect behaviour recorded. **Implementation present, hardware unverified** |
+| D2 | Basecamp module on Linux | Portable `.lgx` installed in released Basecamp, Setup Bluetooth toggle enables BLE, restart restores it, BLE/TCP labels are correct; payments to Linux CLI and Android work with LAN off at BLE endpoints, reaching a gateway through a third BLE/LAN device. **Implementation present, hardware unverified** |
+| D3 | macOS backend | `objc2-core-bluetooth` implements the same streams, discovery, chunking and lifecycle; CLI Linux/Android interop measured. **Not implemented** |
+| D4 | macOS in Basecamp | After Basecamp adds `NSBluetoothAlwaysUsageDescription` ([logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)), module BLE works in the distributed host and permission denial is usable. **Blocked on host support and D3** |
+| D5 | Durability and capture | Interrupted transfer, process restart, ten-minute disconnection and mixed BLE/LAN routing lose no payment or ack; sniffer capture contains no plaintext amount, address or key. **Hardware unverified** |
+
 ## Open
 
+- D1/D2/D5: Linux hardware, BlueZ versions, scan/advertise coexistence, MTU/PHY, fd flow control under saturation, duplicate races and actual adapter connection limits remain unverified. D3/D4 are future macOS work, not part of this Linux backend.
 - B2–B7: nothing has run over a radio yet. The native Android UI, permissions, actual MTU fallback, 2M PHY, scan/advertise coexistence, phone LAN bridging, proving time/RAM, per-hop times, connection slots, battery cost and screen-off/vendor background limits remain unverified. No emulator was used (the orb has no Bluetooth or KVM).
 - Whether the fleet hint in BLE advertisements, or a rotating version of it, is enough to avoid tracking ([../privacy-and-threats.md](../privacy-and-threats.md)).
 - Interoperating with BitChat's packet format, if mixed fleets are wanted.

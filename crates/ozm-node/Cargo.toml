@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 zcash-offline-core = { path = "../zcash-offline-core" }
 ozm-mesh = { path = "../ozm-mesh" }
+ozm-ble = { path = "../ozm-ble" }
 anyhow = "1"
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
