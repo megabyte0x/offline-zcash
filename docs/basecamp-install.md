@@ -92,7 +92,7 @@ turn the toggle off to use LAN. BLE on macOS is not implemented yet and addition
 needs Basecamp's `NSBluetoothAlwaysUsageDescription` support ([upstream issue #527](https://github.com/logos-co/logos-basecamp/issues/527)).
 
 **Untested on real hardware until D1 passes; Basecamp radio integration is D2.**
-These controls are not in the v0.4.0 release packages. See the [desktop BLE milestones](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open).
+These controls are in the v0.4.1 and later release packages. See the [desktop BLE milestones](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open).
 
 ### Troubleshooting
 

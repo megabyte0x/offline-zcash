@@ -81,8 +81,7 @@ ozm-node start
 
 ## Bluetooth on Linux
 
-The development build adds experimental BLE; released v0.4.0 binaries do not have
-it. Start with `ozm-node start --ble` (or `OZM_BLE=true`). You need BlueZ's
+v0.4.1 and later add experimental BLE on Linux (v0.4.0 binaries do not have it). Start with `ozm-node start --ble` (or `OZM_BLE=true`). You need BlueZ's
 `bluetoothd` running, system D-Bus, Bluetooth powered on and an LE adapter that
 supports simultaneous scanning and peripheral advertising. No pairing is needed.
 The default adapter is used (`hci0` if present); one node process should own it.

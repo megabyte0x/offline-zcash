@@ -46,7 +46,7 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(column) })
         fun label(text: String, size: Float = 16f) = TextView(this).apply { this.text = text; textSize = size; setPadding(0, 12, 0, 12); setTextIsSelectable(true); column.addView(this) }
         fun button(text: String, action: () -> Unit) { column.addView(Button(this).apply { this.text = text; setOnClickListener { action() } }) }
-        label("Offline Zcash · 0.4.0", 24f)
+        label("Offline Zcash · 0.4.1", 24f)
         label("Regtest only · no real ZEC\nKeep the mesh notification running to relay. Pending is not final; mined is gateway-reported.")
         status = label("Starting…")
         result = label("")
