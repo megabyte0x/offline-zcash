@@ -195,6 +195,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         let mut ticks = 0u64;
         loop {
             t.tick().await;
+            if a.mesh.is_shutdown() { break; }
             ticks += 1;
             a.retry_tick().await;
             // Offline devices refresh their chain view from a gateway while one is reachable.
@@ -290,4 +291,3 @@ async fn pay(State(a): State<Arc<App>>, Json(r): Json<PayReq>) -> Result<Json<se
 pub fn err(e: anyhow::Error) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e:#}")}))).into_response()
 }
-

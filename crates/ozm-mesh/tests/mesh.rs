@@ -269,3 +269,55 @@ async fn mutual_dial_keeps_one_link() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(q.drain_messages().is_empty());
 }
+
+/// A radio surrogate: bounded buffers, partial reads, and callback-sized stalls in both directions.
+async fn attach_chunked(a: &Mesh, b: &Mesh, chunk: usize) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (left, radio_left) = tokio::io::duplex(chunk);
+    let (right, radio_right) = tokio::io::duplex(chunk);
+    let (lr, lw) = tokio::io::split(radio_left);
+    let (rr, rw) = tokio::io::split(radio_right);
+    async fn pump(mut r: impl tokio::io::AsyncRead + Unpin, mut w: impl tokio::io::AsyncWrite + Unpin, chunk: usize) {
+        let mut buf = vec![0; chunk];
+        let mut writes = 0;
+        loop {
+            let n = r.read(&mut buf).await.unwrap();
+            if n == 0 { break; }
+            writes += 1;
+            if writes % 8 == 0 { tokio::time::sleep(Duration::from_millis(2)).await; }
+            if w.write_all(&buf[..n]).await.is_err() { break; }
+        }
+    }
+    tokio::spawn(pump(lr, rw, chunk));
+    tokio::spawn(pump(rr, lw, chunk));
+    for (mesh, stream, outbound) in [(a.clone(), left, true), (b.clone(), right, false)] {
+        tokio::spawn(async move { mesh.attach(stream, outbound).await; });
+    }
+}
+
+#[tokio::test]
+async fn attached_streams_chunked_stalled_multihop_and_acked() {
+    for chunk in [20, 182, 514] {
+        let mut a = start(pid(1), false, &[], None).await;
+        let r = start(pid(2), false, &[], None).await;
+        let mut b = start(pid(3), false, &[], None).await;
+        attach_chunked(&a.mesh, &r.mesh, chunk).await;
+        a.wait_neighbors(1).await;
+        // Store-and-forward: B is not yet attached when A sends.
+        let data = payload(20_123);
+        let id = a.mesh.send(b.id(), data.clone()).await.unwrap();
+        timeout(WAIT, async {
+            while r.mesh.stats().stored == 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await.unwrap();
+        attach_chunked(&r.mesh, &b.mesh, chunk).await;
+        let got = b.wait_for(|ev| match ev {
+            MeshEvent::Message { msg_id, payload, hops, from, .. } if *msg_id == id => Some((payload.clone(), *hops, *from)),
+            _ => None,
+        }).await;
+        assert_eq!(got, (data, 2, a.id()), "chunk {chunk}");
+        a.wait_for(|ev| matches!(ev, MeshEvent::Delivered { msg_id, by } if *msg_id == id && *by == b.id()).then_some(())).await;
+        assert_eq!(a.mesh.neighbor_links(), vec![(r.id(), ozm_mesh::LinkKind::Ble)]);
+        assert!(r.mesh.stats().packets_synced > 0);
+        for node in [&a, &r, &b] { node.mesh.shutdown(); }
+    }
+}

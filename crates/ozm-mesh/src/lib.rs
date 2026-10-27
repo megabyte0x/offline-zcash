@@ -22,6 +22,23 @@ pub use ids::{MsgId, PeerId};
 use node::Node;
 use packet::Kind;
 
+/// Keepalive policy and neighbour visibility; the wire format is identical for both kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkKind {
+    Tcp,
+    Ble,
+}
+
+impl LinkKind {
+    pub(crate) fn timers(self) -> (Duration, Duration) {
+        match self {
+            Self::Tcp => (Duration::from_secs(5), Duration::from_secs(20)),
+            Self::Ble => (Duration::from_secs(15), Duration::from_secs(60)),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MeshConfig {
     pub peer_id: PeerId,
@@ -169,6 +186,15 @@ impl Mesh {
         Ok((Mesh { node, listen_addr }, rx))
     }
 
+    /// Runs an externally supplied BLE byte stream until EOF, failure, replacement or shutdown.
+    /// `outbound` is true on the central/dialing side. Dropping the stream closes the radio link.
+    pub async fn attach<S>(&self, stream: S, outbound: bool)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
+    {
+        link::run_link(stream, outbound, LinkKind::Ble, &self.node).await;
+    }
+
     /// Sends a directed message; it is flooded, stored for later neighbours, and acked by `to`.
     pub async fn send(&self, to: PeerId, payload: Vec<u8>) -> Result<MsgId> {
         ensure!(to != self.node.me, "cannot send to ourselves");
@@ -183,6 +209,10 @@ impl Mesh {
     /// Currently connected neighbours, sorted.
     pub fn neighbors(&self) -> Vec<PeerId> {
         self.node.neighbors()
+    }
+
+    pub fn neighbor_links(&self) -> Vec<(PeerId, LinkKind)> {
+        self.node.neighbor_links()
     }
 
     /// Same-fleet peers heard through discovery in the last 3 beacon intervals, with the address
@@ -207,5 +237,9 @@ impl Mesh {
     /// Stops listening, dialing and all links, persists the store, and closes the event stream.
     pub fn shutdown(&self) {
         self.node.shutdown();
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.node.is_closed()
     }
 }

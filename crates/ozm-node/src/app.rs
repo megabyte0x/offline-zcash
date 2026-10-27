@@ -861,6 +861,7 @@ impl App {
             "address": me.map(|d| d.address.clone()),
             "online": self.cfg.rpc.is_some(),
             "neighbors": neighbors,
+            "neighbor_links": self.mesh.neighbor_links().into_iter().map(|(p, kind)| json!({"name": self.peer_name(p), "peer_id": p.to_string(), "kind": kind})).collect::<Vec<_>>(),
             "mesh": self.mesh.stats(),
             "wallet": {"tip": st.0.tip_height, "spendable": spendable, "locked": locked,
                         "notes": st.0.notes.iter().filter(|n| n.spent_in.is_none()).count()},

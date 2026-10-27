@@ -19,7 +19,7 @@ use crate::{
     link::{LinkTx, Outgoing, MAX_FRAGMENTS},
     packet::{Kind, LinkMsg, Packet, HEADER_LEN},
     persist::{self, Db, Stored},
-    MeshConfig, MeshEvent, MeshStats, MsgId, PeerId,
+    LinkKind, MeshConfig, MeshEvent, MeshStats, MsgId, PeerId,
 };
 
 #[derive(Default)]
@@ -48,6 +48,7 @@ impl Counters {
 struct LinkEntry {
     id: u64,
     outbound: bool,
+    kind: LinkKind,
     tx: LinkTx,
 }
 
@@ -96,7 +97,7 @@ impl Node {
         self.cfg.store_ttl.as_millis().min(u64::MAX as u128) as u64
     }
 
-    fn is_closed(&self) -> bool {
+    pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 
@@ -129,6 +130,12 @@ impl Node {
     pub fn neighbors(&self) -> Vec<PeerId> {
         let mut v: Vec<_> = lock(&self.state).links.keys().copied().collect();
         v.sort();
+        v
+    }
+
+    pub fn neighbor_links(&self) -> Vec<(PeerId, LinkKind)> {
+        let mut v: Vec<_> = lock(&self.state).links.iter().map(|(p, l)| (*p, l.kind)).collect();
+        v.sort_by_key(|(p, _)| *p);
         v
     }
 
@@ -178,7 +185,7 @@ impl Node {
     /// One link per neighbour: if one exists, the new link replaces it when both were dialed by the
     /// same side (a reconnect), otherwise the link dialed by the smaller PeerId wins. Both ends apply
     /// the same rule, so they keep the same TCP connection.
-    pub fn link_up(&self, peer: PeerId, outbound: bool, tx: LinkTx) -> Option<u64> {
+    pub fn link_up(&self, peer: PeerId, outbound: bool, kind: LinkKind, tx: LinkTx) -> Option<u64> {
         let mut st = lock(&self.state);
         if self.is_closed() {
             return None;
@@ -192,10 +199,10 @@ impl Node {
                 return None;
             }
             info!(%peer, outbound, "link replaced");
-            st.links.insert(peer, LinkEntry { id, outbound, tx });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx });
         } else {
             info!(%peer, outbound, "link up");
-            st.links.insert(peer, LinkEntry { id, outbound, tx });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx });
             emit(&st, MeshEvent::NeighborUp(peer));
         }
         // Inventory: everything we have already seen, plus message ids known to be acked.

@@ -1,9 +1,8 @@
 //! The link layer: framing, hello, fragmentation and keepalive over any byte stream.
 //!
 //! `run_link` works on any `AsyncRead + AsyncWrite` stream and talks to the node only through
-//! `Node::link_up`, `Node::on_link_msg` and `Node::link_down`. The TCP listener and dialer below are
-//! the only transport today; LAN discovery (`discovery.rs`) finds peers and dials them with
-//! `dial_once`. A BLE link would add its own way to obtain a stream.
+//! `Node::link_up`, `Node::on_link_msg` and `Node::link_down`. LAN discovery (`discovery.rs`)
+//! finds TCP peers and dials them with `dial_once`; native BLE streams enter through `Mesh::attach`.
 
 use std::{
     collections::HashMap,
@@ -23,7 +22,7 @@ use tracing::{debug, warn};
 use crate::{
     node::{Counters, Node},
     packet::{LinkMsg, VERSION},
-    PeerId,
+    LinkKind, PeerId,
 };
 
 const FRAME_HELLO: u8 = 1;
@@ -38,8 +37,6 @@ pub(crate) const MAX_FRAGMENTS: usize = 4096;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-const PING_INTERVAL: Duration = Duration::from_secs(5);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 const REASSEMBLY_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(3);
@@ -60,7 +57,7 @@ pub(crate) async fn listen(listener: TcpListener, node: Arc<Node>) {
                 let n = node.clone();
                 node.spawn(async move {
                     stream.set_nodelay(true).ok();
-                    run_link(stream, false, &n).await;
+                    run_link(stream, false, LinkKind::Tcp, &n).await;
                 });
             }
             Err(e) => {
@@ -97,7 +94,7 @@ pub(crate) async fn dial_once(target: &str, node: &Arc<Node>) -> Option<Outcome>
     match time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target)).await {
         Ok(Ok(stream)) => {
             stream.set_nodelay(true).ok();
-            Some(run_link(stream, true, node).await)
+            Some(run_link(stream, true, LinkKind::Tcp, node).await)
         }
         Ok(Err(e)) => {
             debug!(%target, error = %e, "dial failed");
@@ -115,8 +112,19 @@ pub(crate) struct Outcome {
     pub accepted: bool,
 }
 
+/// An attached stream can also be cancelled by its owner, not just by EOF.
+struct Registration<'a> {
+    node: &'a Node,
+    peer: PeerId,
+    id: u64,
+}
+
+impl Drop for Registration<'_> {
+    fn drop(&mut self) { self.node.link_down(self.peer, self.id, None); }
+}
+
 /// Runs one link to completion: hello, registration, then read and write loops until either ends.
-pub(crate) async fn run_link<S>(stream: S, outbound: bool, node: &Arc<Node>) -> Outcome
+pub(crate) async fn run_link<S>(stream: S, outbound: bool, kind: LinkKind, node: &Arc<Node>) -> Outcome
 where
     S: AsyncRead + AsyncWrite + Send + Unpin,
 {
@@ -133,12 +141,14 @@ where
         return Outcome { peer: None, accepted: false };
     }
     let (tx, rx) = mpsc::unbounded_channel();
-    let Some(link_id) = node.link_up(peer, outbound, tx) else {
+    let Some(link_id) = node.link_up(peer, outbound, kind, tx) else {
         return Outcome { peer: Some(peer), accepted: false };
     };
+    let _registered = Registration { node, peer, id: link_id };
+    let (ping, idle) = kind.timers();
     let res = tokio::select! {
-        r = read_loop(&mut rd, peer, node) => r,
-        r = write_loop(&mut wr, rx, node) => r,
+        r = read_loop(&mut rd, peer, node, idle) => r,
+        r = write_loop(&mut wr, rx, node, ping) => r,
     };
     node.link_down(peer, link_id, res.err());
     Outcome { peer: Some(peer), accepted: true }
@@ -192,8 +202,9 @@ async fn write_loop<W: AsyncWrite + Unpin>(
     wr: &mut W,
     mut rx: mpsc::UnboundedReceiver<Outgoing>,
     node: &Node,
+    ping_interval: Duration,
 ) -> Result<()> {
-    let mut ping = time::interval(PING_INTERVAL);
+    let mut ping = time::interval(ping_interval);
     ping.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     ping.tick().await;
     loop {
@@ -227,11 +238,11 @@ async fn send_fragmented<W: AsyncWrite + Unpin>(wr: &mut W, out: &Outgoing, node
     Ok(())
 }
 
-async fn read_loop<R: AsyncRead + Unpin>(rd: &mut R, peer: PeerId, node: &Node) -> Result<()> {
+async fn read_loop<R: AsyncRead + Unpin>(rd: &mut R, peer: PeerId, node: &Node, idle: Duration) -> Result<()> {
     let mut partial = HashMap::new();
     loop {
-        let body = match time::timeout(IDLE_TIMEOUT, read_frame(rd, &node.stats)).await {
-            Err(_) => bail!("no traffic for {IDLE_TIMEOUT:?}"),
+        let body = match time::timeout(idle, read_frame(rd, &node.stats)).await {
+            Err(_) => bail!("no traffic for {idle:?}"),
             Ok(r) => match r? {
                 Some(b) => b,
                 None => return Ok(()),
@@ -290,4 +301,34 @@ fn reassemble(partial: &mut HashMap<[u8; 16], Partial>, b: &[u8]) -> Result<Opti
     }
     let p = partial.remove(&id).expect("present");
     Ok(Some(p.parts.into_iter().flatten().flatten().collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{persist::Db, MeshConfig};
+
+    #[tokio::test(start_paused = true)]
+    async fn link_kind_controls_ping_and_silent_peer_timeout() {
+        for (kind, ping, idle) in [(LinkKind::Tcp, 5, 20), (LinkKind::Ble, 15, 60)] {
+            let (tx, _events) = mpsc::unbounded_channel();
+            let node = Arc::new(Node::new(MeshConfig::default(), Db::default(), tx));
+            let (stream, mut remote) = tokio::io::duplex(4096);
+            let n = node.clone();
+            let mut task = tokio::spawn(async move { run_link(stream, false, kind, &n).await });
+            let stats = Counters::default();
+            let mut hello = read_frame(&mut remote, &stats).await.unwrap().unwrap();
+            hello[5..].copy_from_slice(&[42; 8]);
+            write_frame(&mut remote, &hello, &stats).await.unwrap();
+            // Initial inventory, then no data before the keepalive deadline.
+            assert_eq!(read_frame(&mut remote, &stats).await.unwrap().unwrap()[0], FRAME_DATA);
+            assert!(time::timeout(Duration::from_secs(ping - 1), read_frame(&mut remote, &stats)).await.is_err());
+            let body = time::timeout(Duration::from_secs(2), read_frame(&mut remote, &stats)).await.unwrap().unwrap().unwrap();
+            assert_eq!(body, vec![FRAME_PING]);
+            // Outbound pings do not keep a silent remote alive.
+            assert!(time::timeout(Duration::from_secs(idle - ping - 1), &mut task).await.is_err());
+            time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+            assert!(node.neighbors().is_empty());
+        }
+    }
 }
