@@ -23,7 +23,7 @@ Current state (27 October 2026): **v0.1.0, v0.2.0 and v0.3.0 are built and relea
 | [components/payee-verifier.md](components/payee-verifier.md) | Offline checks, chain-state checks with no trust in the gateway, receipt states, what headers can prove |
 | [components/pending-tier.md](components/pending-tier.md) | PaymentStatement and Receipt formats, payment keys, nullifier sharing, limits |
 | [components/gateway.md](components/gateway.md) | Submission (Tor on mainnet), signed bundles, history-MMR rebuild, untrusted-gateway mitigations |
-| [components/mesh.md](components/mesh.md) | `ozm-mesh` as built: flooding, frames, store-and-forward, acks, LAN discovery; BLE still open |
+| [components/mesh.md](components/mesh.md) | `ozm-mesh` as built: flooding, frames, store-and-forward, acks, LAN discovery; BLE link design (Android first, proposed) |
 | [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
 | [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
 | [../archive/](../archive/README.md) | Superseded plans (BitChat fork transport, Logos pathway plans), the original report and research notes |

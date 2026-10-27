@@ -12,7 +12,7 @@ Everything below runs on the local `ths` NU7 chain. Releases are on GitHub (tags
 | v0.2.0 | Installable `ozm-node` (join, start, fund, pay; web UI on `127.0.0.1:7780`), fleet invites, UDP LAN discovery, wallet sync and test funds over the mesh. `bench/lan-bench.sh all` | [mvp-v0.2.0](mvp-v0.2.0.md), [install](install.md) |
 | v0.3.0 | The same device as a Logos Basecamp core module and QML app; `.lgx` packages for linux-amd64, linux-arm64 and darwin-arm64; install guide tested on Basecamp 0.3.2 | [basecamp-install](basecamp-install.md), [../logos/README.md](../logos/README.md) |
 
-Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group, a BLE link and phones. The gateway's result is "gateway-reported", not proved.
+Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group, a BLE link and phones. **Next transport step:** the BLE link, Android first ([mesh.md BLE link](components/mesh.md#ble-link-android-first), milestones B1–B7). The gateway's result is "gateway-reported", not proved.
 
 ## Design problems (in order)
 
