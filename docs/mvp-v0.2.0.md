@@ -14,7 +14,7 @@
 | Sync over the mesh | Offline devices ask the gateway for blocks (`syncq`/`syncr`) and rebuild their wallet from them. A payee can spend what it received once the payment is mined, without its own internet |
 | Test funds over the mesh | `ozm-node fund` (or the UI button) asks a Regtest gateway to pay test notes from its own wallet (`fundq`/`fundr`) |
 
-The Logos Basecamp packaging and Bluetooth LE radios are not in v0.2.0 (see [later/logos-v0.1.0-plan.md](later/logos-v0.1.0-plan.md) milestones 5–7).
+A Logos Basecamp core module and QML UI over the same code were added on 27 October ([../logos/README.md](../logos/README.md)). Bluetooth LE radios are not in v0.2.0 (see [later/logos-v0.1.0-plan.md](later/logos-v0.1.0-plan.md) milestones 5–7).
 
 ## Running a session
 

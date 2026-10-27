@@ -1,0 +1,37 @@
+{
+  "name": "zcash_offline_module",
+  "display_name": "Zcash Offline",
+  "version": "0.2.0",
+  "type": "core",
+  "interface": "cdylib",
+  "category": "wallet",
+  "description": "Offline Zcash payments over a local mesh: the ozm-node device (payer, payee, relay, gateway) as a Logos core module",
+  "main": "zcash_offline_module_plugin",
+  "dependencies": [],
+  "codegen": {
+    "rust": {
+      "crate": "rust-lib",
+      "trait": "ZcashOfflineModule"
+    }
+  },
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": []
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    },
+    "rust": {
+      "toolchain": "1.95.0",
+      "packages": {
+        "build": [],
+        "runtime": []
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+[package]
+name = "zcash_offline_module"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# The repository crates are staged under workspace-crates/ (by flake.nix for
+# the nix build, by ../dev-stage.sh for local cargo). They inherit
+# `version.workspace = true` etc. from this workspace, so keep these values in
+# step with the repository root Cargo.toml.
+[workspace]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+ozm-node = { path = "workspace-crates/ozm-node" }
+zcash-offline-core = { path = "workspace-crates/zcash-offline-core" }
+anyhow = "1"
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+logos-rust-sdk = { path = "../logos-rust-sdk-src" }
+
+[profile.release]
+panic = "abort"
+debug = false

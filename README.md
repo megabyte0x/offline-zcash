@@ -17,6 +17,7 @@ bench/lan-bench.sh all           # v0.2.0: tester path on one LAN with discovery
 | [crates/zcash-offline-core](crates/zcash-offline-core) | Wallet sync, offline builder, payee checks, sealed envelopes, signed messages |
 | [crates/ozm-mesh](crates/ozm-mesh/README.md) | BitChat-style mesh: TTL flooding, BLE-sized frames, store-and-forward, delivery acks |
 | [crates/ozm-node](crates/ozm-node) | Device daemon: roles, payment store, gateway, HTTP API and web UI |
+| [logos](logos/README.md) | Logos Basecamp core module and QML UI |
 | [bench](bench/README.md) | Multi-container mesh bench and gating tests |
 | [docs](docs/README.md) | Design, components, open work |
 

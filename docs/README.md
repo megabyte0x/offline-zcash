@@ -11,6 +11,7 @@ Current state (26 October 2026): problem #1 (double-spend) was **re-decided 26 O
 | Read | For |
 |---|---|
 | [mvp-v0.2.0.md](mvp-v0.2.0.md) | v0.2.0: install, invites, LAN discovery, sync and test funds over the mesh; how to run a session |
+| [../logos/README.md](../logos/README.md) | Basecamp core module and QML UI: API, build, run, what was verified |
 | [install.md](install.md) | Installing `ozm-node` on macOS and Linux |
 | [mvp-v0.1.0.md](mvp-v0.1.0.md) | What v0.1.0 runs, measured timeline, gating test results, decisions and limits |
 | [design.md](design.md) | System view, payment flow, finalized decisions, stages |

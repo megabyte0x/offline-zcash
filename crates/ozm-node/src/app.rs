@@ -109,6 +109,9 @@ pub struct Config {
     pub faucet_max_zat: u64,
 }
 
+/// Callback for app events: name and JSON detail.
+pub type EventHook = Box<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+
 pub struct App {
     pub cfg: Config,
     pub mesh: Mesh,
@@ -121,6 +124,8 @@ pub struct App {
     /// Device: when the last mesh sync request went out (ms), to avoid flooding the gateway.
     last_sync_req: std::sync::atomic::AtomicU64,
     sync_apply: tokio::sync::Mutex<()>,
+    /// Optional observer of every app event (the Basecamp module turns them into Logos events).
+    pub on_event: std::sync::OnceLock<EventHook>,
 }
 
 fn wallet_path(cfg: &Config) -> PathBuf {
@@ -144,6 +149,7 @@ impl App {
             block_cache: Default::default(),
             last_sync_req: Default::default(),
             sync_apply: Default::default(),
+            on_event: Default::default(),
         }))
     }
 
@@ -158,6 +164,9 @@ impl App {
 
     /// Appends a structured event to `events.jsonl` and the log. The bench reads these for timings.
     pub fn event(&self, event: &str, detail: serde_json::Value) {
+        if let Some(f) = self.on_event.get() {
+            f(event, &detail);
+        }
         let line = json!({"ms": now_ms(), "node": self.name(), "event": event, "detail": detail});
         info!(target: "ozm", "{line}");
         use std::io::Write;
@@ -395,7 +404,8 @@ impl App {
         let payment = {
             let mut st = self.state.lock().unwrap();
             st.0 = wallet;
-            st.1.seq_out += 1;
+            // Time-based so it keeps rising when the same device is reinstalled with an empty store.
+            st.1.seq_out = (st.1.seq_out + 1).max(now_ms());
             let statement = Signed::sign(
                 Statement {
                     txid: built.txid.clone(),

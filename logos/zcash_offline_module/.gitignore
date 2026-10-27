@@ -1,0 +1,8 @@
+result
+result-*
+.dev-*
+lib/
+rust-lib/target/
+rust-lib/generated/
+rust-lib/workspace-crates/
+logos-rust-sdk-src
