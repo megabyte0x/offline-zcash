@@ -4,6 +4,8 @@ Amounts and recipients are well protected: Ironwood hides them on chain, and Bit
 Metadata is the weak point: who sent, when and from where leaks through the gateway, mesh peer IDs, radio and fleet-specific transaction shapes.
 With four devices the anonymity set is tiny. The design target is mainnet in a shutdown; the local chain and the four Macs are a harness, so no mitigation below is dropped because the harness cannot exercise it. Where the harness cannot test a control, the assumptions table says so and the control is tested with mainnet vectors.
 
+**v0.7.0 trust assumptions by party, with what each party can learn and do and the top risks, are in [Trust assumptions at v0.7.0](#trust-assumptions-at-v070). Where older statements here conflict with that section, it wins.**
+
 Related: [design.md](design.md), [components/double-spend.md](components/double-spend.md), [components/mesh.md](components/mesh.md), [components/gateway.md](components/gateway.md), [components/payee-verifier.md](components/payee-verifier.md). Deep sources: [threat_model.md](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/threat_model.md), [report §Metadata](../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md), [reconciliation](../archive/reports/Design%20review%20reconciliation.md).
 
 ## Decided
@@ -116,3 +118,225 @@ The design is written for the right-hand column. The left-hand column says only 
 - Report and card note: hot list of payer keys → nullifiers only (P2).
 - Threat note §1 says NU7 "not yet active": NU7 is active from height 1 on the local chain and from 3,543,405 on mainnet.
 - This file, 25 October morning, P6 "FROST participants hold the escrow FVK": not required (R1, R2); the co-signer works from the sighash alone.
+
+## Trust assumptions at v0.7.0
+
+Written 27 October 2026 from a read of `main` at `3395bd1` (v0.5.1). v0.6.0 (open LAN join, pay any address, Max) and v0.7.0 (public testnet, light-client gateway against public lightwalletd, `included`/`mined` gateway-reported, compact birthday sync, "Prepare for offline" split) were not on `main` then, so their rows are **planned**. A row worked out from the planned design rather than read in code is **inferred**. Line numbers are at `3395bd1`.
+
+Paths: `core/` = `crates/zcash-offline-core/src/`, `mesh/` = `crates/ozm-mesh/src/`, `node/` = `crates/ozm-node/src/`, `kt/` = `android/app/src/main/java/org/zcash/offline/`.
+
+Status: **Enforced** (in code, holds at v0.7.0), **Partial**, **Not** (no control in code), **Designed only** (docs, no code), **Planned** (a v0.6.0/v0.7.0 feature).
+
+### Code facts behind most rows
+
+- **F1. The sender is not authenticated on the mesh.** The link hello sends a claimed peer ID (`mesh/link.rs:157-174`) and the listener accepts any inbound TCP connection (`mesh/link.rs:52-69`); the fleet tag only decides whom a node dials (`mesh/discovery.rs:607`). The packet `sender` is cleartext and unsigned (`mesh/packet.rs:41-70`). The envelope's `from`/`from_key` are claimed (`core/envelope.rs:24-31`) and checked only against that claimed peer ID (`node/app.rs:531-536`). Only `Statement`, `Receipt` and `GatewayResult` are signed; `Sub`, `SyncReq`, `SyncRes`, `FundReq`, `FundRes` and mesh acks are not (`core/messages.rs:16-32`, `mesh/node.rs:366-381`).
+- **F2. Offline chain views are unverified.** `SyncRes` blocks are applied after a role check only (`node/app.rs:311-336`, `core/wallet.rs:140-214, 242-270`). That view feeds anchors, `chain_nullifiers` and balances (`core/verify.rs:121-136`).
+- **F3. `mined` is one gateway's word, and it sticks.** One signed `GatewayResult` sets `mined` and nothing moves it back (`node/app.rs:811-829`). Any node error containing "already" counts as success (`node/app.rs:908`).
+- **F4. The gateway learns payer and payee.** Every `Sub` carries `notify: [payer, payee]` (`node/app.rs:495, 703, 855`).
+- **F5. A refused payment is still submitted.** A sends `Sub` together with `Pay` (`node/app.rs:487-505`), so a refused payment can still mine; the app treats `refused` as final (`node/app.rs:68-70, 749-755`).
+- **F6. The organiser holds every key.** `fleet-init` generates every device's spending and Ed25519 keys in the organiser's folder (`node/lib.rs:142-175`, `core/fleet.rs:210-217`); invites carry raw private keys (`node/lib.rs:109-113`); fleet file and invites are unsigned (`node/lib.rs:196-214`).
+- **F7. Remote text reaches `innerHTML`.** Device names, refusal reasons and gateway rejection reasons are rendered with `innerHTML` (`node/ui.html:94, 98-102`; `node/app.rs:744-757, 816-819`). The HTTP API on `127.0.0.1:7780` has no authentication (`node/lib.rs:62, 288-336`).
+- **F8. The mesh store has no limits.** Unbounded, kept 24 h, rewritten on every packet (`mesh/node.rs:284-303`, `mesh/lib.rs:92`); every new link receives every stored packet (`mesh/node.rs:208-214, 400-416`).
+- **F9. Locked notes never unlock on expiry,** only when seen spent (`core/wallet.rs:207-212`).
+- **F10. Keys and wallet data are plain files.** `secret.json` is plaintext, mode 0600 (`node/lib.rs:185-193`); `wallet.json`, `payments.json` and the mesh store use default permissions (`core/wallet.rs:279-287`). The X25519 key derives from the static Ed25519 key, so no forward secrecy (`core/fleet.rs:125-128`). Signatures use `verify`, not `verify_strict` (`core/fleet.rs:162-166`).
+
+### 1. Payer (Alice)
+
+| # | Assumption | S/P | What breaks if violated | Likelihood / impact | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| A1 | The payer does not double-spend a pending payment | S | Same note to B and C (no nullifier sharing), or an online sweep after B's receipt; editing `wallet.json` clears `locked_by` | High / ≤0.5 ZEC per payment, unlimited count | Note lock `core/wallet.rs:39-41`, `core/builder.rs:146-148` (honest app only); same-payee conflict `node/app.rs:651-655`; floor `core/verify.rs:137-139`, `core/fleet.rs:39` | **Partial** (floor only) | Tasks 5–6 before pending outside a closed fleet; co-signers in v1.1 |
+| A2 | The payer is known and accountable (P2) | S | Open-mode statement keys are throwaway: no debt claim. **Regression** | High / High | Statement signature `core/messages.rs:49-62`, fleet-only signer `core/messages.rs:135-139` | **Not** for open mode (planned, inferred) | v0.6: no pending for unknown payers; wait for `included` |
+| A3 | The payer's anchor is a real chain root | S | Colluding payer and view source (forged `SyncRes`) get a fabricated note accepted | Medium (High in open mode) / ≤ floor | Anchor must be in the payee's view `core/verify.rs:121-127`, but the view is unverified | **Not** (tasks 7–8 deferred) | Sign `syncr` now; MMR paths and PoW before mainnet |
+| A4 | The statement matches the transaction | S | Amount, payee or txid mismatch | — | `node/app.rs:630-644` | **Enforced** | — |
+| A5 | The payer's device protects its spending key | S | Theft from `secret.json`, the organiser's copy (F6) or the invite in transit | Medium / High | 0600 `node/lib.rs:185-193`; Android backup off | **Partial** | Keystore/Keychain and on-device keys before mainnet |
+| A6 | Synced notes and balance are true | S | Lying gateway or lightwalletd shows fake notes or hides real ones | Medium / Medium | None (F2) | **Not** | As B1 |
+| A7 | A refusal means the payment won't settle | S | Payee refuses but A already submitted (F5); A pays again, pays twice | Medium / Medium | Locks persist after refusal | **Not** | Show "refused, may still mine until expiry"; or submit after receipt |
+| A8 | Withheld transactions release their notes | S | Gateway or lightwalletd swallows the tx; notes locked for good (F9), fleet expiry ~21 days | Medium / Medium | Retries `node/app.rs:836-868` | **Not** | Unlock after verified expiry |
+| A9 | Paying B doesn't reveal that A paid B | P | Packet header shows sender and recipient; the 12 KiB bucket marks `pay` (`mesh/packet.rs:41-70`, `core/envelope.rs:20, 50`) | High / Medium | Sealed payload | **Not** | Fixed size, recipient hiding, cover traffic before mainnet |
+| A10 | Max doesn't leak the payer's state | P | Max spends ≤2 notes minus fee (`core/builder.rs:48-71`), so B learns note inventory | Low / Low | — | **Planned** | Accept or warn |
+
+### 2. Payee (Bob)
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| B1 | B's chain view (tip, anchors, nullifiers) is real | S | Forged `SyncRes` or lying lightwalletd: fake-anchor or spent payments accepted; `reset=true` wipes the view (`node/app.rs:318-320`); the birthday frontier can't be checked (planned) | High in open mode / High | Role check only `node/app.rs:312` | **Not** (tasks 7–9 deferred) | v0.6: sign `syncr`; two-source agreement; tasks 7–8 before mainnet |
+| B2 | Pending exposure is bounded | S | No per-payer count/value cap, payee total, freshness or sharing | High / ≤0.5 ZEC × N | Floor; expiry margin, expiry 0 refused `core/verify.rs:128-139` | **Partial** | Task 5 (caps), task 6 (sharing) |
+| B3 | `included`/`mined` are true | S | Gateway or lightwalletd claims confirmations it never saw; one result sticks (F3) | Medium / High | Fleet-gateway signature `node/app.rs:811-813`; labelled gateway-reported | **Not** (gateway-reported by design) | Tasks 7–9 and a second gateway before mainnet |
+| B4 | Statements come only from enrolled payers | S | Forged statement | — | `core/messages.rs:135-139`, `node/app.rs:632` | **Enforced** (fleet); open mode **planned** | — |
+| B5 | Address → mesh-ID bindings are proved by the address owner | S+P | A stranger binds the victim's address to its own mesh ID, receives the sealed `pay` and sends fake receipts; a name→address lookup redirects funds. **Regression** | High / High (inferred) | None yet | **Planned** | Address-owner proof, pin on first use, show the address not just a name. v0.6 blocker |
+| B6 | B stores the tx before the receipt | S | Lost payment | — | fsync first `node/app.rs:672-699` | **Enforced** | — |
+| B7 | Forwarding to the gateway hides who was paid | P | `notify` names payer and payee (F4) | High / Medium | — | **Not** (contradicts P1) | `request_nonce` design (`components/gateway.md`) |
+| B8 | B's address doesn't link payments | P | One static address per device (`core/fleet.rs:129-131`) | High / Low–Medium | Shielded on chain | **Not** | Diversified address per request |
+
+### 3. Relays and other mesh devices
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| R1 | Relays forward and don't drop | S | Black-hole relay; a forged ack (needs only the cleartext `msg_id`) deletes a message mesh-wide (`mesh/node.rs:347, 366-381`) and marks a payment delivered (`node/app.rs:568-581`) | Medium–High / Medium | Flooding, 24 h store, app retries | **Partial** | Authenticated acks. v0.6 |
+| R2 | Relays can't read payloads | P | — | — | X25519 + ChaCha20-Poly1305, 4 KiB padding `core/envelope.rs:47-95` | **Enforced** | — |
+| R3 | Past traffic stays private if a key leaks | P | Static key, no forward secrecy; relays keep sealed packets 24 h | Medium / High | — | **Not** | Key rotation or ratchet before mainnet |
+| R4 | Relays can't impersonate a device | S | Spoof the gateway's `SyncRes`/`FundRes` or forge `Sub` (F1) with public keys only; anyone in open mode | High / High | Payment, receipt and result are signed | **Not** for unsigned bodies | Sign every inner envelope. v0.6 blocker |
+| R5 | Relays can't exhaust resources | S | Floods, far-future `created_ms`, store rewritten per packet (F8) | Medium / Medium | — | **Not** (quotas designed only) | Per-sender quotas, skew cap. v0.6 |
+| R6 | Relays don't learn the mesh's traffic | P | Every new link gets every stored packet and seen ID (F8) | High / Medium | — | **Not** | Inventory sync only with authenticated peers |
+
+### 4. Gateway device
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| G1 | The gateway submits what it receives | S | Withholds or delays; in open mode the nearest announcer wins | Medium / High | A and B both submit `node/app.rs:494-496, 702-704`, retries | **Partial** | Two or more gateways; detect withholding by inclusion proof |
+| G2 | Chain reports are honest | S | Fake `included`/`mined` | Medium / High | Signature only `core/messages.rs:90-99` | **Designed only** | Tasks 7–9 before mainnet |
+| G3 | Sync data is real | S | Poisoned compact blocks, wrong birthday frontier | Medium / High | — | **Not** (F2) | As B1 |
+| G4 | The gateway is legitimate | S+P | v0.5.1: organiser-granted role (`node/lib.rs:222-224`, `node/app.rs:813`). v0.6: self-signed announcement, nearest wins: Sybil or eclipse. **Regression** | High / High (inferred) | Fleet role | **Planned** | Fleet-signed gateway certificates; open mode needs two agreeing gateways |
+| G5 | The gateway doesn't learn payer and payee | P | Learns both (F4) | High / Medium | — | **Not** | Nonce-addressed acks |
+| G6 | The gateway isn't a first spy and doesn't learn interest | P | Sees every tx first and each device's sync height (`node/app.rs:263-268`); v0.7 adds birthdays | High / Medium | — | **Not** (Tor, task 10, unbuilt) | Accept on testnet; Tor before mainnet |
+| G7 | The honest path is correct | S | The "already" match can show a conflicted tx as `in-mempool` forever (F3, inferred) | Medium / Medium | — | **Not** | Exact error codes. v0.7 |
+| G8 | The gateway holds no wallet | P | At v0.7 any internet device is a gateway and a wallet; lightwalletd first-spies its own txs with its IP | High / Medium (inferred) | — | **Not** | Separate gateway identity, or Tor |
+| G9 | The gateway can't be flooded | S | Unlimited `Sub` proof checks `node/app.rs:763-807` | Medium / Low | — | **Designed only** | Quotas |
+
+### 5. lightwalletd server operator
+
+testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| L1 | It returns the true chain | S | Fabricates compact actions, tree state, nullifiers and confirmations for the whole fleet; compact blocks carry no header and GetTreeState only a frontier, so no PoW check. **Regression** from an own node | Low–Medium / High | — | **Not** | A second independent server compared on every answer; own node plus tasks 7–8 before mainnet |
+| L2 | It forwards `SendTransaction` | S | Censors while replying OK | Low–Medium / Medium | — | **Not** | Send to two or more servers; confirm via another source |
+| L3 | It doesn't deanonymize the fleet | P | Sees the gateway IP, every fleet tx with timing, birthdays, sync ranges, txid queries (inferred) | High / Medium | TLS on the path | **Not** | Tor per tx; status from blocks, not per-txid queries |
+| L4 | It is available | S | Single point of failure; the backup returns 503 | Medium / High | — | **Not** | Multiple endpoints |
+| L5 | TLS authenticates the server | S | Mis-issued certificate or DNS hijack | Low / High | WebPKI (planned) | **Planned** | SPKI pinning |
+
+### 6. Zcash network, miners and testnet
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| Z1 | Consensus mines at most one conflicting spend | S | — | — | Duplicate nullifiers rejected by nodes | **Enforced** (network) | — |
+| Z2 | 10 confirmations mean final | S | Testnet minimum-difficulty blocks after 450 s gaps make cheap reorgs feasible | Medium / Low (test coins) | — | **Not** | Testnet is a functional test only |
+| Z3 | Common 4.0 output is valid on public testnet | S | All payments rejected | Medium / Medium | Accepted on Regtest only | **Planned** | Mined testnet smoke test before tagging v0.7.0 |
+| Z4 | The fleet fee fits every transaction shape | S | Split txs with more than 2 actions need more than 10,000 zat (ZIP 317), but the gateway requires exactly the fleet fee (`core/verify.rs:75-78`) | High / Medium (inferred) | — | **Not** | Fee policy per action count |
+| Z5 | On-chain privacy | P | Fingerprints: 72,576-block expiry (`core/fleet.rs:37`), anchor age, 2-action shape, split outputs | High / Medium | Accepted (P4) | **Partial** | Accept on testnet |
+| Z6 | Testnet stays live through the expiry window | S | A reset or upgrade kills unmined txs | Low / Medium | — | **Not** | — |
+
+### 7. Organiser and invite issuer (fleet mode)
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| O1 | The organiser doesn't keep or misuse device keys | S+P | Holds every key (F6): steals all funds, signs as anyone, decrypts every envelope | Low / High | A doc warning only | **Not** | Keys generated on the device; organiser signs public enrollment only |
+| O2 | Invites stay confidential in transit | S | An intercepted invite gives every key | Medium / High | 0600 on disk | **Not** | As O1 |
+| O3 | Fleet file and invites are authentic | S | A tampered `fleet.json` swaps payee addresses or gateway keys | Low–Medium / High | Consistency only `node/lib.rs:196-214` | **Not** | Organiser signature and fingerprint check |
+| O4 | Policy values are sane | S | Bad floor, fee, branch or expiry (`core/fleet.rs:15-44`) | Low / Medium | — | **Partial** | Signed policy |
+| O5 | Only trusted devices get the gateway role | S | Rogue gateway | Low / High | `node/app.rs:170-176, 813` | **Enforced** (fleet) | — |
+
+### 8. Open-mode strangers on the LAN or BLE mesh
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| S1 | Strangers can't inject traffic | S | Already possible at v0.5.1 (inbound 7777, store harvest); with public identities they spoof the gateway and acks. **Regression** | High / High | — | **Not** | Authenticated links and envelopes. v0.6 blocker |
+| S2 | No Sybil | S | Unlimited identities: nearest-gateway hijack, eclipse | High / High | — | **Planned / Not** | Pinned or fleet gateways, two-source agreement, rate limits |
+| S3 | Names and addresses aren't impersonated | S | Self-chosen "Bob", binding spoof (B5) | High / High (inferred) | — | **Planned** | Key fingerprints, pin on first use |
+| S4 | Membership and topology stay hidden | P | Beacons send tag and peer ID every 2 s (`mesh/discovery.rs:338-340, 503-533`), plus the BLE hint and IPs | High / Medium | — | **Not** | Rotating IDs (P5) |
+| S5 | Remote strings can't run in the UI | S | Stored XSS (F7) → `fetch('/api/pay')` drains the wallet to any address. **Regression** | Medium / High | — | **Not** | `textContent` everywhere, API token. v0.6 blocker |
+| S6 | Pending is never offered to strangers | S | A1 with no accountability | Depends on v0.6 / High | Fleet-only statements | **Planned** | Rule: no pending for unknown keys |
+
+### 9. The faucet
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| FA1 | The public faucet doesn't link requesters | P | Learns requester IP and address | High / Low | — | **Not** | Request via the gateway or Tor, fresh address |
+| FA2 | The faucet pays Ironwood addresses on NU7 testnet | S | No funds reach devices | Medium / Medium | Untested | **Planned** | Test before v0.7.0 |
+| FA3 | The gateway faucet can't be drained | S | Per-request cap only (`node/app.rs:362`) | — | Off unless `mine` (`node/app.rs:359`), so off on testnet | **Enforced** (off) | — |
+
+### 10. Software distribution
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| D1 | Catalogue and packages come from us | S | Catalogue on `main` points at mutable `releases/latest`; packages unsigned (`trustedSigners: []`); a compromised account ships a key-stealing module | Low / High | Content roots and SHA-256 (integrity only) | **Not** | Sign `.lgx`, pin versions before mainnet |
+| D2 | The APK signing key is secret | S | Public test key (`android/test-signing.p12`): anyone can ship an update inheriting app data and keys | Medium / High | Documented warning | **Not** | Private release key and new package ID before real value |
+| D3 | The CLI installer is authentic | S | Checksum from the same release (`scripts/install.sh:70-91`); macOS binary unsigned | Low / High | — | **Partial** | Signed releases |
+| D4 | CI isn't compromised | S | Actions pinned to tags, `@stable` toolchain, shared cache (`.github/workflows/release.yml:64-67`) | Low / High | — | **Not** | Pin SHAs, isolate release cache |
+| D5 | The Basecamp host isolates modules | S | Other modules call `pay` over Logos IPC (inferred) | Low–Medium / High | — | **Not** (inferred) | Caller allow-list |
+
+### 11. Passive network or radio observer
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| PO1 | The mesh hides who pays whom | P | Cleartext sender/recipient, size and time; `sub` timing links the txid to A and B | High / Medium | Sealed payload | **Not** | Uniform size, cover traffic |
+| PO2 | BLE doesn't track devices | P | Static 4-byte fleet hint (`kt/BleLink.kt:214`, `crates/ozm-ble/src/linux.rs:176`), unencrypted GATT (`kt/BleLink.kt:242`), stable peer ID | High / Medium | No device name | **Not** | Rotating hint and ID |
+| PO3 | The LAN doesn't leak | P | Beacons and plaintext TCP | High / Medium | — | **Not** | Link encryption |
+| PO4 | The uplink doesn't leak | P | Gateway IP and tx timing at lightwalletd | High / Medium | TLS | **Not** | Tor |
+| PO5 | No active radio adversary | S+P | Jamming, direction finding | Low–Medium / High | Accepted | **Not** | — |
+
+### 12. Device OS and platform
+
+| # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
+|---|---|---|---|---|---|---|---|
+| OS1 | The OS RNG is sound | S | — | — | `core/fleet.rs:91-108` | **Enforced** (OS) | — |
+| OS2 | Key storage resists malware and seizure | S | Plaintext `secret.json` | Medium / High | 0600; Android backup off | **Partial** | Keystore, Keychain, Secure Enclave |
+| OS3 | Wallet and history files are private | P | Default permissions (F10) | Medium / Medium | — | **Not** | 0600 |
+| OS4 | Only the user can call the local API | S | Any local process or DNS-rebinding page calls `/api/pay` (inferred; no Host/Origin check); with pay-any-address it pays anyone. **Regression** | Medium / High | Loopback bind `node/lib.rs:62` | **Not** | Random token and Host check. v0.6 blocker |
+| OS5 | The Android sandbox holds | S | `usesCleartextTraffic=true` | Low / Low | `allowBackup=false`, only the launcher exported | **Partial** | — |
+| OS6 | The clock is roughly right | S | Time-based `seq` (`node/app.rs:427`), mesh expiry (`mesh/node.rs:275-310`) | Low / Medium | — | **Partial** | — |
+| OS7 | A seized device doesn't expose past traffic | P | No forward secrecy | Medium / High | — | **Not** | Key rotation |
+
+### What each party can learn
+
+| Party | Amounts | Addresses | Sender ↔ receiver | Timing | Location / topology | Balance |
+|---|---|---|---|---|---|---|
+| Payer | Own | Payee's | Own | Yes | Payee's hop count | No |
+| Payee | Paid to it | Payer's (fleet file) | Yes | Yes | Payer's hop count | Partly, via Max (planned) |
+| Relay | Size bucket only | No | **Yes** (header IDs) | Yes | **Yes** | No |
+| Gateway | No | Via `notify` and the fleet file | **Yes** (F4) | Yes, first spy | Partly | No |
+| lightwalletd | No | No | No, but sees the fleet's whole tx set | Yes | **Gateway IP** | No |
+| Network / miners | No | No | Nullifier linkage on chain | Yes | No | No |
+| Organiser | **Yes** | **Yes** | **Yes** | With captures | If on the mesh | **Yes** (holds keys) |
+| Open-mode stranger | Size only | Bindings (planned) | **Yes** | Yes | **Yes**, plus IPs | No |
+| Faucet | Its payout | Requester's | No | Yes | Requester IP | No |
+| Software distribution | Everything, via a malicious build | | | | | |
+| Passive observer | Size only | No | **Yes** | Yes | **Yes**, RF location | No |
+| Device OS | Everything on the device | | | | | |
+
+### What each party can do
+
+| Party | Steal | Double-spend | Censor | Delay | Lie about mined | Deny service | Impersonate |
+|---|---|---|---|---|---|---|---|
+| Payer | No | **Yes** (pending) | — | Yes | No | Spam | Throwaway IDs in open mode |
+| Payee | No | No | Partly (A also submits) | Yes | No (can falsely refuse) | — | No |
+| Relay | No | No | **Yes** (drop, forged acks) | Yes | Fake view via `syncr` | Yes | **Yes** (unsigned bodies) |
+| Gateway | No | Can hide conflicts | **Yes** | **Yes** | **Yes** | Yes | Open-mode announcement |
+| lightwalletd | No | Can hide conflicts | **Yes** | Yes | **Yes**, fleet-wide | **Yes** | It is the chain |
+| Network / miners | No | Enables it (testnet reorgs) | Yes | Yes | Reorgs undo confirmations | Yes | No |
+| Organiser | **Yes** | **Yes** | Yes | Yes | **Yes** | Yes | **Yes** |
+| Open-mode stranger | **Yes**, via XSS or the API | If offered pending | Yes | Yes | If picked as gateway | Yes | **Yes** |
+| Faucet | No | No | Withholds funds | Yes | No | — | No |
+| Software distribution | **Yes** | **Yes** | Yes | Yes | Yes | Yes | **Yes** |
+| Passive observer / jammer | No | No | Jamming only | Jamming only | No | Jamming only | No |
+| Device OS | **Yes** | **Yes** | Yes | Yes | Yes | Yes | **Yes** |
+
+### Top 10 risks at v0.7.0
+
+1. **One public lightwalletd is the whole chain** (L1–L4, B1, B3): no headers, no PoW, no second source; it decides balances, anchors, nullifiers and `included`/`mined` for every device, sees every tx and the gateway IP, and is a single point of failure. **Regression.**
+2. **Unauthenticated mesh sender and unsigned sync** (F1, F2, R1, R4, S1): forged `syncr` gets fabricated-anchor payments accepted; forged acks delete messages mesh-wide. Any fleet member at v0.5.1; **anyone** in open mode.
+3. **Identity and binding spoofing in open mode and pay-any-address** (G4, B5, S2, S3). **Regression**, planned.
+4. **The local UI and API can be driven remotely** (F7, OS4, S5): `innerHTML` plus an unauthenticated API means direct theft with pay-any-address. **Regression.**
+5. **Pending double-spend has no caps or accountability** (A1, A2, B2). **Regression** with open mode.
+6. **The organiser holds every key; invites are raw and unsigned** (O1–O3).
+7. **Gateway lies, censorship and stuck funds** (G1–G3, G7, A7, A8): sticky `mined`, the "already" match, refused-but-submitted payments, locks that never expire. **Regression**: any internet device can be a gateway.
+8. **Metadata leaks** (A9, B7, G5, G6, R6, PO1–PO4).
+9. **Unsigned supply chain** (D1–D4); fix before any real value.
+10. **Testnet chain and v0.7 mechanics** (Z2–Z4, FA2): cheap reorgs, untested Common 4.0 on testnet, split txs breaking the exact-fee rule, faucet support unverified.
+
+### Statements earlier in this file that are out of date for v0.7.0
+
+The sections above were written for the BitChat-fork design. Until they are rewritten, this section wins where they conflict:
+
+1. The intro and P1 describe BitChat/Noise private messages. The transport is `ozm-mesh` with `ozm1` envelopes, whose headers expose sender and recipient.
+2. P1 says the gateway gets tx bytes only; the code also sends `notify: [payer, payee]` and the claimed `from` (F4).
+3. P3 and the threat table assume PoW, MMR paths and two gateways (residual Medium). At v0.7.0 nothing is verified; the residual is High.
+4. P7 assumes Tor and our own node; Tor is unbuilt and lightwalletd is a third party.
+5. P2, P11 and "payers known and accountable" assume a closed fleet; open join and pay-any-address break this. `seq` is time-based (`node/app.rs:427`), not a count.
+6. P5 covers BitChat peer IDs, not UDP beacons, the static BLE hint, plaintext TCP links, inventory harvesting or unauthenticated hello and acks.
+7. P8 and the assumptions table have no public-testnet column (public lightwalletd, public faucet, minimum-difficulty reorgs).
+8. P9, P10 and P12 (nullifier sharing, co-signers, broadcast acks) are not built; gateway results are directed messages.
+9. The "Light client" leak row doesn't cover a gateway relaying compact actions with no header, the birthday-height leak or the unverifiable frontier.
+10. Missing rows: organiser key custody and unsigned invites; local API, XSS and Basecamp isolation; unsigned supply chain and the public APK key; no forward secrecy and plaintext files; the faucet; address bindings; split-transaction fingerprints and fees; Max leaking notes.
+11. The fleet-fingerprint section assumes uniform 2-action, 10,000-zat txs; split txs break that (Z4).
+12. It still frames the harness as four Macs with BitChat. Open item 1 (packet capture) must now include the header leaks above.
