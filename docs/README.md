@@ -27,6 +27,7 @@ Current state (27 October 2026): **v0.1.0 to v0.6.0** run on the local NU7 chain
 | [components/mesh.md](components/mesh.md) | `ozm-mesh`: flooding, frames, store-and-forward, acks, LAN discovery; Android BLE implementation (radio gates unverified) |
 | [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
 | [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
+| [trust-minimisation/design.md](trust-minimisation/design.md) | Proposal (not decided): target architecture that reduces every v0.7.0 trust row; [plan](trust-minimisation/implementation-plan.md), [research log](trust-minimisation/research-log.md) |
 | [../archive/](../archive/README.md) | Superseded plans (BitChat fork transport, Logos pathway plans), the original report and research notes |
 
 Each component uses **Decided** (build around it), **Findings** (with sources), **Open** (unverified items/tests); **Proposed** means awaiting owner approval, not implemented. Provisional numerical policies are not measured safety guarantees. Repository rules and the `ths` issue log stay in [../AGENTS.md](../AGENTS.md). Original long-form research is in [../archive/](../archive/README.md), read-only. Throwaway feasibility crates live in [../poc/](../poc/): `escrowcheck` (FROST co-signing on the Zakura 2.2.0 pins) and `mmr-anchor-poc` (ZIP 221/258 anchor proofs against the live `ths` chain).
