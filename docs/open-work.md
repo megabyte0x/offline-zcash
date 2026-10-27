@@ -2,6 +2,18 @@
 
 Ordered. Each item names the component doc that owns it. Update this list as items close.
 
+## Built
+
+Everything below runs on the local `ths` NU7 chain. Releases are on GitHub (tags `v0.1.0`, `v0.2.0`, `v0.3.0`).
+
+| Version | What it proves | Doc |
+|---|---|---|
+| v0.1.0 | Offline payer builds and proves a v6 Ironwood transaction; it hops A → relay → B → gateway over `ozm-mesh` (TTL flood, 512-byte frames, store-and-forward, acks); B checks it offline and returns a receipt; the gateway submits, mines and returns a signed result. `bench/mesh-bench.sh all` on four containers | [mvp-v0.1.0](mvp-v0.1.0.md) |
+| v0.2.0 | Installable `ozm-node` (join, start, fund, pay; web UI on `127.0.0.1:7780`), fleet invites, UDP LAN discovery, wallet sync and test funds over the mesh. `bench/lan-bench.sh all` | [mvp-v0.2.0](mvp-v0.2.0.md), [install](install.md) |
+| v0.3.0 | The same device as a Logos Basecamp core module and QML app; `.lgx` packages for linux-amd64, linux-arm64 and darwin-arm64; install guide tested on Basecamp 0.3.2 | [basecamp-install](basecamp-install.md), [../logos/README.md](../logos/README.md) |
+
+Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group, a BLE link and phones. The gateway's result is "gateway-reported", not proved.
+
 ## Design problems (in order)
 
 Status saved 26 October 2026. “Settled” means design agreed, not implemented.
@@ -12,7 +24,7 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 | 2 | Chain-state trust at B | **Settled**; leftovers decided 26 Oct ([payee-verifier](components/payee-verifier.md)) |
 | 3 | Transaction expiry and re-issue | **Decided 26 Oct** for a minimal build (10 and B-initiated repair deferred); not implemented ([expiry-reissue](components/expiry-reissue.md)) |
 | 4 | Gateway protocol | **Spec v1 written 26 Oct** ([gateway Protocol v1](components/gateway.md#protocol-v1-owner-decisions-26-october-byte-layouts-proposed-not-implemented)): anyone submits, tip/conflicts broadcast mesh-wide, pulled catch-up; timing, PMv2, Tor isolation, limits and forwarding wording decided; header delivery = sampled proofs (heuristic, λ 64, 100-header suffix, post-NU7 checkpoint), byte layout still to write; must also run on public testnet; bundle/receipt wire encoding, signature coverage, retries/idempotency and lag/fork handling; also how one gateway orders and submits many payers' transactions arriving together (A→B, Y→Z) while each faces its own online-sweep race, which is not yet researched ([gateway](components/gateway.md)) |
-| 5 | BitChat durability | **Decided 26 Oct:** `privateMessageV2` (≤44,000 B), gateway broadcast type, app retry queue, A and B both submit ([transport-bitchat](components/transport-bitchat.md)); fork patch and BLE tests remain; [Offline Protocol](https://www.offlineprotocol.com/docs/tech/networking) 0.30 evaluated 26 Oct: **stay on the BitChat fork for MVP** (Swift package iOS-only, custody refuses DMs, forged-ACK risk R10, AGPL/commercial); optional later Wi-Fi/gateway experiment (research) ([transport-bitchat](components/transport-bitchat.md)) |
+| 5 | BitChat durability | **Decided 26 Oct:** `privateMessageV2` (≤44,000 B), gateway broadcast type, app retry queue, A and B both submit ([archived transport plan](../archive/docs-2026-10-27/transport-bitchat.md)); superseded for the build by our own `ozm-mesh` ([mesh](components/mesh.md)); BLE link and radio tests remain; [Offline Protocol](https://www.offlineprotocol.com/docs/tech/networking) 0.30 evaluated 26 Oct: **stay on the BitChat fork for MVP** (Swift package iOS-only, custody refuses DMs, forged-ACK risk R10, AGPL/commercial); optional later Wi-Fi/gateway experiment (research) |
 | 6 | Fleet fingerprint | **Researched 26 Oct:** keep expiry, immediate send and standard tx shape; P12 plaintext acks kept for MVP/testnet (least work), encryption is a mainnet gate ([privacy-and-threats](privacy-and-threats.md)); was: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
 | 7 | Stack compatibility | **Gate 5 passed 26 Oct** on Zebra 7 regtest; decided: stay on 2.2.0 for MVP, move to Common 4.0 once before public testnet ([chain](components/chain.md)); was: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
 | 8 | Offline limits and phone proving cost | **Decided 26 Oct** (32-note inventory, ≥ floor needs escrow, 3 ZEC escrow cap per payee, foreground-only on iOS, co-signers on B/C/D; [offline-builder](components/offline-builder.md)); was: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
@@ -34,7 +46,7 @@ This is the implementation backlog, distinct from the problem-by-problem design 
 | 1 | Offline builder: one v6 Ironwood transaction with Zakura Common 2.2.0, no network, fleet expiry and fee | Raw bytes written; mined on `ths` — **done in v0.1.0** ([mvp-v0.1.0](mvp-v0.1.0.md)) | [offline-builder](components/offline-builder.md) |
 | 2 | Payee verifier in a separate process: read, decrypt own output, proofs and signatures, v6/Ironwood-only/branch ID/expiry/anchor checks | Accepts the tx from 1; receipt says "passes checks at height H; pending" — **done in v0.1.0** (offline checks; chain-state bundle checks are task 7) | [payee-verifier](components/payee-verifier.md) |
 | 3 | Gateway submitter: `sendrawtransaction`, then a signed bundle back (tip header, txid branch) | Idempotent resubmission; B verifies the branch and moves to "included" — **v0.1.0: idempotent submit and a signed "gateway-reported" result; the txid branch is not built yet** | [gateway](components/gateway.md) |
-| 4 | BitChat fork on four Macs: tx + statement as private message A→B, B persists, B→D forward, receipts back | The restart test below passes — **v0.1.0 passes it on the emulated mesh (`ozm-mesh`, four containers); real radios remain** | [transport-bitchat](components/transport-bitchat.md) |
+| 4 | Mesh transport: tx + statement A→B, B persists, B→D forward, receipts back | The restart test below passes — **done in v0.1.0 with `ozm-mesh` over TCP (four containers), LAN discovery in v0.2.0; a BLE link and real radios remain** | [mesh](components/mesh.md) |
 | 5 | Pending tier on payer and payee: device-bound payment keys and enrollment, PaymentStatement and Receipt, fee check, seq, limits, conflict detection | Floor refusal, 4th payment refused, reset at owner-selected threshold (pending), non-family spend ends "conflicted"; repair/family rules await #3 | [pending-tier](components/pending-tier.md) |
 | 6 | Payee-to-payee nullifier sharing over BitChat group messages, with C as second payee; gateway mempool receipt | Same note paid to B then C while connected: C refuses with reason 8 | [pending-tier](components/pending-tier.md) |
 | 7 | Chain state, step 1: bundle wire format with every slot, signed with the gateway's enrollment payment key; gateway rebuilds the history MMR from `getblock h 0` + `z_gettreestate`, persists leaves, rebuilds on reorg; payee checks signature, anchor-in-window, expiry margin, txid branch, MMR anchor path to header N+1 | Tests 8–14 pass on `ths` | [gateway](components/gateway.md), [payee-verifier](components/payee-verifier.md) |
@@ -56,10 +68,10 @@ The Regtest harness has no proof of work, so only the Equihash/difficulty/timest
 
 1. Fabricated-anchor transaction is rejected by the payee. ([payee-verifier](components/payee-verifier.md))
 2. Deliberate conflicting spend: B reports "conflicted", not "final". ([double-spend](components/double-spend.md))
-3. A sends to B → B confirms only after saving → A disappears → B restarts → D appears later → B delivers, D submits, confirmation returns. ([transport-bitchat](components/transport-bitchat.md))
+3. A sends to B → B confirms only after saving → A disappears → B restarts → D appears later → B delivers, D submits, confirmation returns. **Passes in v0.1.0** on `ozm-mesh`. ([mesh](components/mesh.md))
 4. Packet capture: no plaintext amounts, payees or keys on the mesh. ([privacy-and-threats](privacy-and-threats.md))
 5. Same tx bytes accepted by Zebra 7, not only Zakura. **Passed 26 Oct (scoped):** official Zebra 7.0.0 (`e8db87e`) fresh NU7 Regtest; a Common 2.2.0 payer + 3-of-4 FROST 9,166-byte v6 spend (txid `72beac5d…49d7`) was accepted to the mempool and mined at 103 (#7 research). Public testnet and mainnet untested. ([chain](components/chain.md))
-6. BitChat delivery time for a 9,166-byte tx plus statement (base64 ≈ 12.7 KB) over 1 and 3 hops. ([transport-bitchat](components/transport-bitchat.md))
+6. BitChat delivery time for a 9,166-byte tx plus statement (base64 ≈ 12.7 KB) over 1 and 3 hops. Measured over TCP links in v0.1.0; BLE still to measure. ([mesh](components/mesh.md))
 7. A statement with a wrong `auth_digest`, wrong amount, replayed `seq` or non-fleet fee is refused with the right reason code; a receipt is sent only after the payee's store is fsynced. ([pending-tier](components/pending-tier.md))
 8. **New-payment acceptance** anchors inside/outside the provisional 100-block window: accept/refuse with reason 6. Not a consensus age bound; test existing-family historical-root renewal separately after #3 approval. ([payee-verifier](components/payee-verifier.md))
 9. A tampered bundle and a bundle signed by an unknown key are rejected before any other check. ([gateway](components/gateway.md))

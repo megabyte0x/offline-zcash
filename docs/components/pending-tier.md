@@ -79,7 +79,7 @@ stmt_hash = H("OZC_PayStmt_v1__", body)
 - The invoice is made unique by a nonce in the ZIP 321 `memo`, which check 6 compares with the decrypted memo.
 - **Re-issue** (`flags.bit0`): retain `supersedes_txid`, payer/payee, amount and invoice binding. Correction: adjacent “at least one shared nullifier” does **not** ensure family-wide exclusion (`{a} → {a,b} → {b}`). Fresh rebuilds change dummy nullifiers, but retained state can keep actions/padding identical. Proposed #2 preserves canonical effects for ordinary renewal; any relaxed family rule requires a common nullifier across **all** versions. Count the obligation once, never remove/reset its exposure on renewal; any family version's inclusion settles it. **Awaiting owner decision**, including same-txid authorization refresh semantics; no wire change approved ([findings and proposals](expiry-reissue.md)).
 - **Fee check:** `valueBalanceIronwood` of an Ironwood-only tx (v6 has no fee field) must equal the fleet fee for its action count, 10,000 zats for 2 actions. This blocks a transaction built never to be mined.
-- Framing: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB. Needs the fork's `privateMessageV2`: stock private text is capped at 255 bytes ([transport-bitchat.md](transport-bitchat.md), approved 26 Oct).
+- Framing: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB. Needs the fork's `privateMessageV2`: stock private text is capped at 255 bytes ([archived transport plan](../../archive/docs-2026-10-27/transport-bitchat.md), approved 26 Oct; `ozm-mesh` carries the same bytes in fragmented frames, [mesh.md](mesh.md)).
 
 ### Receipt v1 (B → A) [decided]
 

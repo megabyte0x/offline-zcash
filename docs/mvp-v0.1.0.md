@@ -3,8 +3,8 @@
 **Status:** built and passing, 26 October 2026. Code: [`crates/`](../crates/), bench: [`bench/`](../bench/README.md).
 
 v0.1.0 combines the two plans written on 26 October:
-- From the [Logos pathway plan](later/logos-v0.1.0-plan.md): the core crate, the node roles A/R/B/D, sealed `ozm1` envelopes, the four message kinds and the seven gating tests.
-- From the [MVP v1 design](design.md) and [transport-bitchat.md](components/transport-bitchat.md): BitChat mesh semantics, an app retry keyed by txid, A and B both submitting, signed statements and receipts, and the floor limit.
+- From the [Logos pathway plan](../archive/docs-2026-10-27/later/logos-v0.1.0-plan.md): the core crate, the node roles A/R/B/D, sealed `ozm1` envelopes, the four message kinds and the seven gating tests.
+- From the [MVP v1 design](design.md) and [transport plan](../archive/docs-2026-10-27/transport-bitchat.md): BitChat mesh semantics, an app retry keyed by txid, A and B both submitting, signed statements and receipts, and the floor limit.
 
 The owner set the target on 26 October: prove that a Zcash payment on the local chain really travels by hopping across a mesh, using several sandboxes or containers in place of radios.
 
@@ -65,7 +65,7 @@ Reason codes are in [`verify.rs`](../crates/zcash-offline-core/src/verify.rs).
 
 1. **Own mesh crate instead of the Offline Protocol sidecar or a BitChat fork.**
    - Real Bluetooth is unavailable in an orb, and the BitChat apps are Swift (CoreBluetooth).
-   - Offline Protocol is AGPL-3.0, a Python sidecar, and its custody refuses DMs (see [transport-bitchat.md](components/transport-bitchat.md)).
+   - Offline Protocol is AGPL-3.0, a Python sidecar, and its custody refuses DMs (see the archived [transport plan](../archive/docs-2026-10-27/transport-bitchat.md)).
    - The crate implements BitChat's semantics (TTL flood, fragments, store-and-forward, acks) in about 1,200 lines of Rust, under MIT/Apache-2.0.
    - A BitChat-compatible packet layout and a BLE link stay open for later.
 2. **No Logos packaging in v0.1.0.** The owner redefined v0.1.0 on 26 October as the mesh proof in sandboxes. Basecamp modules and the QML UI move to a later version.

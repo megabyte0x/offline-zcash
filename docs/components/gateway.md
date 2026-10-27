@@ -30,7 +30,7 @@ The design target is mainnet. In the harness D is the Mac that runs `ths`; on ma
 | Protocol defaults | Fresh Tor circuit = per-transaction circuit isolation (unique SOCKS credentials), not NEWNYM. Reconcile/resubmit every 3 blocks with backoff; keep raw bytes until expiry plus margin; per-sender rate limits and bounded queues; conflict index over the 72,576-block fleet window. Provisional until #9 (owner, 26 Oct; research) | [decided] |
 | Placement | Gateways at hubs where people gather (markets, bus terminals, valley exits); minimal delivery, no carrier protocol yet (owner, 26 Oct) | [decided] |
 | Mempool meaning | A mempool receipt says only that D's node accepted tx1 first. Zebra 7 rejects nullifier conflicts before insertion with no fee replacement (`verified_set.rs` L153–162 at `e8db87e`), but miners that saw tx2 first, or a block with tx2, override it (race research) | [finding] |
-| Transport | Payer and payee both send the bytes to the gateway as separate BitChat private messages (26 Oct); a packet addressed to the payee stops there ([transport-bitchat.md](transport-bitchat.md)) | [decided] |
+| Transport | Payer and payee both send the bytes to the gateway as separate BitChat private messages (26 Oct); a packet addressed to the payee stops there ([mesh.md](mesh.md)) | [decided] |
 
 Build order (a sequence, not a security downgrade; each step has gating tests in [open-work.md](../open-work.md)): (1) bundle format with every slot, bundle signature, anchor-in-window, expiry margin, txid branch and the MMR anchor path (verifier exists: 15 lines in [`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md)); (2) Equihash and difficulty checker with the pinned floor and mainnet vectors; (3) two-gateway agreement and single-source degradation. The earlier "Mainnet (v2)" row that deferred Tor and the operator approval to a later stage is superseded by the rows above.
 
@@ -113,7 +113,7 @@ ozc1:bun  tag "OZC_GwBun_v1____": header fields as ack, bundle_id 32, chunk_inde
 | Item | Size | Basis |
 |---|---|---|
 | Mainnet header | 1,487 B ([Zebra header length](https://doc-internal.zebra.zfnd.org/zebra_chain/block/header/constant.BLOCK_HEADER_LENGTH.html)); Regtest 177 B | `getblockheader h false`, measured on `ths` v0.4.1 |
-| All headers for one day | ≈ 5.14 MB; ≈ 5.6 MB with leaf extras. ~4.5–5 min per BLE hop at 19 KB/s; ~125 private messages of 45 KB, while BitChat's outbox holds 100 | Arithmetic from header size; BLE rate from [transport-bitchat.md](transport-bitchat.md) |
+| All headers for one day | ≈ 5.14 MB; ≈ 5.6 MB with leaf extras. ~4.5–5 min per BLE hop at 19 KB/s; ~125 private messages of 45 KB, while BitChat's outbox holds 100 | Arithmetic from header size; BLE rate from the archived [transport plan](../../archive/docs-2026-10-27/transport-bitchat.md) |
 | Tip + paths for 3 anchors | ≈ 15–25 KB | [unverified: modelled at 290 B/node, not measured on mainnet] |
 | MMR anchor path | 3–9 KB per anchor on mainnet [unverified, modelled]; 1,109–2,778 B measured on Regtest | [`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md) |
 | Inclusion proof | header + txid branch, 5–11 KB on mainnet [unverified] | branch depth depends on block size |
