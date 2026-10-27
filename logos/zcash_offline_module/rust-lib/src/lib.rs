@@ -10,7 +10,7 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Installs an invite file's JSON (fleet plus this device's keys). Returns `{"ok":true,"message":...}`.
     fn join(&mut self, invite_json: String) -> String;
 
-    /// Starts the device. Options JSON, all optional: listen, dial, rpc, mine, discover, ble (Linux only), discovery_port, api. Idempotent; returns status.
+    /// Starts the device. Options JSON: listen, dial, rpc, mine, discover, ble (Linux only), discovery_port, api. Existing mesh is reused; explicit rpc/mine update the gateway.
     fn start(&mut self, options_json: String) -> String;
 
     /// Device status (GET /api/status) plus joined, running and home. Works before join and start.
@@ -30,6 +30,12 @@ pub trait ZcashOfflineModule: Send + 'static {
 
     /// Payments, refusals and gateway submissions (GET /api/payments).
     fn list_payments(&mut self) -> String;
+
+    /// Creates a session folder and per-device invites. Options: out, name, devices (NAME:ROLE list), optional join_device.
+    fn fleet_init(&mut self, options_json: String) -> String;
+
+    /// Checks that a chain RPC answers getblockchaininfo. Does not start or grant a role.
+    fn check_rpc(&mut self, rpc_url: String) -> String;
 
     /// Auto-starts a device that was already joined, so restarts resume.
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
@@ -89,6 +95,10 @@ fn joined(home: &std::path::Path) -> bool {
     home.join("secret.json").exists() && home.join("fleet.json").exists()
 }
 
+fn saved_options(home: &std::path::Path) -> StartOptions {
+    std::fs::read(home.join(OPTIONS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
 fn out(r: Result<Value>) -> String {
     match r {
         Ok(v) => v.to_string(),
@@ -116,11 +126,27 @@ impl Node {
         v["joined"] = json!(joined(&home));
         v["running"] = json!(self.app.is_some());
         v["home"] = json!(home.display().to_string());
+        if self.app.is_none() {
+            let o = saved_options(&home);
+            v["rpc"] = json!(o.rpc);
+            v["mine"] = json!(o.mine.unwrap_or(false));
+        }
         Ok(v)
     }
 
     fn start_with(&mut self, o: StartOptions) -> Result<Value> {
-        if self.app.is_some() {
+        if let Some(app) = &self.app {
+            if o.rpc.is_some() || o.mine.is_some() {
+                let (rpc, mine) = app.gateway_options();
+                let rpc = o.rpc.clone().or(rpc).ok_or_else(|| anyhow!("chain RPC URL is required"))?;
+                let mine = o.mine.unwrap_or(mine);
+                app.configure_gateway(rpc.clone(), mine)?;
+                let h = home()?;
+                let mut saved = saved_options(&h);
+                saved.rpc = Some(rpc);
+                saved.mine = Some(mine);
+                std::fs::write(h.join(OPTIONS_FILE), serde_json::to_vec_pretty(&saved)?)?;
+            }
             return self.status_value();
         }
         let home = home()?;
@@ -170,6 +196,36 @@ impl Node {
 }
 
 impl ZcashOfflineModule for Node {
+    fn fleet_init(&mut self, options_json: String) -> String {
+        out((|| {
+            let mut v: Value = serde_json::from_str(&options_json).context("fleet options")?;
+            let join = v.as_object_mut().ok_or_else(|| anyhow!("fleet options must be an object"))?.remove("join_device");
+            let o: ozm_node::FleetInitOptions = serde_json::from_value(v)?;
+            let join = join.map(serde_json::from_value::<String>).transpose()?.filter(|s| !s.is_empty());
+            if let Some(name) = &join {
+                anyhow::ensure!(!joined(&home()?), "this device already joined a fleet; create invites without joining");
+                anyhow::ensure!(o.devices.iter().any(|d| d.split_once(':').is_some_and(|(n, _)| n == name)), "no generated device named {name}");
+            }
+            let result = ozm_node::fleet_init(&o)?;
+            let mut v = serde_json::to_value(&result)?;
+            if let Some(name) = join {
+                let d = result.devices.iter().find(|d| d.name == name).expect("validated name");
+                let message = ozm_node::join_invite(&std::fs::read_to_string(&d.invite_path)?, &home()?)?;
+                v["joined"] = json!(message);
+            }
+            Ok(v)
+        })())
+    }
+
+    fn check_rpc(&mut self, rpc_url: String) -> String {
+        out((|| {
+            anyhow::ensure!(!rpc_url.trim().is_empty(), "chain RPC URL is required");
+            let info = zcash_offline_core::rpc::Rpc::new(&rpc_url).call("getblockchaininfo", json!([]))?;
+            anyhow::ensure!(info["blocks"].is_u64() && info["chain"].is_string(), "RPC returned no blockchain information");
+            Ok(info)
+        })())
+    }
+
     fn join(&mut self, invite_json: String) -> String {
         out(home().and_then(|h| ozm_node::join_invite(&invite_json, &h)).map(|m| json!({"ok": true, "message": m})))
     }
@@ -231,7 +287,7 @@ impl ZcashOfflineModule for Node {
         if !joined(&h) {
             return;
         }
-        let o = std::fs::read(h.join(OPTIONS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let o = saved_options(&h);
         if let Err(e) = self.start_with(o) {
             eprintln!("zcash_offline_module: auto-start failed: {e:#}");
         }

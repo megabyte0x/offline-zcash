@@ -8,10 +8,10 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use ozm_node::{home_dir, join_invite, router, start, write_private, Invite, RunOpts};
+use ozm_node::{home_dir, join_invite, router, start, FleetInitOptions, RunOpts};
 use serde_json::json;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
-use zcash_offline_core::{fleet::generate_fleet, DeviceSecret, Policy};
+use zcash_offline_core::DeviceSecret;
 
 #[derive(Parser)]
 #[command(name = "ozm-node", version, about = "Offline Zcash payments over a mesh")]
@@ -138,7 +138,14 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ozm_mesh=info".into()))
         .init();
     match Cli::parse().cmd {
-        Cmd::FleetInit { out, devices, name } => fleet_init(&out, &devices, &name),
+        Cmd::FleetInit { out, devices, name } => {
+            let result = ozm_node::fleet_init(&FleetInitOptions { out, devices, name })?;
+            for d in &result.devices {
+                println!("{:<8} {:<14} peer {}  {}", d.name, d.role, d.peer_id, d.address);
+            }
+            println!("\nGive each person their <name>.invite.json (it contains their private keys).");
+            Ok(())
+        }
         Cmd::Join { invite, home } => join(&invite, home),
         Cmd::Start { home, dial, rpc, mine, ble, api, listen, no_open } => {
             let home = home_dir(home)?;
@@ -169,26 +176,6 @@ async fn main() -> Result<()> {
         Cmd::Tampered { to, amount, tamper, api } => client(&api, "POST", "/api/debug/tampered", Some(json!({"to": to, "amount": amount, "tamper": tamper}))),
         Cmd::Resend { txid, api } => client(&api, "POST", "/api/debug/resend", Some(json!({"txid": txid}))),
     }
-}
-
-fn fleet_init(out: &PathBuf, devices: &[String], name: &str) -> Result<()> {
-    let devs = devices
-        .iter()
-        .map(|d| d.split_once(':').map(|(n, r)| (n.to_string(), r.to_string())).ok_or_else(|| anyhow!("expected NAME:ROLE, got {d}")))
-        .collect::<Result<Vec<_>>>()?;
-    let (fleet, secrets) = generate_fleet(name, &devs, Policy::default())?;
-    std::fs::create_dir_all(out)?;
-    std::fs::write(out.join("fleet.json"), serde_json::to_string_pretty(&fleet)?)?;
-    for s in secrets {
-        write_private(&out.join(format!("{}.secret.json", s.name)), serde_json::to_string_pretty(&s)?.as_bytes())?;
-        let invite = Invite { fleet: fleet.clone(), secret: s.clone() };
-        write_private(&out.join(format!("{}.invite.json", s.name)), serde_json::to_string_pretty(&invite)?.as_bytes())?;
-    }
-    for d in &fleet.devices {
-        println!("{:<8} {:<14} peer {}  {}", d.name, d.role, d.peer_id, d.address);
-    }
-    println!("\nGive each person their <name>.invite.json (it contains their private keys).");
-    Ok(())
 }
 
 fn join(invite: &PathBuf, home: Option<PathBuf>) -> Result<()> {

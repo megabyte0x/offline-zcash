@@ -139,7 +139,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
         run: |
           mkdir -p dist
-          for m in zcash_offline_module zcash_offline_ui; do
+          for m in zcash_offline_module zcash_offline_ui zcash_offline_organiser zcash_offline_gateway; do
             (cd "logos/$m" && nix build .#lgx-portable --accept-flake-config -L -o "$GITHUB_WORKSPACE/out-$m")
             cp out-$m/*.lgx "dist/$m-$VERSION-$PLATFORM.lgx"
           done

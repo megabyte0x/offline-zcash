@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use zcash_offline_core::{parse_zec, DeviceSecret, Fleet};
+use zcash_offline_core::{fleet::generate_fleet, parse_zec, DeviceSecret, Fleet, Policy};
 
 #[derive(Args, Clone)]
 pub struct RunOpts {
@@ -112,6 +112,68 @@ pub struct Invite {
     pub secret: DeviceSecret,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FleetInitOptions {
+    pub out: PathBuf,
+    pub name: String,
+    /// NAME:ROLE, with roles combined using +.
+    pub devices: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct FleetInitResult {
+    pub folder: PathBuf,
+    pub fleet_path: PathBuf,
+    pub devices: Vec<FleetInvite>,
+}
+
+#[derive(Serialize)]
+pub struct FleetInvite {
+    pub name: String,
+    pub role: String,
+    pub peer_id: String,
+    pub address: String,
+    pub invite_path: PathBuf,
+    pub secret_path: PathBuf,
+}
+
+/// Creates the fleet and private per-device invites, shared by the CLI and Basecamp.
+pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
+    anyhow::ensure!(!o.name.trim().is_empty(), "session name is required");
+    let devs = o.devices.iter().map(|d| {
+        let (n, r) = d.split_once(':').ok_or_else(|| anyhow!("expected NAME:ROLE, got {d}"))?;
+        anyhow::ensure!(!n.is_empty() && n.len() <= 64 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            "device name must be 1–64 letters, digits, - or _: {n}");
+        anyhow::ensure!(r.split('+').all(|r| matches!(r, "payer" | "payee" | "relay" | "gateway")), "unknown role in {d}");
+        Ok((n.to_string(), r.to_string()))
+    }).collect::<Result<Vec<_>>>()?;
+    for (i, (n, _)) in devs.iter().enumerate() {
+        anyhow::ensure!(!devs[..i].iter().any(|(other, _)| other.eq_ignore_ascii_case(n)), "duplicate device name: {n}");
+    }
+    anyhow::ensure!(!o.out.join("fleet.json").exists(), "folder already contains a fleet; choose a new folder");
+    for (n, _) in &devs {
+        for suffix in ["secret", "invite"] {
+            anyhow::ensure!(!o.out.join(format!("{n}.{suffix}.json")).exists(), "folder already contains keys for {n}; choose a new folder");
+        }
+    }
+    let (fleet, secrets) = generate_fleet(&o.name, &devs, Policy::default())?;
+    std::fs::create_dir_all(&o.out)?;
+    let folder = o.out.canonicalize()?;
+    let fleet_path = folder.join("fleet.json");
+    std::fs::write(&fleet_path, serde_json::to_string_pretty(&fleet)?)?;
+    let mut devices = Vec::new();
+    for s in secrets {
+        let secret_path = folder.join(format!("{}.secret.json", s.name));
+        let invite_path = folder.join(format!("{}.invite.json", s.name));
+        write_private(&secret_path, serde_json::to_string_pretty(&s)?.as_bytes())?;
+        write_private(&invite_path, serde_json::to_string_pretty(&Invite { fleet: fleet.clone(), secret: s.clone() })?.as_bytes())?;
+        let d = fleet.by_name(&s.name)?;
+        devices.push(FleetInvite { name: d.name.clone(), role: d.role.clone(), peer_id: d.peer_id.clone(), address: d.address.clone(), invite_path, secret_path });
+    }
+    Ok(FleetInitResult { folder, fleet_path, devices })
+}
+
 pub fn home_dir(home: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(h) = home {
         return Ok(h);
@@ -157,6 +219,9 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
     let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(&o.secret).context("read secret")?)?;
     let pubme = fleet.by_name(&me.name)?.clone();
     anyhow::ensure!(pubme == me.public()?, "secret for {} does not match the fleet file", me.name);
+    if o.rpc.as_ref().is_some_and(|r| !r.is_empty()) || o.mine {
+        anyhow::ensure!(pubme.role.split('+').any(|r| r == "gateway"), "this invite does not grant the gateway role; ask the organiser for a gateway invite");
+    }
     std::fs::create_dir_all(&o.data)?;
     let discovery = o.discover.then(|| Discovery { port: o.discovery_port, tag: fleet.discovery_tag(), ..Default::default() });
     let (mesh, mut events) = Mesh::start(MeshConfig {
@@ -210,7 +275,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
             ticks += 1;
             a.retry_tick().await;
             // Offline devices refresh their chain view from a gateway while one is reachable.
-            if auto_sync > 0 && ticks % auto_sync == 3 && a.cfg.rpc.is_none() && !a.mesh.neighbors().is_empty() {
+            if auto_sync > 0 && ticks % auto_sync == 3 && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
                 let _ = a.request_mesh_sync(false).await;
             }
         }

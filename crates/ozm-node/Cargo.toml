@@ -24,3 +24,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "2", default-features = false, features = ["json"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[dev-dependencies]
+tempfile = "3"

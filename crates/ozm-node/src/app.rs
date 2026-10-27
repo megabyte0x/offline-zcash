@@ -115,6 +115,8 @@ pub type EventHook = Box<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
 pub struct App {
     pub cfg: Config,
     pub mesh: Mesh,
+    // Shared by every Basecamp app; changing RPC settings must not start another mesh.
+    online: Mutex<(Option<String>, bool)>,
     pub(crate) ble: std::sync::OnceLock<ozm_ble::Ble>,
     pub x25519: x25519_dalek::StaticSecret,
     pub state: Mutex<(WalletState, Book)>,
@@ -145,7 +147,8 @@ impl App {
             Err(_) => Book::default(),
         };
         let x25519 = cfg.me.x25519_secret()?;
-        Ok(Arc::new(App { cfg, mesh, x25519, state: Mutex::new((wallet, book)),
+        let online = Mutex::new((cfg.rpc.clone(), cfg.mine));
+        Ok(Arc::new(App { cfg, mesh, online, x25519, state: Mutex::new((wallet, book)),
             ble: Default::default(),
             pay_lock: Default::default(),
             block_cache: Default::default(),
@@ -157,6 +160,19 @@ impl App {
 
     pub fn name(&self) -> &str {
         &self.cfg.me.name
+    }
+
+    pub fn gateway_options(&self) -> (Option<String>, bool) {
+        self.online.lock().unwrap().clone()
+    }
+
+    /// Enables or updates the gateway on the existing identity, wallet and mesh.
+    pub fn configure_gateway(&self, rpc: String, mine: bool) -> Result<()> {
+        anyhow::ensure!(self.cfg.fleet.by_name(self.name())?.role.split('+').any(|r| r == "gateway"),
+            "this invite does not grant the gateway role; ask the organiser for a gateway invite");
+        anyhow::ensure!(!rpc.trim().is_empty(), "chain RPC URL is required");
+        *self.online.lock().unwrap() = (Some(rpc), mine);
+        Ok(())
     }
 
     fn persist(&self, wallet: &WalletState, book: &Book) -> Result<()> {
@@ -217,7 +233,7 @@ impl App {
 
     /// Online devices sync from Zakura RPC; offline devices ask a gateway over the mesh.
     pub async fn sync(self: &Arc<Self>) -> Result<serde_json::Value> {
-        let Some(url) = self.cfg.rpc.clone() else {
+        let Some(url) = self.gateway_options().0 else {
             let gw = self.request_mesh_sync(true).await?;
             return Ok(json!({"requested_from": gw, "tip": self.state.lock().unwrap().0.tip_height}));
         };
@@ -255,7 +271,7 @@ impl App {
     // ---------- gateway: chain data and test funds over the mesh ----------
 
     async fn on_sync_req(self: &Arc<Self>, from: &str, have_height: u32, have_hash: String) -> Result<()> {
-        let url = self.cfg.rpc.clone().ok_or_else(|| anyhow!("syncq received but this device is not online"))?;
+        let url = self.gateway_options().0.ok_or_else(|| anyhow!("syncq received but this device is not online"))?;
         let cache = self.block_cache.lock().unwrap().clone();
         let (reset, prev_hash, blocks, tip, cache) = tokio::task::spawn_blocking(move || -> Result<_> {
             let rpc = Rpc::new(&url);
@@ -338,8 +354,9 @@ impl App {
     }
 
     async fn fund(self: &Arc<Self>, to: &str, notes: u32, amount_each: u64) -> Result<String> {
-        let url = self.cfg.rpc.clone().ok_or_else(|| anyhow!("this gateway is not online"))?;
-        anyhow::ensure!(self.cfg.mine, "this gateway does not mine (faucet only runs on Regtest gateways)");
+        let (url, mine) = self.gateway_options();
+        let url = url.ok_or_else(|| anyhow!("this gateway is not online"))?;
+        anyhow::ensure!(mine, "this gateway does not mine (faucet only runs on Regtest gateways)");
         anyhow::ensure!(notes >= 1 && amount_each > 0, "nothing requested");
         let total = notes as u64 * amount_each;
         anyhow::ensure!(total <= self.cfg.faucet_max_zat, "request of {total} zat is above this gateway's faucet limit {}", self.cfg.faucet_max_zat);
@@ -356,7 +373,7 @@ impl App {
             })
             .await??;
             self.install_wallet(wallet)?;
-            let (raw, txid, mine) = (built.raw.clone(), built.txid.clone(), self.cfg.mine);
+            let (raw, txid) = (built.raw.clone(), built.txid.clone());
             let url2 = url.clone();
             let status = tokio::task::spawn_blocking(move || submit_and_mine(&Rpc::new(&url2), &raw, &txid, mine)).await??;
             anyhow::ensure!(matches!(status.0, TxStatus::Mined { .. }), "faucet payment not mined: {:?}", status.0);
@@ -527,7 +544,7 @@ impl App {
                         let mined = matches!(r.body.status, TxStatus::Mined { .. });
                         let out = self.on_result(&from_name, r);
                         // A mined payment changes balances: refresh the chain view from the gateway.
-                        if mined && out.is_ok() && self.cfg.rpc.is_none() {
+                        if mined && out.is_ok() && self.gateway_options().0.is_none() {
                             let _ = self.request_mesh_sync(false).await;
                         }
                         out
@@ -596,7 +613,7 @@ impl App {
         let mut checked = self.verify_offline(&tx).await?;
         // The payer may have synced past this payee's view. An offline payee refreshes its
         // chain view from a gateway over the mesh and checks once more before refusing.
-        if self.cfg.rpc.is_none() && matches!(&checked, Err(r) if r.code == code::ANCHOR) {
+        if self.gateway_options().0.is_none() && matches!(&checked, Err(r) if r.code == code::ANCHOR) {
             let before = self.state.lock().unwrap().0.tip_height;
             self.event("anchor-unknown-syncing", json!({"txid": s.txid, "view_height": before}));
             if self.request_mesh_sync(true).await.is_ok() {
@@ -744,9 +761,9 @@ impl App {
     // ---------- gateway ----------
 
     async fn on_sub(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
-        let url = self.cfg.rpc.clone().ok_or_else(|| anyhow!("sub received but this device has no --rpc (not a gateway)"))?;
+        let (url, mine) = self.gateway_options();
+        let url = url.ok_or_else(|| anyhow!("sub received but this device has no --rpc (not a gateway)"))?;
         let policy = self.cfg.fleet.policy.clone();
-        let mine = self.cfg.mine;
         let raw = tx.clone();
         let t = std::time::Instant::now();
         let status = tokio::task::spawn_blocking(move || -> Result<(TxStatus, u32)> {
@@ -852,6 +869,7 @@ impl App {
 
     pub fn status(&self) -> serde_json::Value {
         let st = self.state.lock().unwrap();
+        let (rpc, mine) = self.gateway_options();
         let (spendable, locked) = st.0.balance();
         let neighbors: Vec<String> = self.mesh.neighbors().into_iter().map(|p| self.peer_name(p)).collect();
         let me = self.cfg.fleet.by_name(self.name()).ok();
@@ -861,7 +879,9 @@ impl App {
             "version": env!("CARGO_PKG_VERSION"),
             "peer_id": self.mesh.peer_id().to_string(),
             "address": me.map(|d| d.address.clone()),
-            "online": self.cfg.rpc.is_some(),
+            "online": rpc.is_some(),
+            "rpc": rpc,
+            "mine": mine,
             "ble": self.ble.get().is_some(),
             "ble_running": self.ble.get().is_some_and(ozm_ble::Ble::is_running),
             "neighbors": neighbors,

@@ -4,7 +4,7 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 ## Built
 
-Everything below runs on the local `ths` NU7 chain. Releases are on GitHub (tags `v0.1.0`, `v0.2.0`, `v0.3.0`).
+Everything below runs on the local `ths` NU7 chain. Releases are on GitHub.
 
 | Version | What it proves | Doc |
 |---|---|---|
@@ -13,6 +13,11 @@ Everything below runs on the local `ths` NU7 chain. Releases are on GitHub (tags
 | v0.3.0 | The same device as a Logos Basecamp core module and QML app; `.lgx` packages for linux-amd64, linux-arm64 and darwin-arm64; install guide tested on Basecamp 0.3.2 | [basecamp-install](basecamp-install.md), [../logos/README.md](../logos/README.md) |
 | v0.4.0 | B1: attach byte streams with BLE timers; UniFFI/Kotlin device API; Android 10+ arm64 BLE + LAN test shell and connectedDevice foreground service; APK/checksum CI/release packaging. Rust chunk/stall/multi-hop/ack checks and host-JVM A–B–D payments through Kotlin links; **no phone/radio/UI validation** | [android-install](android-install.md), [mesh BLE](components/mesh.md#ble-link-android-first) |
 | v0.4.1 | Linux `ozm-ble` BlueZ central + peripheral backend, CLI `--ble`, Basecamp `ble: true` / Setup toggle, BLE/TCP neighbour labels; bundled libdbus. Protocol tests only; **D1/D2/D5 real-hardware gates open**, macOS D3/D4 not implemented | [desktop BLE](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open), [install](install.md#bluetooth-on-linux) |
+| v0.5.0 | One shared Basecamp engine plus three apps: Offline Zcash, Organiser (fleet/invite export and join), Gateway (RPC check, live RPC/mining settings, balance/submissions). Four `.lgx` packages × three platforms, CLI tarballs, Android 0.5.0/code 6. Invite roles remain authoritative; wire format unchanged | [basecamp-install](basecamp-install.md), [../logos/README.md](../logos/README.md) |
+
+**macOS packages have not yet run on a real Mac.** Basecamp Local Network
+permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
+fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs cannot close those Mac gates.
 
 Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group and iOS. **Next transport steps:** real Android phones ([mesh.md BLE link](components/mesh.md#ble-link-android-first), B2–B7) and Linux desktop adapters ([D1/D2/D5](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)): one-hop Linux↔Linux/Android, Basecamp, forced multi-hop, BLE→LAN gateway, durability and capture. D3 adds macOS; D4 waits for Basecamp's Bluetooth usage-description support (issue filed upstream). The gateway's result is "gateway-reported", not proved.
 
