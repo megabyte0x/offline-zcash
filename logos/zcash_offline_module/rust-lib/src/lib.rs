@@ -37,6 +37,9 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Checks that a chain RPC answers getblockchaininfo. Does not start or grant a role.
     fn check_rpc(&mut self, rpc_url: String) -> String;
 
+    /// Asks the desktop to open a folder containing a fleet. UI apps cannot open local file URLs.
+    fn open_fleet_folder(&mut self, folder: String) -> String;
+
     /// Auto-starts a device that was already joined, so restarts resume.
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
 }
@@ -223,6 +226,19 @@ impl ZcashOfflineModule for Node {
             let info = zcash_offline_core::rpc::Rpc::new(&rpc_url).call("getblockchaininfo", json!([]))?;
             anyhow::ensure!(info["blocks"].is_u64() && info["chain"].is_string(), "RPC returned no blockchain information");
             Ok(info)
+        })())
+    }
+
+    fn open_fleet_folder(&mut self, folder: String) -> String {
+        out((|| {
+            let folder = PathBuf::from(folder).canonicalize().context("session folder")?;
+            Fleet::load(&folder.join("fleet.json")).context("folder must contain a fleet")?;
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let mut child = std::process::Command::new(opener).arg(&folder)
+                .stdin(std::process::Stdio::null()).spawn().context("launch desktop folder opener")?;
+            // A Linux file manager can stay open; do not block module calls while it runs.
+            std::thread::spawn(move || { let _ = child.wait(); });
+            Ok(json!({"ok": true, "folder": folder, "message": "Folder opener requested. If no window opens, copy the displayed path into your file manager."}))
         })())
     }
 

@@ -28,6 +28,7 @@ Every method returns a JSON string, and failures are `{"error": "..."}`. The dev
 |---|---|
 | `fleet_init(options_json)` | `{folder, fleet_path, devices:[{name, role, peer_id, address, invite_path, secret_path}], joined?}`. Options: `out` folder, `name` session, `devices` (`["Operator:gateway", "Alice:payer+payee", ...]`), optional `join_device` name. Refuses existing fleet/key files; joins but does not start |
 | `check_rpc(rpc_url)` | `getblockchaininfo` result, or `error`; no role grant or startup |
+| `open_fleet_folder(folder)` | `{ok, folder, message}` after requesting the desktop folder opener; validates `fleet.json`. Runs in the core because QML's sandbox blocks local file URLs. Copy the displayed path if no file manager is available |
 | `join(invite_json)` | `{"ok":true,"message":...}` |
 | `start(options_json)` | Status. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
 | `status()` | As `GET /api/status`, plus `joined`, `running` and `home`; `rpc`, `mine` and invite `role` describe gateway configuration |
@@ -99,6 +100,11 @@ on Alice afterwards displayed the role error; clicking its disabled Start did
 not change Alice's offline configuration. A bad RPC check showed an error and
 recovered after restoring the URL. All four packages built as both `.#lgx` and
 `.#lgx-portable` on Linux x86_64. These runs use TCP, not Bluetooth radios.
+
+The final core/Organiser packages also opened the exported folder in PCManFM,
+including a `#` in the path; opening runs through the core, not a sandboxed
+QML file URL. A second UI payment of 0.0137 ZEC mined at height 135 on both
+wallets after reinstalling those packages, with the same gateway identity.
 
 **macOS `.lgx` packages have not yet run on a real Mac.** Local Network permission
 support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527));

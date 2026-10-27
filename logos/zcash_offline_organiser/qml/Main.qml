@@ -156,7 +156,10 @@ Rectangle {
                 }
                 Button {
                     text: "Open session folder"
-                    onClicked: Qt.openUrlExternally("file://" + encodeURIComponent(root.exported.folder).replace(/%2F/g, "/"))
+                    onClicked: root.call("open_fleet_folder", [root.exported.folder], function (r) {
+                        root.failed = !!r.error
+                        root.message = r.error || r.message
+                    })
                 }
                 Repeater {
                     model: root.exported ? root.exported.devices : []
