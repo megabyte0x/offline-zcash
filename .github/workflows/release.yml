@@ -97,17 +97,71 @@ jobs:
             dist/${{ steps.version.outputs.name }}.tar.gz.sha256
           if-no-files-found: error
 
+  lgx:
+    name: lgx ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            os: ubuntu-22.04
+          - platform: linux-arm64
+            os: ubuntu-22.04-arm
+          - platform: darwin-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Portable variants: what released Basecamp builds install (docs/basecamp-install.md).
+      - name: Build portable .lgx packages
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p dist
+          for m in zcash_offline_module zcash_offline_ui; do
+            (cd "logos/$m" && nix build .#lgx-portable --accept-flake-config -L -o "$GITHUB_WORKSPACE/out-$m")
+            cp out-$m/*.lgx "dist/$m-$VERSION-$PLATFORM.lgx"
+          done
+          cd dist
+          for f in *.lgx; do
+            if command -v sha256sum >/dev/null; then sha256sum "$f" > "$f.sha256"; else shasum -a 256 "$f" > "$f.sha256"; fi
+          done
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lgx-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
   publish:
     name: publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, lgx]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: ozm-node-*
           path: dist
           merge-multiple: true
 
@@ -121,4 +175,4 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           fi
-          gh release upload "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 --clobber
+          gh release upload "$TAG" dist/*.tar.gz dist/*.lgx dist/*.sha256 --clobber

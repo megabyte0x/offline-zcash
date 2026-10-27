@@ -53,7 +53,7 @@ logosctl --config-dir ./a watch zcash_offline_module --json
 
 Strings need the `str:` prefix on the command line, because otherwise `0.05` is passed as a number.
 
-In Basecamp, install both `.lgx` files (with `lgpm --modules-dir <basecamp dir>/modules --ui-plugins-dir <basecamp dir>/plugins install --file ...` for a dev build), open **Offline Zcash**, paste the invite, then press **Join and start**.
+In Basecamp, follow [docs/basecamp-install.md](../docs/basecamp-install.md). For a dev build of Basecamp, install the `-dev` packages with `lgpm --modules-dir <basecamp dir>/modules --ui-plugins-dir <basecamp dir>/plugins install --file ...`.
 
 ## Verified (27 October 2026, Linux, dev builds)
 
@@ -65,4 +65,6 @@ In Basecamp, install both `.lgx` files (with `lgpm --modules-dir <basecamp dir>/
   - Device B joined from the Setup screen, synced over the mesh, and received 0.05 ZEC from A, mined at height 200.
   - B then paid A 0.01 ZEC from the Pay panel: A's receipt came back and it was mined at height 202.
 
-Not yet run on macOS or on Basecamp release (portable) builds.
+- **Released Basecamp 0.3.2 (AppImage), fresh orb, following [docs/basecamp-install.md](../docs/basecamp-install.md):** both portable packages installed through **Manage Packages → Install Local Package**; the unsigned-package warning is the only prompt. Join, test funds, a payment out and a payment in all reached `mined`. The AppImage needs glibc 2.39, so it does not start on Debian 12 or Ubuntu 22.04.
+
+Not yet run on macOS.

@@ -1,24 +1,26 @@
-# offline-zcash
+# Offline Zcash
 
-Offline Zcash payments. A payer builds, proves and signs an Ironwood (NU7, v6) transaction with no internet. The transaction hops across a mesh of devices to the payee, who checks it offline and returns a signed receipt. A device with internet then submits it to the chain.
+Pay with Zcash when there is no internet. Your device builds, proves and signs a shielded payment on its own, then passes it from device to device over a local mesh until it reaches the person you're paying. They check it offline and send back a signed receipt. As soon as any device on the mesh has internet, it puts the payment on chain, and everyone sees it confirmed.
 
-**v0.1.0:** four devices (payer, relay, payee and gateway) run in four containers on an emulated BLE mesh. A payment crosses two hops and is mined on a local NU7 Regtest chain. All seven gating tests pass. Results are in [docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md).
+It runs as an app in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line node, and both kinds of device can be in the same session.
 
-**v0.2.0:** testers install `ozm-node` ([docs/install.md](docs/install.md)), run `ozm-node join <invite.json>` and `ozm-node start`, and find each other on the same Wi-Fi. Offline devices get chain data and test funds from the gateway over the mesh. See [docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md).
+**Status:** test build. It runs on a local Zcash test chain (NU7, Ironwood) with test coins, never real ZEC, and has not been security reviewed.
 
-```bash
-ths start --no-open              # local chain: zcashlabs/thus-spoke-zakura v0.4.1
-bench/mesh-bench.sh all          # v0.1.0: four-device line mesh, seven gating tests
-bench/lan-bench.sh all           # v0.2.0: tester path on one LAN with discovery
-```
+## Try it
+
+- **[Install it in Basecamp](docs/basecamp-install.md):** install the app, join a session with your invite, get test coins and pay someone.
+- **[Use the command-line node](docs/install.md):** install `ozm-node`, then `ozm-node join <invite.json>` and `ozm-node start`.
+- **[Run a session](docs/mvp-v0.2.0.md#running-a-session):** run the test chain and the gateway, and hand out invites.
+
+Downloads are on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
+
+## For developers
 
 | Path | What |
 |---|---|
 | [crates/zcash-offline-core](crates/zcash-offline-core) | Wallet sync, offline builder, payee checks, sealed envelopes, signed messages |
-| [crates/ozm-mesh](crates/ozm-mesh/README.md) | BitChat-style mesh: TTL flooding, BLE-sized frames, store-and-forward, delivery acks |
-| [crates/ozm-node](crates/ozm-node) | Device daemon: roles, payment store, gateway, HTTP API and web UI |
-| [logos](logos/README.md) | Logos Basecamp core module and QML UI |
-| [bench](bench/README.md) | Multi-container mesh bench and gating tests |
-| [docs](docs/README.md) | Design, components, open work |
-
-Regtest only. The keys are disposable, and nothing here has been reviewed for use with real funds.
+| [crates/ozm-mesh](crates/ozm-mesh/README.md) | BitChat-style mesh: TTL flooding, BLE-sized frames, store-and-forward, acks, LAN discovery |
+| [crates/ozm-node](crates/ozm-node) | The device: roles, payment store, gateway, HTTP API and web UI |
+| [logos](logos/README.md) | Basecamp core module and QML app |
+| [bench](bench/README.md) | Multi-container tests: `bench/mesh-bench.sh all` (multi-hop) and `bench/lan-bench.sh all` (LAN) |
+| [docs](docs/README.md) | Design, components, results per version ([v0.1.0](docs/mvp-v0.1.0.md), [v0.2.0](docs/mvp-v0.2.0.md)) |

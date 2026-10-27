@@ -1,6 +1,11 @@
 {
   description = "Offline Zcash: Logos Basecamp QML app for zcash_offline_module";
 
+  nixConfig = {
+    extra-substituters = [ "https://cache.nix.logos.co/public" ];
+    extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
+  };
+
   inputs = {
     # Pinned to the builder revision this app was built and checked with.
     logos-module-builder.url = "github:logos-co/logos-module-builder/8f56bf8";

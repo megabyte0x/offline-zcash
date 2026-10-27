@@ -18,16 +18,17 @@ A Logos Basecamp core module and QML UI over the same code were added on 27 Octo
 
 ## Running a session
 
-The organiser:
-1. Runs the local chain and the gateway on one laptop with internet: `ths start --no-open`, then `ozm-node join D.invite.json && ozm-node start --rpc http://127.0.0.1:18232 --mine`.
+The organiser, on one laptop with internet:
+1. Starts the local chain: `ths start --no-open`.
 2. Creates the fleet: `ozm-node fleet-init --out invites --name my-session --device D:gateway --device Alice:payer+payee --device Bob:payer+payee …`.
-3. Funds the gateway's address (shown by `fleet-init`) with `ths faucet <address> --amount 2`.
-4. Sends each person their own invite file. It contains their private keys (disposable Regtest keys).
+3. Starts the gateway: `ozm-node join invites/D.invite.json`, then `ozm-node start --rpc http://127.0.0.1:18232 --mine`. To run another device on the same laptop, give it its own `--home`, `--listen` port and `--api` port.
+4. Funds the gateway's address (shown by `fleet-init`) with `ths faucet <address> --amount 2`.
+5. Sends each person their own invite file. It contains their private keys (disposable Regtest keys).
 
 Each tester:
 1. Installs `ozm-node` ([install.md](install.md)).
 2. Joins the same Wi-Fi as the gateway. The Wi-Fi does not need internet. It must allow devices to see each other (no client isolation) and pass UDP broadcast on port 7778.
-3. Runs `ozm-node join <their-invite>.json` then `ozm-node start`. The UI opens in the browser.
+3. Runs `ozm-node join <their-invite>.json` then `ozm-node start`, or uses Basecamp instead ([basecamp-install.md](basecamp-install.md)). The UI opens in the browser.
 4. Presses **Get test funds**, waits about a minute, then pays another tester from the **Pay offline** panel.
 
 A payment shows `accepted-pending` once the payee has checked it offline and sent its signed receipt, and `mined` once the gateway reports it on chain.

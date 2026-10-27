@@ -5,27 +5,25 @@ This guide adds the **Offline Zcash** app to [Logos Basecamp](https://docs.logos
 It is a test build: it runs on a local test chain with test coins, never real ZEC.
 
 You need:
-- Basecamp **0.3.2 or newer**, on Linux x86_64 or arm64, or macOS on Apple silicon.
+- Basecamp **0.3.2 or newer**, on macOS with Apple silicon, or on Linux x86_64 or arm64 with **glibc 2.39 or newer** (for example Ubuntu 24.04 or Fedora 40 and later). The Basecamp AppImage does not start on Debian 12 or Ubuntu 22.04.
 - An **invite file** (`<your-name>.invite.json`) from whoever runs the session. It contains your private test keys, so don't share it.
 - The same Wi-Fi as the session's gateway. That Wi-Fi does not need internet.
 
 ## 1. Install Basecamp
 
 Download Basecamp from [its releases page](https://github.com/logos-co/logos-basecamp/releases/latest):
-- **Linux:** `LogosBasecamp-Desktop-*-x86_64.AppImage` (or `aarch64`). Run `chmod +x` on it, then open it.
+- **Linux:** `LogosBasecamp-Desktop-*-x86_64.AppImage` (or `aarch64`). Run `chmod +x` on it, then open it. If it says `GLIBC_2.38' not found`, your Linux is too old (see above). If it says `libOpenGL.so.0` is missing, install it (`sudo apt install libopengl0` on Ubuntu).
 - **macOS:** `LogosBasecamp-Desktop-*-aarch64.dmg`. Drag Basecamp to Applications and open it. If macOS blocks it, right-click Basecamp and choose **Open**.
 
-Open Basecamp once, then close it.
+Open Basecamp once (it shows "0.3.2 · Portable" or newer), then close it.
 
 ## 2. Get the two packages
 
-Each platform has two files:
-- `zcash_offline_module-<version>-<platform>.lgx`: the background service.
-- `zcash_offline_ui-<version>-<platform>.lgx`: the app window.
+You need two files for your platform (`linux-amd64`, `linux-arm64` or `darwin-arm64`):
+- the **service** (`zcash_offline_module`), which runs in the background;
+- the **app** (`zcash_offline_ui`), which is the window you use.
 
-`<platform>` is `linux-amd64`, `linux-arm64` or `darwin-arm64`.
-
-**Option A: download** both files for your platform from the [Offline Zcash releases](https://github.com/megabyte0x/offline-zcash/releases/latest).
+**Option A: download** `zcash_offline_module-<version>-<platform>.lgx` and `zcash_offline_ui-<version>-<platform>.lgx` from the [Offline Zcash releases](https://github.com/megabyte0x/offline-zcash/releases/latest).
 
 **Option B: build them** if there is no release for your platform yet. This needs [Nix](https://nixos.org/download) with flakes and about 10 GB of free disk. The first build takes 10–30 minutes.
 
@@ -36,18 +34,21 @@ git clone https://github.com/megabyte0x/offline-zcash && cd offline-zcash
 ls module-lgx/*.lgx ui-lgx/*.lgx
 ```
 
+The service is `module-lgx/logos-zcash_offline_module-module-lib.lgx` and the app is `ui-lgx/logos-zcash_offline_ui-module.lgx`.
+
 ## 3. Install both packages
 
-1. Open Basecamp and go to the **Modules** view.
-2. Click **Install LGX Package** and pick the `zcash_offline_module` file.
-3. Click **Install LGX Package** again and pick the `zcash_offline_ui` file.
-4. Both now appear in the lists, Offline Zcash under **UI Apps** and the module under **Logos Modules**.
+1. Open Basecamp and click **Manage Packages** (on the home screen, or the cube icon in the sidebar).
+2. Click **Install Local Package** and pick the **service** file. In the file picker you can press Ctrl+L (Cmd+Shift+G on macOS) to type a path.
+3. Basecamp warns that the package is not part of Logos and is unsigned. That is expected for this test build: click **Install**.
+4. Do the same for the **app** file.
+5. The Packages table now lists **Offline Zcash service** (type core) and **Offline Zcash** (type ui_qml), and a **Z** icon appears in the sidebar.
 
-Install the module before the app, because the app needs it.
+Install the service before the app, because the app needs it.
 
 ## 4. Join the session
 
-1. Click **Offline Zcash** in the sidebar. The **Setup** screen opens.
+1. Click the **Z** icon in the sidebar. Offline Zcash opens on the **Join a fleet** screen. Basecamp starts the service by itself.
 2. Open your invite file in a text editor, copy all of it, and paste it into the box.
 3. Leave the other fields empty, then click **Join and start**.
 
@@ -55,12 +56,14 @@ Within a few seconds the header shows your name, and **mesh neighbours** lists t
 
 ## 5. Get test coins and pay
 
-1. Click **Get test funds (5 × 0.1 ZEC)**. About a minute later your balance shows about 0.5 ZEC.
+1. Click **Get test funds (5 × 0.1 ZEC)**. Within a minute your balance shows 0.5 ZEC.
 2. Under **Pay offline**, choose a person in **To**, enter an amount (for example `0.01`), then click **Build, prove and send over the mesh**.
 3. Follow the payment in **Payments**:
    - `sent` means it has left your device;
    - `accepted-pending` means the other person checked it and sent back a signed receipt;
    - `mined` means the gateway put it on chain.
+
+   On a fast network it can jump straight to `mined`; click ▸ to see each step in its history.
 
 Money you receive can be spent once it shows `mined` and your balance has updated.
 
@@ -68,9 +71,10 @@ Money you receive can be spent once it shows `mined` and your balance has update
 
 | What you see | What to do |
 |---|---|
+| Basecamp does not start on Linux (`GLIBC_2.38' not found`) | Your Linux is older than glibc 2.39. Use Ubuntu 24.04 or newer, or a Mac |
 | Basecamp refuses the package | Check it is for your platform and is the portable file (not one ending `-dev`), and that Basecamp is 0.3.2 or newer |
-| Offline Zcash is not in the sidebar | In Modules, click **Load** next to `zcash_offline_module`, then next to Offline Zcash |
-| "module not reachable" | The module is not loaded. Load it in Modules and wait a few seconds |
+| No **Z** icon in the sidebar | Open **Manage Packages** and check both packages are listed. Install whichever is missing |
+| "module not reachable" | The service is not installed or has not started. Check **Manage Packages** lists Offline Zcash service, then reopen the app |
 | No mesh neighbours | You must be on the same Wi-Fi as the others, and it must not isolate devices from each other (guest networks often do). On macOS, allow **Local Network** for Basecamp when asked, or under System Settings → Privacy & Security → Local Network. Otherwise ask the organiser for the gateway's address, then enter `<address>:7777` in **Dial address** on the Setup screen |
 | "wallet has never synced" | The gateway is not reachable yet. Wait for a neighbour, then click **Sync now** |
 | A payment says `refused` | The reason is shown in its history. The money does not move unless the payment also shows `mined` |
