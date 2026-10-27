@@ -20,6 +20,9 @@ It is not security reviewed and does not support real funds.
 - Public downloads no longer require GitHub authentication.
 - Android identifies this release as 0.5.1 (version code 7).
 
+### Security
+- Internal research links and automatic thread attribution were removed from published history; CI rejects internal thread links in tracked files.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added

@@ -12,6 +12,7 @@ This repository holds research and a working proof of concept (releases v0.1.0â€
 - `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)); `bench/lan-bench.sh all` tests discovery, sync and funds over the mesh ([docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md)); `bench/ffi-bench.sh` tests Kotlin-only links against the real chain. Releases: keep workspace/Logos/Android versions in sync; v0.5.1 ships **four `.lgx` packages Ã— three platforms plus four merged catalogue packages**, CLI tarballs and Android APK + checksums on a `v*` tag. Run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` before committing.
 - macOS `.lgx` packages have not yet run on a real Mac. Basecamp Local Network permission support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)); fallback: dial `<operator-ip>:7777`. All three session laptops can run only Basecamp for device roles; the operator's Docker-backed `ths start` remains outside Basecamp.
 - Every user-visible change adds an entry under `Unreleased` in `CHANGELOG.md`; releases move those entries into the new version section.
+- Do not include Amp thread links in commit messages, tracked files or release notes. Automatic thread attribution is disabled in `.amp/settings.json`.
 
 ## Current target
 
