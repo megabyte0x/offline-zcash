@@ -29,6 +29,9 @@ pub enum Body {
     /// v0.2.0: ask a Regtest gateway for test funds, as `notes` notes of `amount_each` zatoshis.
     FundReq { notes: u32, amount_each: u64 },
     FundRes { ok: bool, detail: String },
+    /// Appended variants preserve all v0.5.x discriminants. Older nodes drop unknown variants.
+    Presence(Signed<Presence>),
+    Auth { body: Vec<u8>, sig: String },
 }
 
 impl Body {
@@ -42,8 +45,24 @@ impl Body {
             Body::SyncRes { .. } => "syncr",
             Body::FundReq { .. } => "fundq",
             Body::FundRes { .. } => "fundr",
+            Body::Presence(_) => "presence",
+            Body::Auth { .. } => "auth",
         }
     }
+}
+
+/// Sealed, signed address binding and gateway announcement, with proof of receiving authority.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Presence {
+    pub device: crate::DevicePublic,
+    pub gateway: bool,
+    pub tip: u32,
+    pub created_ms: u64,
+    pub address_proof: String,
+}
+
+impl Domain for Presence {
+    const DOMAIN: &'static [u8] = b"ozm1-presence";
 }
 
 /// The payer's signed claim about a payment (pending tier).
@@ -66,6 +85,8 @@ pub enum ReceiptState {
     /// Passes all offline checks at the payee's view height; not yet mined.
     Pending,
     Refused(Reject),
+    /// No pending acceptance for open/unknown payers; a pinned gateway reports inclusion.
+    Included,
 }
 
 /// The payee's signed answer, sent only after the payment is fsynced.
@@ -135,6 +156,11 @@ impl<T: Serialize + DeserializeOwned + Domain> Signed<T> {
     pub fn verify(&self, fleet: &Fleet, expected_signer: &str) -> Result<()> {
         let dev = fleet.by_ed25519(&self.signer).ok_or_else(|| anyhow!("signer is not in the fleet"))?;
         ensure!(dev.name.eq_ignore_ascii_case(expected_signer), "signed by {} not {expected_signer}", dev.name);
+        verify_sig(&dev.verifying_key()?, &signing_bytes(&self.body), &hex::decode(&self.sig)?)
+    }
+
+    pub fn verify_key(&self, dev: &crate::DevicePublic) -> Result<()> {
+        ensure!(self.signer == dev.ed25519, "wrong signing key");
         verify_sig(&dev.verifying_key()?, &signing_bytes(&self.body), &hex::decode(&self.sig)?)
     }
 }

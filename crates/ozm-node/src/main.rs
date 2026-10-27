@@ -77,11 +77,17 @@ enum Cmd {
     },
     /// Ask a running node to build and send a payment.
     Pay {
+        /// Recipient's Regtest unified Zcash address.
         #[arg(long)]
         to: String,
         /// Amount in ZEC, e.g. 0.1
         #[arg(long)]
         amount: String,
+        #[arg(long, env = "OZM_API_URL", default_value = API_URL)]
+        api: String,
+    },
+    /// Quote the largest payment and its exact ZIP 317 builder fee without spending.
+    Max {
         #[arg(long, env = "OZM_API_URL", default_value = API_URL)]
         api: String,
     },
@@ -149,7 +155,7 @@ async fn main() -> Result<()> {
         Cmd::Join { invite, home } => join(&invite, home),
         Cmd::Start { home, dial, rpc, mine, ble, api, listen, no_open } => {
             let home = home_dir(home)?;
-            anyhow::ensure!(home.join("secret.json").exists(), "no device in {}; run `ozm-node join <invite.json>` first", home.display());
+            ozm_node::join_open(&home)?;
             run(RunOpts { listen, dial, rpc, mine, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
             .await
         }
@@ -168,6 +174,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Pay { to, amount, api } => client(&api, "POST", "/api/pay", Some(json!({"to": to, "amount": amount}))),
+        Cmd::Max { api } => client(&api, "GET", "/api/max", None),
         Cmd::Sync { api } => client(&api, "POST", "/api/sync", None),
         Cmd::Fund { notes, amount, api } => client(&api, "POST", "/api/fund", Some(json!({"notes": notes, "amount": amount}))),
         Cmd::Status { api } => client(&api, "GET", "/api/status", None),
@@ -202,7 +209,11 @@ async fn run(o: RunOpts) -> Result<()> {
 
 fn client(api: &str, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<()> {
     let url = format!("{}{}", api.trim_end_matches('/'), path);
-    let req = ureq::request(method, &url).timeout(Duration::from_secs(300));
+    // The local UI bootstraps the per-run token; same-origin policy prevents remote sites reading it.
+    let html = ureq::get(&format!("{}/", api.trim_end_matches('/'))).call()?.into_string()?;
+    let token = html.split("name=\"ozm-api-token\" content=\"").nth(1)
+        .and_then(|s| s.split('"').next()).ok_or_else(|| anyhow!("node did not provide an API token"))?;
+    let req = ureq::request(method, &url).set("x-ozm-token", token).timeout(Duration::from_secs(300));
     let resp = match body {
         Some(b) => req.send_json(b),
         None => req.call(),

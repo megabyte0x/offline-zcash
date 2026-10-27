@@ -54,6 +54,29 @@ pub(crate) struct Packet {
 }
 
 impl Packet {
+    fn ack_bytes(&self) -> Vec<u8> {
+        let mut p = self.clone();
+        p.ttl = 0;
+        p.hops = 0;
+        p.payload.truncate(80);
+        [b"ozm1-mesh-ack-v1".as_slice(), &p.encode()].concat()
+    }
+
+    pub(crate) fn sign_ack(&mut self, key: &ed25519_dalek::SigningKey) {
+        use ed25519_dalek::Signer;
+        self.payload.extend(key.verifying_key().as_bytes());
+        self.payload.extend(key.sign(&self.ack_bytes()).to_bytes());
+    }
+
+    pub(crate) fn verified_ack(&self) -> Result<MsgId> {
+        ensure!(self.kind == Kind::Ack && self.payload.len() == 144, "unsigned or malformed ack");
+        let key = ed25519_dalek::VerifyingKey::from_bytes(self.payload[48..80].try_into()?)?;
+        ensure!(peer_for(&key) == self.sender, "ack signer mismatch");
+        let sig = ed25519_dalek::Signature::from_slice(&self.payload[80..])?;
+        key.verify_strict(&self.ack_bytes(), &sig)?;
+        Ok(MsgId(self.payload[..16].try_into()?))
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let mut b = Vec::with_capacity(HEADER_LEN + self.payload.len());
         b.push(VERSION);
@@ -85,6 +108,11 @@ impl Packet {
         ensure!(r.0.is_empty(), "trailing bytes after packet");
         Ok(Packet { kind, ttl, hops, msg_id, sender, recipient, created_ms, payload })
     }
+}
+
+pub(crate) fn peer_for(key: &ed25519_dalek::VerifyingKey) -> PeerId {
+    let h = blake2b_simd::Params::new().hash_length(8).personal(b"ozm1-peer-id\0\0\0\0").hash(key.as_bytes());
+    PeerId(h.as_bytes().try_into().expect("eight bytes"))
 }
 
 /// Persisted as the hex of the wire encoding.

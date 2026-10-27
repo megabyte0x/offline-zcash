@@ -167,7 +167,7 @@ Rectangle {
                 onClicked: root.call("sync_now", [], function (r) { root.failed = !!r.error; root.message = r.error || "Wallet synced"; root.refresh() }, 120000)
             }
             Text { text: "Submissions and results"; color: root.fg; font.pixelSize: 18; font.bold: true }
-            Label2 { visible: root.submissions.length === 0; text: "No submissions yet. Results are gateway-reported, not chain proofs." }
+            Label2 { text: (root.submissions.length === 0 ? "No submissions yet. " : "") + "Results are gateway-reported, not chain proofs." }
             Repeater {
                 model: root.submissions
                 Label2 {

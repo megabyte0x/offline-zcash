@@ -17,6 +17,7 @@ use rand::{rand_core::UnwrapErr, rngs::{StdRng, SysRng}, SeedableRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use zcash_primitives::transaction::{
+    fees::{zip317, FeeRule},
     txid::{to_txid, TxIdDigester},
     Authorized, TransactionData, TxVersion, Unauthorized,
 };
@@ -43,13 +44,18 @@ pub struct BuiltPayment {
     pub prove_ms: u128,
 }
 
-/// Picks the smallest single spendable note covering `need`, else the smallest
-/// pair (at most two inputs keeps the transaction at two actions).
-fn select_notes(state: &WalletState, need: u64) -> Result<Vec<u64>> {
+/// Keeps the old smallest single/pair choice, then grows an input set at its actual fee.
+fn select_notes(state: &WalletState, amount: u64, policy: &Policy) -> Result<(Vec<u64>, u64)> {
     let mut notes: Vec<_> = state.notes.iter().filter(|n| n.spendable()).collect();
     notes.sort_by_key(|n| n.value);
+    let (positions, max, max_fee) = max_notes(state, policy)?;
+    if amount == max && max > 0 {
+        return Ok((positions, max_fee));
+    }
+    let fee = transaction_fee(2, policy)?;
+    let need = amount.checked_add(fee).ok_or_else(|| anyhow!("amount overflow"))?;
     if let Some(n) = notes.iter().find(|n| n.value >= need) {
-        return Ok(vec![n.position]);
+        return Ok((vec![n.position], fee));
     }
     let mut best: Option<(u64, u64, u64)> = None;
     for (i, a) in notes.iter().enumerate() {
@@ -60,14 +66,54 @@ fn select_notes(state: &WalletState, need: u64) -> Result<Vec<u64>> {
             }
         }
     }
-    best.map(|(_, a, b)| vec![a, b]).ok_or_else(|| {
-        anyhow!(
-            "not enough spendable notes for {} zat (spendable {} zat in {} notes); unmined change cannot be spent offline",
-            need,
-            notes.iter().map(|n| n.value).sum::<u64>(),
-            notes.len()
-        )
-    })
+    if let Some((_, a, b)) = best {
+        return Ok((vec![a, b], fee));
+    }
+    let mut positions = Vec::new();
+    let mut total = 0;
+    for n in notes.iter().rev() {
+        positions.push(n.position);
+        total += n.value;
+        let fee = transaction_fee(positions.len(), policy)?;
+        if amount.checked_add(fee).is_some_and(|need| total >= need) {
+            return Ok((positions, fee));
+        }
+    }
+    bail!("not enough spendable notes for {amount} zat plus the ZIP 317 fee; unmined change cannot be spent offline")
+}
+
+/// The same padded Ironwood action count used by Builder::build. One recipient and optional change
+/// both fit the minimum two actions; more inputs increase the fee. Policy fee is a configurable floor.
+pub fn transaction_fee(inputs: usize, policy: &Policy) -> Result<u64> {
+    let v = BundleVersion::ironwood_v3();
+    let actions = BundleType::DEFAULT.num_actions(v.default_flags(), inputs, 2).map_err(|e| anyhow!(e))?;
+    let fee = zip317::FeeRule::standard().fee_required(
+        &crate::regtest_network(), 1.into(), [], [], 0, 0, 0, actions,
+    ).map_err(|e| anyhow!("fee: {e:?}"))?;
+    Ok(u64::from(fee).max(policy.fee_zat))
+}
+
+/// A non-mutating quote; excludes unmined change, locked notes and uneconomic inputs.
+pub fn max_payment(state: &WalletState, policy: &Policy) -> Result<(u64, u64)> {
+    let (_, amount, fee) = max_notes(state, policy)?;
+    Ok((amount, fee))
+}
+
+fn max_notes(state: &WalletState, policy: &Policy) -> Result<(Vec<u64>, u64, u64)> {
+    let mut notes: Vec<_> = state.notes.iter().filter(|n| n.spendable()).collect();
+    notes.sort_by_key(|n| std::cmp::Reverse(n.value));
+    let mut best = (0, 0, transaction_fee(0, policy)?);
+    let mut total = 0;
+    for (i, n) in notes.iter().enumerate() {
+        total += n.value;
+        let fee = transaction_fee(i + 1, policy)?;
+        let amount = total.saturating_sub(fee);
+        // At each input count the largest notes maximize value; ties prefer fewer inputs.
+        if amount > best.1 {
+            best = (i + 1, amount, fee);
+        }
+    }
+    Ok((notes[..best.0].iter().map(|n| n.position).collect(), best.1, best.2))
 }
 
 /// Builds a payment of `amount` zatoshis to `to`, locks the notes it spends in
@@ -83,8 +129,7 @@ pub fn build_payment(
     ensure!(state.tip_height > 0, "wallet has never synced; sync while online first");
     let branch = BranchId::try_from(policy.branch_id).map_err(|e| anyhow!("branch id: {e}"))?;
     ensure!(branch == BranchId::Nu7, "only NU7 (v6, Ironwood) is supported");
-    let fee = policy.fee_zat;
-    let positions = select_notes(state, amount + fee)?;
+    let (positions, fee) = select_notes(state, amount, policy)?;
     let sk = me.spending_key()?;
     let fvk = me.fvk()?;
     let notes: Vec<_> = positions
@@ -125,6 +170,7 @@ pub fn build_payment(
         .build::<ZatBalance>(StdRng::from_seed(seed))
         .map_err(|e| anyhow!("build: {e:?}"))?
         .ok_or_else(|| anyhow!("empty bundle"))?;
+    ensure!(fee >= transaction_fee(bundle.actions().len(), policy)?, "planned fee differs from built action count");
     let expiry_height = state.tip_height + policy.expiry_delta;
 
     let mut rng = UnwrapErr(SysRng);
@@ -157,4 +203,29 @@ pub fn build_payment(
         spent_positions: positions,
         prove_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wallet::StoredNote;
+
+    #[test]
+    fn max_uses_the_builder_fee_and_ignores_locked_and_spent_notes() {
+        let policy = Policy::default();
+        let mut state = WalletState::default();
+        for (i, value) in [13_001, 25_002, 39_003, 51_004, 90_000].into_iter().enumerate() {
+            state.notes.push(StoredNote { position: i as u64, value, height: 1, txid: String::new(), recipient: String::new(),
+                rho: String::new(), rseed: String::new(), nullifier: String::new(), spent_in: None, locked_by: None });
+        }
+        state.notes[3].locked_by = Some("pending".into());
+        state.notes[4].spent_in = Some("mined".into());
+        assert_eq!(transaction_fee(1, &policy).unwrap(), 10_000);
+        assert_eq!(transaction_fee(2, &policy).unwrap(), 10_000);
+        assert_eq!(max_payment(&state, &policy).unwrap(), (62_006, 15_000));
+        // A quote is non-mutating. A dust input must not reduce the maximum sendable amount.
+        assert_eq!(state.balance(), (77_006, 51_004));
+        state.notes[0].value = 1;
+        assert_eq!(max_payment(&state, &policy).unwrap(), (54_005, 10_000));
+    }
 }

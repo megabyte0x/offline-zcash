@@ -19,7 +19,7 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// The fleet file (GET /api/fleet).
     fn fleet(&mut self) -> String;
 
-    /// Builds and sends an offline payment to a fleet device by name. Returns the payment (POST /api/pay).
+    /// Builds and sends an offline payment to a Regtest unified address. Returns the payment (POST /api/pay).
     fn pay(&mut self, to: String, amount_zec: String) -> String;
 
     /// Syncs the wallet: from Zakura RPC when online, else asks a gateway over the mesh (POST /api/sync).
@@ -39,6 +39,9 @@ pub trait ZcashOfflineModule: Send + 'static {
 
     /// Asks the desktop to open a folder containing a fleet. UI apps cannot open local file URLs.
     fn open_fleet_folder(&mut self, folder: String) -> String;
+
+    /// Largest spendable amount and the exact builder fee. Does not lock notes or make a payment.
+    fn max_payment(&mut self) -> String;
 
     /// Auto-starts a device that was already joined, so restarts resume.
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
@@ -153,7 +156,7 @@ impl Node {
             return self.status_value();
         }
         let home = home()?;
-        anyhow::ensure!(joined(&home), "no device in {}: call join with an invite first", home.display());
+        ozm_node::join_open(&home)?;
         let mut opts = ozm_node::RunOpts::for_home(&home);
         if let Some(l) = &o.listen {
             opts.listen = l.parse().with_context(|| format!("listen {l}"))?;
@@ -279,6 +282,10 @@ impl ZcashOfflineModule for Node {
 
     fn sync_now(&mut self) -> String {
         out(self.app().cloned().and_then(|a| rt().block_on(a.sync())))
+    }
+
+    fn max_payment(&mut self) -> String {
+        out(self.app().and_then(|a| a.max_payment()))
     }
 
     fn request_funds(&mut self, notes: i64, amount_zec: String) -> String {

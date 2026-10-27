@@ -3,13 +3,16 @@
 #![allow(clippy::result_large_err)] // axum handlers return Response as the error type
 
 pub mod app;
+mod discovery;
 
 pub use app::App;
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, Request},
+    middleware::{self, Next},
+    body::Body,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -213,8 +216,25 @@ pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
     ))
 }
 
+/// Creates keys on this device, once. No keys or wallet are replaced on restart.
+pub fn join_open(home: &Path) -> Result<()> {
+    if home.join("secret.json").exists() {
+        return Ok(());
+    }
+    anyhow::ensure!(!home.join("fleet.json").exists() && !home.join("data/wallet.json").exists(),
+        "device files exist but secret.json is missing; restore the keys or choose a new home");
+    let mut me = DeviceSecret::generate("", "payer+payee+relay");
+    me.name = me.public()?.peer_id;
+    let fleet = Fleet { name: "Open Regtest mesh".into(), policy: Policy::default(), devices: vec![me.public()?], open: true, address_proofs: Default::default() };
+    join_invite(&serde_json::to_string(&Invite { fleet, secret: me })?, home)?;
+    Ok(())
+}
+
 /// Starts the mesh, the app and its background loops. Must run inside a tokio runtime.
 pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
+    if !o.secret.exists() && o.secret.file_name().is_some_and(|s| s == "secret.json") {
+        join_open(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?)?;
+    }
     let fleet = Fleet::load(&o.fleet)?;
     let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(&o.secret).context("read secret")?)?;
     let pubme = fleet.by_name(&me.name)?.clone();
@@ -223,9 +243,11 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         anyhow::ensure!(pubme.role.split('+').any(|r| r == "gateway"), "this invite does not grant the gateway role; ask the organiser for a gateway invite");
     }
     std::fs::create_dir_all(&o.data)?;
-    let discovery = o.discover.then(|| Discovery { port: o.discovery_port, tag: fleet.discovery_tag(), ..Default::default() });
+    let tag = if pubme.role.split('+').any(|r| r == "gateway") { [0; 8] } else { fleet.discovery_tag() };
+    let discovery = o.discover.then(|| Discovery { port: o.discovery_port, tag, ..Default::default() });
     let (mesh, mut events) = Mesh::start(MeshConfig {
         peer_id: pubme.peer_id.parse()?,
+        ack_signer: Some(me.signing_key()?),
         listen: Some(o.listen),
         dial: o.dial.iter().filter(|d| !d.is_empty()).cloned().collect(),
         mtu: o.mtu,
@@ -248,7 +270,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         mesh,
     )?;
     if o.ble {
-        let hint = app.cfg.fleet.discovery_tag()[..4].try_into().expect("four bytes");
+        let hint = tag[..4].try_into().expect("four bytes");
         match ozm_ble::Ble::start(app.mesh.clone(), hint).await {
             Ok(ble) => { let _ = app.ble.set(ble); }
             Err(e) => { app.mesh.shutdown(); return Err(e); }
@@ -273,9 +295,12 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
             t.tick().await;
             if a.mesh.is_shutdown() { break; }
             ticks += 1;
+            if ticks % 10 == 1 {
+                let _ = a.announce().await;
+            }
             a.retry_tick().await;
             // Offline devices refresh their chain view from a gateway while one is reachable.
-            if auto_sync > 0 && ticks % auto_sync == 3 && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
+            if auto_sync > 0 && ticks % auto_sync == 3 % auto_sync && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
                 let _ = a.request_mesh_sync(false).await;
             }
         }
@@ -286,8 +311,10 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
 
 /// The local HTTP API and web UI.
 pub fn router(app: Arc<App>, debug_api: bool) -> Router {
+    let token = DeviceSecret::generate("api", "").ed25519_sk;
+    let html = include_str!("ui.html").replace("__OZM_API_TOKEN__", &token);
     let router = Router::new()
-        .route("/", get(|| async { Html(include_str!("ui.html")) }))
+        .route("/", get(move || async { Html(html) }))
         .route("/api/status", get(|State(a): State<Arc<App>>| async move { Json(a.status()) }))
         .route("/api/fleet", get(|State(a): State<Arc<App>>| async move { Json(a.cfg.fleet.clone()) }))
         .route(
@@ -306,6 +333,7 @@ pub fn router(app: Arc<App>, debug_api: bool) -> Router {
             }),
         )
         .route("/api/pay", post(pay))
+        .route("/api/max", get(|State(a): State<Arc<App>>| async move { a.max_payment().map(Json).map_err(err) }))
         .route("/api/sync", post(|State(a): State<Arc<App>>| async move { a.sync().await.map(Json).map_err(err) }))
         .route(
             "/api/fund",
@@ -332,7 +360,24 @@ pub fn router(app: Arc<App>, debug_api: bool) -> Router {
     } else {
         router
     };
-    router.with_state(app)
+    router.with_state(app).layer(middleware::from_fn(move |req: Request<Body>, next: Next| {
+        let token = token.clone();
+        async move {
+            let host = req.headers().get("host").and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<axum::http::uri::Authority>().ok());
+            if !host.is_some_and(|h| matches!(h.host(), "127.0.0.1" | "localhost" | "[::1]")) {
+                return (StatusCode::FORBIDDEN, Json(json!({"error": "loopback Host required"}))).into_response();
+            }
+            if req.uri().path() != "/" && req.headers().get("x-ozm-token").and_then(|v| v.to_str().ok()) != Some(token.as_str()) {
+                return (StatusCode::UNAUTHORIZED, Json(json!({"error": "API token required"}))).into_response();
+            }
+            let mut response = next.run(req).await;
+            response.headers_mut().insert("cache-control", "no-store".parse().unwrap());
+            response.headers_mut().insert("content-security-policy", "frame-ancestors 'none'; base-uri 'none'; object-src 'none'".parse().unwrap());
+            response.headers_mut().insert("x-content-type-options", "nosniff".parse().unwrap());
+            response
+        }
+    }))
 }
 
 #[derive(Deserialize)]

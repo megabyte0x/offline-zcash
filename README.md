@@ -13,8 +13,8 @@ It runs in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line
 ## Try it
 
 - **[Install by name in Basecamp](docs/basecamp-install.md#install-by-name-recommended):** add the public catalogue in Settings → Package Repositories, search `zcash` in Manage Packages, and install the service and apps. No GitHub token needed.
-- **[Use the command-line node](docs/install.md):** install `ozm-node`, then `ozm-node join <invite.json>` and `ozm-node start`.
-- **[Try the Android test APK](docs/android-install.md):** Android 10+ arm64, native BLE + LAN, invite join and payments. No real-phone/radio validation yet.
+- **[Use the command-line node](docs/install.md):** install `ozm-node`, then `ozm-node start`; it creates local keys and finds a gateway without an invite. Invite join remains optional.
+- **[Try the Android test APK](docs/android-install.md):** Android 10+ arm64, native BLE + LAN, open or invited join, address payments and Max. No real-phone/radio validation yet.
 - **[Run a three-laptop Basecamp session](docs/basecamp-install.md#a-three-mac-session-without-an-ozm-node-terminal):** create invites in Organiser and start Gateway in Basecamp. CLI sessions remain [supported](docs/mvp-v0.2.0.md#running-a-session).
 
 Catalogue URL (also accepted by `logosctl catalog add`):
@@ -31,7 +31,17 @@ Packages are unsigned; install only if you trust this test build.
 Manual `.lgx` downloads remain a [fallback](docs/basecamp-install.md#manual-lgx-fallback)
 on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
 
-v0.5.1 ships **four merged catalogue packages and four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. See [CHANGELOG.md](CHANGELOG.md) for release notes. macOS `.lgx` packages have **not run on a real Mac**; Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
+v0.6.0 ships **four merged catalogue packages and four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. See [CHANGELOG.md](CHANGELOG.md) for release notes. The owner tested v0.5.1 successfully on three real Macs; v0.6.0 has not yet been retested there. Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
+
+Paste any Regtest unified address with an Ironwood receiver; exchange addresses
+outside the app. Max quotes the builder's actual ZIP 317 action fee. A destination
+not on the mesh still gets submitted, with **no payee receipt**. Open devices select
+the nearest signed gateway (hops, then highest advertised tip), pin its key on first
+use, and block silent changes. Address bindings prove receiving authority and are
+pinned when first used. Open/unknown payers are not accepted pending. **Sync,
+inclusion and mined results are gateway-reported**, not independently verified
+chain proofs. First contact does not authenticate an operator. Use a trusted local
+operator and test coins only. [Trust model and limits](docs/basecamp-install.md#open-mode-trust-and-faucet-limits).
 
 ## For developers
 
@@ -42,5 +52,5 @@ v0.5.1 ships **four merged catalogue packages and four `.lgx` packages per platf
 | [crates/ozm-node](crates/ozm-node) | The device: roles, payment store, gateway, HTTP API and web UI |
 | [logos](logos/README.md) | One Basecamp core module and three thin QML apps |
 | [android](docs/android-install.md) | Android test shell, BLE byte link, UniFFI/Kotlin build and JVM payment check |
-| [bench](bench/README.md) | Multi-container tests: `bench/mesh-bench.sh all` (multi-hop) and `bench/lan-bench.sh all` (LAN) |
+| [bench](bench/README.md) | Multi-container tests: `bench/mesh-bench.sh all` (multi-hop), `bench/lan-bench.sh all` (invites), `bench/open-bench.sh all` (six devices, no invites) |
 | [docs](docs/README.md) | Design, components, results per version ([v0.1.0](docs/mvp-v0.1.0.md), [v0.2.0](docs/mvp-v0.2.0.md)) |

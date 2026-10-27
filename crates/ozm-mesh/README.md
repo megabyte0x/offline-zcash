@@ -52,8 +52,15 @@ Data chunks are joined in index order into one **link message**. `frag_id` is th
 | payload length `u32` | 4 |
 | payload | n |
 
-An Ack has its own random msg_id, is addressed to the original sender, and its payload is the
-16-byte msg_id it acknowledges.
+An Ack has its own random msg_id and is addressed to the original sender. With
+`MeshConfig::ack_signer` (mandatory in `ozm-node` v0.6), its payload is the original
+msg_id (16), BLAKE2b-256 of the delivered sealed payload (32), destination Ed25519
+key (32), and signature (64). The signature covers the domain `ozm1-mesh-ack-v1`
+and encoded ack with TTL/hops zeroed and signature omitted. The key must hash to
+the destination's peer ID; origin/destination and payload hash must match the
+queued message before it can be removed or confirmed. Forged/unsigned acks are
+rejected. `ack_signer: None` retains the old 16-byte ack for transport-only legacy
+tests; wallet nodes never use that mode. v0.5.x nodes drop new acks without crashing.
 
 ## Semantics
 
@@ -92,8 +99,11 @@ one fleet on the same Wi-Fi or LAN find and link to each other without `dial`.
 | sender PeerId | 8 |
 | TCP port to dial, `u16` (0 = the node does not listen) | 2 |
 
-Receivers ignore anything shorter, with another magic or version, or with another tag; extra bytes
-after the 23 are ignored so a later version can append fields.
+Receivers ignore anything shorter or with another magic/version. Nonzero tags
+match the same fleet; a zero tag on either side enables open discovery. Wallet
+gateways advertise zero so both open and invited devices can find them. Tags are
+discovery filters, not authentication. Extra bytes after the 23 are ignored so a
+later version can append fields.
 
 - **Interfaces.** If the TCP listen address is a specific IPv4 address, beacons use only that
   address. Otherwise every up IPv4 interface is used (including self-assigned 169.254.x.x),

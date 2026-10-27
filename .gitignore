@@ -3,6 +3,7 @@
 target/
 bench/.state/
 bench/.state-lan/
+bench/.state-open/
 android/.gradle/
 android/.kotlin/
 android/**/build/

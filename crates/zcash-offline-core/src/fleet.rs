@@ -5,7 +5,7 @@
 //! from the Ed25519 key, and the mesh peer ID is a hash of the Ed25519 key.
 
 use anyhow::{anyhow, bail, Context, Result};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use orchard::keys::{FullViewingKey, Scope, SpendingKey};
 use rand::TryRng;
 use serde::{Deserialize, Serialize};
@@ -69,13 +69,18 @@ impl DevicePublic {
             .map_err(|_| anyhow!("x25519 key length"))
     }
     pub fn orchard_address(&self) -> Result<orchard::Address> {
+        decode_address(&self.address)
+    }
+}
+
+/// Only Regtest unified addresses with an Ironwood receiver are supported. Never fall back to transparent.
+pub fn decode_address(address: &str) -> Result<orchard::Address> {
         let Some(zcash_keys::address::Address::Unified(ua)) =
-            zcash_keys::address::Address::decode(&crate::regtest_network(), &self.address)
+            zcash_keys::address::Address::decode(&crate::regtest_network(), address)
         else {
-            bail!("not a unified address: {}", self.address)
+            bail!("expected a Regtest unified Zcash address with an Ironwood receiver")
         };
         ua.orchard().copied().ok_or_else(|| anyhow!("address has no Ironwood receiver"))
-    }
 }
 
 /// A device's private keys. Stored in its own file, never in the fleet file.
@@ -161,7 +166,7 @@ pub fn peer_id_for(vk: &VerifyingKey) -> String {
 
 pub fn verify_sig(vk: &VerifyingKey, msg: &[u8], sig: &[u8]) -> Result<()> {
     let sig: [u8; 64] = sig.try_into().map_err(|_| anyhow!("signature length"))?;
-    vk.verify(msg, &ed25519_dalek::Signature::from_bytes(&sig))
+    vk.verify_strict(msg, &ed25519_dalek::Signature::from_bytes(&sig))
         .map_err(|_| anyhow!("bad signature"))
 }
 
@@ -170,6 +175,12 @@ pub struct Fleet {
     pub name: String,
     pub policy: Policy,
     pub devices: Vec<DevicePublic>,
+    /// Locally generated identity, with self-signed gateway discovery instead of an organiser allowlist.
+    #[serde(default)]
+    pub open: bool,
+    /// Receiving-authority proofs allow invited receipt routing before live discovery.
+    #[serde(default)]
+    pub address_proofs: std::collections::BTreeMap<String, String>,
 }
 
 impl Fleet {
@@ -191,6 +202,9 @@ impl Fleet {
     }
     /// 8-byte tag for LAN discovery: only devices of the same fleet connect automatically.
     pub fn discovery_tag(&self) -> [u8; 8] {
+        if self.open {
+            return [0; 8];
+        }
         let mut st = blake2b_simd::Params::new().hash_length(8).personal(b"ozm1-fleet-tag\0\0").to_state();
         st.update(self.name.as_bytes());
         let mut keys: Vec<&str> = self.devices.iter().map(|d| d.ed25519.as_str()).collect();
@@ -213,7 +227,8 @@ pub fn generate_fleet(name: &str, devices: &[(String, String)], policy: Policy) 
     }
     let secrets: Vec<_> = devices.iter().map(|(n, r)| DeviceSecret::generate(n, r)).collect();
     let publics = secrets.iter().map(|s| s.public()).collect::<Result<Vec<_>>>()?;
-    Ok((Fleet { name: name.into(), policy, devices: publics }, secrets))
+    let address_proofs = secrets.iter().map(|s| Ok((s.public()?.peer_id, crate::binding::prove(s)?))).collect::<Result<_>>()?;
+    Ok((Fleet { name: name.into(), policy, devices: publics, open: false, address_proofs }, secrets))
 }
 
 #[cfg(test)]

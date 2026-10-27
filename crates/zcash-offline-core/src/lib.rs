@@ -5,6 +5,7 @@
 //! seal, sign) works without a connection.
 
 pub mod builder;
+pub mod binding;
 pub mod envelope;
 pub mod fleet;
 pub mod messages;

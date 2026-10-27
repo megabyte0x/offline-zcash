@@ -121,6 +121,16 @@ The design is written for the right-hand column. The left-hand column says only 
 
 ## Trust assumptions at v0.7.0
 
+**v0.6.0 implementation update:** the review below is preserved at its stated
+v0.5.1 source revision. v0.6.0 signs every inner envelope and mesh ack (R1/R4/S1),
+adds loopback API tokens/Host checks and text-only web rendering (S5/OS4), proves
+address receiving authority and pins bindings (B5), removes pending acceptance for
+open/unknown payers (A2/S6), and pins the first used gateway with change warnings
+(G4). [Exact controls and remaining limits](basecamp-install.md#open-mode-trust-and-faucet-limits).
+First-contact Sybils, dishonest pinned gateways and unverified chain views remain
+risks. Receiving authority is not spending authority, and the new proof code is
+experimental and not independently audited.
+
 Written 27 October 2026 from a read of `main` at `3395bd1` (v0.5.1). v0.6.0 (open LAN join, pay any address, Max) and v0.7.0 (public testnet, light-client gateway against public lightwalletd, `included`/`mined` gateway-reported, compact birthday sync, "Prepare for offline" split) were not on `main` then, so their rows are **planned**. A row worked out from the planned design rather than read in code is **inferred**. Line numbers are at `3395bd1`.
 
 Paths: `core/` = `crates/zcash-offline-core/src/`, `mesh/` = `crates/ozm-mesh/src/`, `node/` = `crates/ozm-node/src/`, `kt/` = `android/app/src/main/java/org/zcash/offline/`.

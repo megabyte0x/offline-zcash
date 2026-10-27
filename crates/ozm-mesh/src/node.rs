@@ -312,6 +312,10 @@ impl Node {
             debug!(msg_id = %p.msg_id, %from, "duplicate dropped");
             return;
         }
+        // A forged ack must not poison dedup before the authentic copy arrives.
+        if p.kind == Kind::Ack && self.cfg.ack_signer.is_some() && p.verified_ack().is_err() {
+            return;
+        }
         self.mark_seen(st, &p);
         let exp = self.expiry(&p);
         match p.kind {
@@ -319,7 +323,7 @@ impl Node {
                 info!(msg_id = %p.msg_id, from = %p.sender, hops = p.hops, bytes = p.payload.len(), "delivered");
                 self.stats.messages_delivered.fetch_add(1, Ordering::Relaxed);
                 st.db.acked.insert(p.msg_id, exp);
-                let ack = Packet {
+                let mut ack = Packet {
                     kind: Kind::Ack,
                     ttl: self.cfg.default_ttl,
                     hops: 1,
@@ -329,6 +333,10 @@ impl Node {
                     created_ms: now_ms(),
                     payload: p.msg_id.0.to_vec(),
                 };
+                if let Some(key) = &self.cfg.ack_signer {
+                    ack.payload.extend(blake2b_simd::Params::new().hash_length(32).hash(&p.payload).as_bytes());
+                    ack.sign_ack(key);
+                }
                 emit(
                     st,
                     MeshEvent::Message {
@@ -364,11 +372,26 @@ impl Node {
                 self.relay(st, from, p);
             }
             Kind::Ack => {
-                let Ok(acked) = <[u8; 16]>::try_from(p.payload.as_slice()) else {
-                    warn!(msg_id = %p.msg_id, "malformed ack dropped");
+                let verified = if self.cfg.ack_signer.is_some() {
+                    p.verified_ack()
+                } else {
+                    p.verified_ack().or_else(|_| Ok(MsgId(p.payload.as_slice().try_into()?)))
+                };
+                let Ok(acked) = verified else {
+                    warn!(msg_id = %p.msg_id, "unauthenticated ack dropped");
                     return;
                 };
-                let acked = MsgId(acked);
+                if let Some(original) = st.db.store.get(&acked) {
+                    if original.packet.recipient != p.sender || original.packet.sender != p.recipient {
+                        return; // Only the original destination may acknowledge this packet.
+                    }
+                    if self.cfg.ack_signer.is_some() && p.payload[16..48] != *blake2b_simd::Params::new().hash_length(32).hash(&original.packet.payload).as_bytes() {
+                        return; // A spoofed packet with the same ID is not delivery of our payload.
+                    }
+                } else {
+                    // Without the original, a signature cannot establish its destination.
+                    return;
+                }
                 let first = st.db.acked.insert(acked, exp).is_none();
                 if st.db.store.remove(&acked).is_some() {
                     debug!(msg_id = %acked, "acked packet removed from store");
@@ -419,5 +442,56 @@ impl Node {
 fn emit(st: &State, ev: MeshEvent) {
     if let Some(tx) = &st.events {
         let _ = tx.send(ev);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::peer_for;
+    use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn forged_acks_cannot_confirm_or_delete_a_queued_message() {
+        let a = SigningKey::from_bytes(&[1; 32]);
+        let b = SigningKey::from_bytes(&[2; 32]);
+        let thief = SigningKey::from_bytes(&[3; 32]);
+        let (events, mut rx) = mpsc::unbounded_channel();
+        let node = Node::new(MeshConfig { peer_id: peer_for(&a.verifying_key()), ack_signer: Some(a), ..Default::default() }, Db::default(), events);
+        let id = node.originate(Kind::Message, peer_for(&b.verifying_key()), b"sealed".to_vec()).unwrap();
+        let mut ack = Packet { kind: Kind::Ack, ttl: 7, hops: 1, msg_id: MsgId::random(),
+            sender: peer_for(&b.verifying_key()), recipient: node.me, created_ms: now_ms(), payload: id.0.to_vec() };
+        node.on_link_msg(ack.sender, LinkMsg::Packet(ack.clone())); // Old, public-key-only forgery.
+        assert!(rx.try_recv().is_err());
+        let body = [id.0.as_slice(), blake2b_simd::Params::new().hash_length(32).hash(b"sealed").as_bytes()].concat();
+        ack.payload = body.clone();
+        ack.sign_ack(&thief);
+        node.on_link_msg(ack.sender, LinkMsg::Packet(ack.clone())); // Forged destination signature.
+        assert!(rx.try_recv().is_err());
+        let mut other = ack.clone();
+        other.msg_id = MsgId::random(); other.sender = peer_for(&thief.verifying_key());
+        other.payload = body.clone(); other.sign_ack(&thief);
+        node.on_link_msg(other.sender, LinkMsg::Packet(other)); // Valid signature, wrong recipient.
+        assert!(rx.try_recv().is_err());
+        let mut wrong_payload = ack.clone(); wrong_payload.msg_id = MsgId::random();
+        wrong_payload.payload = body.clone(); wrong_payload.payload[16] ^= 1; wrong_payload.sign_ack(&b);
+        node.on_link_msg(wrong_payload.sender, LinkMsg::Packet(wrong_payload));
+        assert!(rx.try_recv().is_err());
+        // A relay must not advertise an unknown ID as acknowledged just because someone signed it.
+        let relay_key = SigningKey::from_bytes(&[4; 32]);
+        let (events, _) = mpsc::unbounded_channel();
+        let relay = Node::new(MeshConfig { peer_id: peer_for(&relay_key.verifying_key()), ack_signer: Some(relay_key), ..Default::default() }, Db::default(), events);
+        let mut premature = ack.clone();
+        premature.sender = peer_for(&thief.verifying_key());
+        premature.payload = body.clone(); premature.sign_ack(&thief);
+        relay.on_link_msg(premature.sender, LinkMsg::Packet(premature));
+        let (link, mut wire) = mpsc::unbounded_channel();
+        relay.link_up(node.me, true, LinkKind::Tcp, link);
+        let inventory = LinkMsg::decode(&wire.try_recv().unwrap().body).unwrap();
+        assert!(matches!(inventory, LinkMsg::Inventory { acked, .. } if !acked.contains(&id)));
+        // The real destination still confirms the same queued message, through a relay.
+        ack.payload = body; ack.sign_ack(&b); ack.ttl = 3; ack.hops = 5;
+        node.on_link_msg(peer_for(&thief.verifying_key()), LinkMsg::Packet(ack));
+        assert_eq!(rx.try_recv().unwrap(), MeshEvent::Delivered { msg_id: id, by: peer_for(&b.verifying_key()) });
     }
 }

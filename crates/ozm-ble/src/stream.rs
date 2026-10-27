@@ -17,7 +17,7 @@ pub(crate) fn payload_size(att_payload: usize) -> usize {
 }
 
 pub(crate) fn same_fleet(data: Option<&[u8]>, hint: &[u8; 4]) -> bool {
-    data == Some(hint.as_slice())
+    data.is_some_and(|d| d.len() == 4 && (d == hint || d == [0; 4] || *hint == [0; 4]))
 }
 
 /// One bounded, flow-controlled chunk at a time. A completed write means local acceptance,
@@ -79,6 +79,9 @@ mod tests {
         assert_eq!(payload_size(182), 182);
         assert_eq!(payload_size(514), 512);
         assert!(same_fleet(Some(&[1, 2, 3, 4]), &[1, 2, 3, 4]));
+        assert!(same_fleet(Some(&[0; 4]), &[1, 2, 3, 4]));
+        assert!(same_fleet(Some(&[1, 2, 3, 4]), &[0; 4]));
+        assert!(!same_fleet(Some(&[0; 3]), &[0; 4]));
         for data in [
             None,
             Some(&[1, 2, 3][..]),

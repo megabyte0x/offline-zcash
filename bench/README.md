@@ -27,4 +27,26 @@ Evidence after a run is in `bench/.state/`: `results.jsonl`, `<device>.log`, `<d
 
 `bench/lan-bench.sh all` runs the tester path. Four devices `join` their invites and `start` on one internal Docker network (`ozm-lan`) with LAN discovery and no `--dial`. Only D, which is also on `ths-default`, reaches the chain. The checks cover discovery, sync and test funds over the mesh, paying, spending received funds, and rediscovery after a restart.
 
-Docker does not publish ports for containers that sit only on an internal network. Open A, B and C by container IP (`docker inspect lan-A -f '{{(index .NetworkSettings.Networks "ozm-lan").IPAddress}}'`, port 7780) or with `docker exec lan-A ozm-node status`. D's UI is on `127.0.0.1:7794`.
+Docker does not publish ports for containers that sit only on an internal network.
+Use `docker exec lan-A ozm-node status`, which bootstraps the local API token.
+The API rejects non-loopback Host headers; do not expose it as a network API.
+D's UI is on `127.0.0.1:7794`.
+
+## Open bench (v0.6.0)
+
+`bench/open-bench.sh all` creates one invited gateway and six independent devices
+with **no invites or manual dials**, on an internal Docker LAN. Only the gateway
+can reach Zakura. It checks selected gateway/sync for all six, faucet rate limiting,
+an address-payment ring (each device pays and receives, with inclusion receipts, no pending acceptance, and mined
+results), an off-mesh destination, and Max with more than two actions. RPC lookups
+independently check mining; Max must leave spendable and locked balances at zero.
+Logs, synced snapshots and payment books remain in `bench/.state-open/`.
+`down` removes only this disposable bench. No real radios are exercised.
+
+## Local API and web injection regression
+
+With a local `ozm-node` running, `node bench/ui-security-check.mjs http://127.0.0.1:7780`
+uses installed `agent-browser` to inject hostile remote fields and checks that
+names, addresses, payment states, txids, history and refusals render literally,
+without executing HTML. Rust integration tests cover missing/wrong API tokens,
+DNS-rebinding Host headers and forged sync replies; mesh tests cover forged acks.

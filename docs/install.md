@@ -16,7 +16,7 @@ You can set these options:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `OZM_VERSION` | Version to install, for example `0.2.0` | latest release |
+| `OZM_VERSION` | Version to install, for example `0.6.0` | latest release |
 | `OZM_INSTALL_DIR` | Folder for the binary | `~/.local/bin` |
 | `OZM_DRY_RUN=1` | Show what would be downloaded, then stop | off |
 
@@ -61,14 +61,48 @@ xattr -d com.apple.quarantine ~/.local/bin/ozm-node
 
 The install script does this for you.
 
-## Next: join a session
+## Next: find a gateway and pay by address
 
-Follow the session guide, [mvp-v0.2.0.md](mvp-v0.2.0.md). In short:
+With a funded Regtest gateway on your LAN, start without an invite:
 
 ```sh
-ozm-node join <invite.json>
 ozm-node start
 ```
+
+This creates persistent keys locally and syncs from a signed gateway, initially
+selected by fewest hops then highest advertised tip and pinned on first use.
+The web UI shows its identity and warns/blocks if the pinned gateway disappears. It
+marks the view **gateway-reported**. It is not an independently verified chain
+proof. Preserve `~/.ozm`, especially `secret.json`; do not regenerate a funded wallet.
+
+In a second terminal, copy the address from `ozm-node status` and share it outside
+the app. Paste the other person's address into the UI or use:
+
+```sh copy Copy Address Payment
+ozm-node fund --notes 3 --amount 0.1
+ozm-node status
+ozm-node pay --to '<recipient-regtest-unified-address>' --amount 0.01
+ozm-node max
+```
+
+Wait for funding and a spendable balance before paying. `max` quotes `amount`
+and `fee_zat` using the builder's ZIP 317 action count; the web UI's **Max** fills
+that amount. Locked notes and unmined change cannot be spent. Uneconomic inputs
+can remain after Max. Unknown mesh addresses still submit and display **no payee
+receipt**; only Regtest unified addresses with Ironwood receivers are supported.
+
+The faucet allows one request/device/60 seconds, at most ten notes and the gateway's
+configured total cap. First gateway use is trust-on-first-use, not trusted enrollment.
+Address bindings prove receiving authority and pin the mesh key; they do not prove
+spending authority. Open/unknown payers wait for gateway-reported inclusion, never
+pending acceptance. The loopback API has a per-run random token and Host check;
+the CLI obtains its token from the local UI. Keep it on `127.0.0.1`.
+[Open trust model](basecamp-install.md#open-mode-trust-and-faucet-limits).
+
+Invites still work: run `ozm-node join <invite.json>` **before** first start, then
+`ozm-node start`. Existing fleet scripts may still pass names to `pay --to`.
+For operator setup see [Basecamp](basecamp-install.md) or the older invited
+[CLI session guide](mvp-v0.2.0.md#running-a-session).
 
 ## Bluetooth on Linux
 
@@ -84,7 +118,7 @@ as root or opening the whole system bus. Sandboxed desktop launchers also need
 system-bus access. libdbus is bundled into the binary; BlueZ is not.
 
 The web UI lists neighbours as `Name (BLE)` or `Name (TCP)` and shows Bluetooth
-on/off. Same-fleet Android and Linux devices should appear within a few seconds;
+on/off. Open or same-fleet Android and Linux devices should appear within a few seconds;
 LAN links may win the mesh's duplicate-link selection. Missing/off adapters or a
 failed registration/scan produce a startup error; restart without `--ble` for LAN
 only. macOS returns an unsupported-platform error for `--ble`.

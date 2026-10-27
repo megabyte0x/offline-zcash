@@ -9,6 +9,31 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-27
+
+### Added
+- Invite-free devices generate and retain their own keys, discover open LAN/BLE peers, and sync from signed gateway announcements ranked by hops then advertised tip.
+- Signed, sealed address bindings route optional payee receipts. Unknown mesh destinations still submit by Zcash address, with an explicit no-payee-receipt state.
+- Max in Basecamp, web and Android uses the builder's padded Ironwood action count and ZIP 317 fee, excluding locked notes and uneconomic inputs.
+- Six-device no-invite Regtest benchmark covering sync, address payments, an off-mesh destination, faucet throttling and a mined Max payment.
+
+### Changed
+- Address entry replaces fleet recipient selection in every wallet UI; CLI `pay --to` accepts addresses and retains legacy fleet names.
+- Selected gateway identity, hops and tip are visible; sync and mining remain explicitly gateway-reported, not independently proved.
+- Gateway test funds are limited to one request per device per 60 seconds, at most ten notes and the configured total cap. Fresh identities can evade this development-only limit.
+- Android version is 0.6.0 (version code 8). Public catalogue and installer instructions remain authentication-free.
+
+### Security
+- Every inner envelope authenticates its sender and intended recipient; mesh acks authenticate the original destination. Unsigned legacy envelopes/acks are rejected, even from invited peers. v0.5.x nodes ignore unsupported messages without crashing, but payment endpoints must upgrade together.
+- Address bindings carry a Schnorr proof of receiving authority, reveal no viewing key, and pin the mesh key at first receipt routing. They do not prove spending authority; the experimental proof implementation is not independently reviewed.
+- Gateway selection pins the key at first use, survives restart, and warns/blocks instead of silently switching. Initial selection is still vulnerable to Sybil gateways: verify the mesh ID with the operator. Chain facts remain gateway-reported.
+- Open-mode and unknown payers cannot receive pending acceptance; payees wait for their pinned gateway's inclusion report before issuing an Included receipt.
+- Loopback HTTP requires a random per-run API token and a loopback Host header. Remote UI strings render as text, including history, refusal reasons and transaction IDs. Regression checks cover forged sync replies/acks, API access and browser script injection.
+- A payment scanned before its mesh envelope is no longer mistaken for a competing spend; different transactions spending the same note still fail.
+
+### Known limitations
+- Host-JVM Kotlin links passed at 20/182/514-byte chunks on a fresh chain, but a 20-byte-link cold sync against the accumulated chain timed out; large-history sync/recovery remains unresolved. v0.6.0 has not been tested on real Macs, Android screens or physical radios. Chain proofs and an independent review of the address proof remain outstanding.
+
 ## [0.5.1] - 2026-10-27
 
 ### Added
@@ -87,7 +112,8 @@ It is not security reviewed and does not support real funds.
 - Offline payee checks, signed pending receipts, idempotent gateway submission/mining and signed gateway-reported results.
 - Four-container benchmarks for multi-hop delivery, restart recovery and payment handling.
 
-[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.4.0...v0.4.1

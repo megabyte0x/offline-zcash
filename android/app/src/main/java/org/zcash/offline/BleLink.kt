@@ -195,7 +195,8 @@ class BleLink(context: Context, private val node: OfflineNode, private val repor
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(type: Int, result: ScanResult) { handler.post {
             if (stopped || links.values.any { it.device.address == result.device.address }) return@post
-            if (result.scanRecord?.getServiceData(ParcelUuid(SERVICE))?.contentEquals(hint) != true) return@post
+            val remote = result.scanRecord?.getServiceData(ParcelUuid(SERVICE)) ?: return@post
+            if (remote.size != 4 || !(remote.contentEquals(hint) || remote.all { it == 0.toByte() } || hint.all { it == 0.toByte() })) return@post
             // Do not evict healthy peers on every scan result when six slots are full.
             if (links.size >= 6) return@post
             val c = reserve(result.device, true)
@@ -223,7 +224,7 @@ class BleLink(context: Context, private val node: OfflineNode, private val repor
         override fun run() {
             if (stopped) return
             if (!scanning) {
-                val filter = ScanFilter.Builder().setServiceData(ParcelUuid(SERVICE), hint).build()
+                val filter = ScanFilter.Builder().setServiceData(ParcelUuid(SERVICE), ByteArray(4), ByteArray(4)).build()
                 adapter?.bluetoothLeScanner?.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
                 scanning = true
                 handler.postDelayed(this, if (foreground) 30_000 else 5_000)

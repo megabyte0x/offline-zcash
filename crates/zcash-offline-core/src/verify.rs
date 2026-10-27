@@ -73,8 +73,10 @@ pub fn check_tx(raw: &[u8], policy: &Policy) -> Result<(Transaction, CheckedTx),
     }
     let bundle = tx.ironwood_bundle().ok_or_else(|| rej(code::NOT_IRONWOOD_ONLY, "no Ironwood bundle"))?;
     let fee = i64::from(*bundle.value_balance());
-    if fee != policy.fee_zat as i64 {
-        return Err(rej(code::FEE, format!("fee {fee} is not the fleet fee {}", policy.fee_zat)));
+    let required = crate::builder::transaction_fee(bundle.actions().len(), policy)
+        .map_err(|e| rej(code::FEE, e.to_string()))?;
+    if fee != required as i64 {
+        return Err(rej(code::FEE, format!("fee {fee} is not the ZIP 317 / policy fee {required}")));
     }
     // For a shielded-only v6 transaction the shielded sighash equals the txid.
     let sighash: [u8; 32] = *tx.txid().as_ref();
@@ -131,11 +133,48 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
     if checked.expiry_height == 0 {
         return Err(rej(code::EXPIRY, "expiry 0 (never expires) is refused"));
     }
-    if let Some(nf) = checked.nullifiers.iter().find(|nf| view.chain_nullifiers.contains(*nf)) {
+    // A gateway can mine and sync this exact payment before its mesh envelope arrives.
+    let already_received = view.notes.iter().any(|note| note.txid == checked.txid);
+    if let Some(nf) = checked.nullifiers.iter().find(|nf| !already_received && view.chain_nullifiers.contains(*nf)) {
         return Err(rej(code::CONFLICT, format!("note {nf} was already spent on chain")));
     }
     if amount > policy.floor_zat {
         return Err(rej(code::OVER_FLOOR, format!("{amount} zat is above the pending floor {}", policy.floor_zat)));
     }
     Ok(Verified { tx: checked, amount, view_height: view.tip_height, anchor_height })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{builder::build_payment, wallet::{BlockData, ChunkSource, StoredNote}};
+
+    #[test]
+    fn mined_before_mesh_receipt_is_not_a_conflicting_spend() {
+        let a = DeviceSecret::generate("A", "payer");
+        let b = DeviceSecret::generate("B", "payee");
+        let policy = Policy::default();
+        let note = StoredNote {
+            position: 0, height: 1, txid: "funding".into(), value: 1_000_000,
+            recipient: hex::encode(a.address().unwrap().to_raw_address_bytes()),
+            rho: hex::encode([0; 32]), rseed: hex::encode([7; 32]), nullifier: String::new(),
+            spent_in: None, locked_by: None,
+        };
+        let cm = orchard::note::ExtractedNoteCommitment::from(note.note().unwrap().commitment());
+        let mut payer = WalletState { tip_height: 1, tip_hash: "block1".into(),
+            commitments: vec![hex::encode(cm.to_bytes())], notes: vec![note], ..Default::default() };
+        let (_, root) = payer.witness(0).unwrap();
+        payer.roots.insert(1, hex::encode(root));
+        let mut competing = payer.clone();
+        let mut payee = payer.clone();
+        payee.notes.clear();
+        let payment = build_payment(&mut payer, &a, b.address().unwrap(), 20_003, &policy).unwrap();
+        assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
+        payee.sync_from(&ChunkSource { prev: (1, "block1".into()), blocks: vec![BlockData {
+            height: 2, hash: "block2".into(), txs: vec![payment.raw.clone()],
+        }] }, &b.fvk().unwrap()).unwrap();
+        assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
+        let conflict = build_payment(&mut competing, &a, b.address().unwrap(), 20_007, &policy).unwrap();
+        assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).err().unwrap().code, code::CONFLICT);
+    }
 }

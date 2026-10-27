@@ -149,6 +149,9 @@ impl OfflineNode {
 
     /// First four bytes of the LAN fleet tag; a discovery filter, not authentication.
     pub fn fleet_hint(&self) -> Vec<u8> {
+        if self.app().is_ok_and(|a| a.cfg.me.role.split('+').any(|r| r == "gateway")) {
+            return vec![0; 4];
+        }
         Fleet::load(&self.home.join("fleet.json"))
             .map(|f| f.discovery_tag()[..4].to_vec())
             .unwrap_or_default()
@@ -164,6 +167,10 @@ impl OfflineNode {
 
     pub fn sync_now(&self) -> String {
         out(self.app().and_then(|a| self.rt.block_on(a.sync())))
+    }
+
+    pub fn max_payment(&self) -> String {
+        out(self.app().and_then(|a| a.max_payment()))
     }
 
     pub fn request_funds(&self, notes: u32, amount_zec: String) -> String {

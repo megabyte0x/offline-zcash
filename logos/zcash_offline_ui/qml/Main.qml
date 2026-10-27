@@ -28,7 +28,6 @@ Rectangle {
     readonly property string mono: "monospace"
 
     property var st: null          // status()
-    property var fleet: null       // fleet()
     property var pays: ({ payments: [], refusals: [], gateway: [] })
     property string reachError: ""
     property string lastEvent: ""
@@ -76,7 +75,6 @@ Rectangle {
             reachError = ""
             st = s
             if (!s.joined || !s.running) { refreshing = false; return }
-            if (fleet === null) call("fleet", [], function (f) { if (!f.error) fleet = f })
             call("list_payments", [], function (p) {
                 refreshing = false
                 if (p.error) return
@@ -216,7 +214,7 @@ Rectangle {
                 Card {
                     id: setup
                     visible: root.showSetup
-                    title: root.joined ? "Start node" : "Join a fleet"
+                    title: root.joined ? "Start node" : "Join the mesh"
                     Layout.fillWidth: true
                     Layout.maximumWidth: 720
                     Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -226,7 +224,7 @@ Rectangle {
                     Muted {
                         text: root.joined
                               ? "This device has joined the fleet as " + (root.st ? root.st.name + " (" + root.st.role + ")" : "") + ". Start the node to join the mesh."
-                              : "Paste the invite JSON you received from the fleet owner. It names this device, its role and the fleet policy."
+                              : "Start without an invite to create your keys locally and find a gateway. Optional: paste an organiser invite instead."
                     }
                     Label2 { visible: !root.joined; text: "Invite JSON" }
                     Rectangle {
@@ -266,8 +264,8 @@ Rectangle {
                     Muted { text: "Requires Bluetooth enabled and a BlueZ adapter with advertising support. Real-radio testing is still pending." }
                     Btn {
                         objectName: "startNodeButton"
-                        text: setup.busy ? "Working…" : (root.joined ? "Start node" : "Join and start")
-                        enabled: !setup.busy && (root.joined || invite.text.trim() !== "")
+                        text: setup.busy ? "Working…" : (root.joined ? "Start node" : invite.text.trim() === "" ? "Start without invite" : "Join and start")
+                        enabled: !setup.busy
                         onClicked: {
                             setup.busy = true
                             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
@@ -279,11 +277,10 @@ Rectangle {
                                 root.call("start", [JSON.stringify(opts)], function (r) {
                                     setup.busy = false
                                     setup.msg = r.error ? "Start failed: " + r.error : "Started"
-                                    root.fleet = null
                                     root.refresh()
                                 }, 60000)
                             }
-                            if (root.joined) { startNode(); return }
+                            if (root.joined || invite.text.trim() === "") { startNode(); return }
                             setup.msg = "Joining…"
                             root.call("join", [invite.text.trim()], function (r) {
                                 if (r.error) { setup.busy = false; setup.msg = "Join failed: " + r.error; return }
@@ -334,6 +331,12 @@ Rectangle {
                             text: root.st && root.st.wallet ? "locked in pending payments: " + root.zec(root.st.wallet.locked) + " · "
                                             + root.st.wallet.notes + " notes · synced to height " + root.st.wallet.tip : ""
                         }
+                        Muted {
+                            text: root.st && root.st.selected_gateway
+                                  ? "Gateway " + root.st.selected_gateway.name + " · " + root.st.selected_gateway.peer_id + " · " + root.st.selected_gateway.hops + " hops · tip " + root.st.selected_gateway.tip + " (gateway-reported)"
+                                  : root.st && root.st.online ? "Local chain RPC · results are gateway-reported" : "Finding a gateway · sync and results are gateway-reported"
+                        }
+                        Muted { text: root.st ? root.st.gateway_warning || "" : ""; color: root.warn }
                         Btn {
                             text: root.st && root.st.online ? "Sync now (from the node)" : "Sync now (from a gateway over the mesh)"
                             enabled: !wallet.busy
@@ -372,46 +375,30 @@ Rectangle {
                         Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 320
                         property string msg: ""
                         property bool busy: false
-                        readonly property var payees: {
-                            if (!root.fleet || !root.fleet.devices) return []
-                            var me = root.st ? root.st.name : ""
-                            return root.fleet.devices.filter(function (d) {
-                                return d.name !== me && String(d.role || "").indexOf("payee") >= 0
-                            }).map(function (d) { return d.name })
-                        }
-                        Label2 { text: "To" }
-                        ComboBox {
+                        Label2 { text: "Recipient Zcash address" }
+                        Field {
                             id: to
-                            objectName: "payeeSelect"
-                            Layout.fillWidth: true
-                            model: pay.payees
-                            font.pixelSize: 14
-                            contentItem: Text {
-                                leftPadding: 10
-                                text: to.displayText !== "" ? to.displayText : "no payees in the fleet"
-                                color: to.displayText !== "" ? root.fg : root.mut
-                                font: to.font; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
-                            }
-                            indicator: Text { x: to.width - width - 10; anchors.verticalCenter: parent.verticalCenter; text: "▾"; color: root.mut }
-                            background: Rectangle { implicitHeight: 38; radius: 8; color: root.field; border.color: root.line }
-                            delegate: ItemDelegate {
-                                required property string modelData
-                                required property int index
-                                width: to.width
-                                contentItem: Text { text: modelData; color: root.fg; font.pixelSize: 14 }
-                                background: Rectangle { color: highlighted ? root.line : root.field }
-                                highlighted: to.highlightedIndex === index
-                            }
-                            popup.background: Rectangle { color: root.field; border.color: root.line; radius: 8 }
+                            objectName: "recipientAddress"
+                            placeholderText: "uregtest…"
+                            Accessible.name: "Recipient Zcash address"
                         }
                         Label2 { text: "Amount (ZEC)" }
                         Field { id: amt; objectName: "amountInput"; text: "0.01"; inputMethodHints: Qt.ImhFormattedNumbersOnly }
                         Btn {
+                            text: "Max"
+                            enabled: !pay.busy
+                            onClicked: root.call("max_payment", [], function (r) {
+                                if (r.error) { pay.msg = r.error; return }
+                                amt.text = r.amount
+                                pay.msg = "Builder fee: " + root.zec(r.fee_zat) + ". Quote updates if your spendable notes change."
+                            })
+                        }
+                        Btn {
                             text: pay.busy ? "Proving…" : "Build, prove and send over the mesh"
-                            enabled: !pay.busy && to.currentText !== ""
+                            enabled: !pay.busy && to.text.trim() !== ""
                             onClicked: {
                                 pay.busy = true; pay.msg = "Proving…"
-                                root.call("pay", [to.currentText, amt.text.trim()], function (r) {
+                                root.call("pay", [to.text.trim(), amt.text.trim()], function (r) {
                                     pay.busy = false
                                     pay.msg = r.error ? r.error : "Sent " + String(r.txid || "").slice(0, 16) + "… (" + r.state + ")"
                                     root.refresh()
@@ -419,6 +406,7 @@ Rectangle {
                             }
                         }
                         Muted { objectName: "payResult"; text: pay.msg; visible: text !== "" }
+                        Muted { text: "Use the address shared by the recipient. Unknown mesh address: submitted, no payee receipt. Mined is gateway-reported." }
                         Item { Layout.fillHeight: true }
                     }
 
@@ -444,7 +432,7 @@ Rectangle {
                             onClicked: { addr.selectAll(); addr.copy(); addr.deselect(); copied = true; copyReset.restart() }
                             Timer { id: copyReset; interval: 1500; onTriggered: copyBtn.copied = false }
                         }
-                        Muted { text: "Payments arrive over the mesh. They are checked offline and shown as pending until a gateway reports them mined." }
+                        Muted { text: "Open or unknown payers are not accepted pending. Wait for gateway-reported inclusion; it is not independent chain verification." }
                         Item { Layout.fillHeight: true }
                     }
 
@@ -480,12 +468,13 @@ Rectangle {
                                     spacing: 8
                                     Text { text: root.hms(prow.modelData.created_ms); color: root.fg; font.pixelSize: 14; Layout.preferredWidth: 80; Layout.alignment: Qt.AlignTop }
                                     Text { text: prow.modelData.direction; color: root.fg; font.pixelSize: 14; Layout.preferredWidth: 80; Layout.alignment: Qt.AlignTop }
-                                    Text { text: prow.modelData.counterparty; color: root.fg; font.pixelSize: 14; Layout.preferredWidth: 80; Layout.alignment: Qt.AlignTop; elide: Text.ElideRight }
+                                    Text { text: prow.modelData.counterparty; textFormat: Text.PlainText; color: root.fg; font.pixelSize: 12; Layout.preferredWidth: 150; Layout.alignment: Qt.AlignTop; wrapMode: Text.WrapAnywhere }
                                     Text { text: root.zec(prow.modelData.amount); color: root.fg; font.pixelSize: 14; Layout.preferredWidth: 110; Layout.alignment: Qt.AlignTop }
                                     ColumnLayout {
                                         Layout.preferredWidth: 170; Layout.alignment: Qt.AlignTop
                                         spacing: 2
-                                        Text { text: prow.modelData.state; color: root.stateColor(prow.modelData.state); font.pixelSize: 14; font.bold: true }
+                                        Text { text: prow.modelData.state; color: root.stateColor(prow.modelData.state); font.pixelSize: 14; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        Muted { visible: prow.modelData.direction === "sent" && !prow.modelData.receipt_peer; text: "No payee receipt"; font.pixelSize: 12 }
                                         Text {
                                             text: (prow.open ? "▾ " : "▸ ") + "history"
                                             color: root.mut; font.pixelSize: 13

@@ -23,8 +23,7 @@ pub const MAX_PLAINTEXT: usize = 512 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Inner {
-    /// Sender's device name and Ed25519 key (hex). Message bodies carry their
-    /// own signatures where authenticity matters.
+    /// Sender's device name and Ed25519 key (hex), covered by `Body::Auth`.
     pub from: String,
     pub from_key: String,
     pub body: Body,
@@ -94,6 +93,25 @@ pub fn open(bytes: &[u8], my_secret: &x25519_dalek::StaticSecret) -> Result<Inne
     Ok(bincode::deserialize(&plain[4..4 + len])?)
 }
 
+/// v0.6 peers authenticate even sync/faucet requests; sealing alone does not authenticate a sender.
+pub fn authenticate(mut inner: Inner, me: &crate::DeviceSecret, recipient: &[u8; 32]) -> Result<Inner> {
+    let body = bincode::serialize(&inner.body)?;
+    let mut bytes = b"ozm1-message".to_vec();
+    bytes.extend(bincode::serialize(&(&inner.from, &inner.from_key, recipient, &body))?);
+    inner.body = Body::Auth { body, sig: hex::encode(me.sign(&bytes)?) };
+    Ok(inner)
+}
+
+pub fn authenticated_body(inner: &Inner, sender: &crate::DevicePublic, recipient: &[u8; 32]) -> Result<Body> {
+    let Body::Auth { body, sig } = &inner.body else { bail!("authenticated message required") };
+    let mut bytes = b"ozm1-message".to_vec();
+    bytes.extend(bincode::serialize(&(&inner.from, &inner.from_key, recipient, body))?);
+    crate::fleet::verify_sig(&sender.verifying_key()?, &bytes, &hex::decode(sig)?)?;
+    let body = bincode::deserialize(body)?;
+    ensure!(!matches!(body, Body::Auth { .. }), "nested authentication");
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +136,43 @@ mod tests {
         let mut tampered = sealed.clone();
         tampered[100] ^= 1;
         assert!(open(&tampered, &b.x25519_secret().unwrap()).is_err());
+    }
+
+    #[test]
+    fn authenticated_requests_bind_the_sender_body_and_recipient() {
+        let a = DeviceSecret::generate("A", "payer");
+        let b = DeviceSecret::generate("B", "gateway");
+        let c = DeviceSecret::generate("C", "gateway");
+        let recipient = b.public().unwrap().x25519().unwrap();
+        let body = Body::FundReq { notes: 3, amount_each: 17_003 };
+        let inner = Inner { from: a.name.clone(), from_key: a.public().unwrap().ed25519, body: body.clone() };
+        let mut signed = authenticate(inner, &a, &recipient).unwrap();
+        assert_eq!(authenticated_body(&signed, &a.public().unwrap(), &recipient).unwrap(), body);
+        assert!(authenticated_body(&signed, &c.public().unwrap(), &recipient).is_err());
+        assert!(authenticated_body(&signed, &a.public().unwrap(), &c.public().unwrap().x25519().unwrap()).is_err());
+        if let Body::Auth { body, .. } = &mut signed.body { body[4] ^= 1; }
+        assert!(authenticated_body(&signed, &a.public().unwrap(), &recipient).is_err());
+    }
+
+    #[test]
+    fn sync_submission_and_faucet_replies_require_a_sender_signature() {
+        let sender = DeviceSecret::generate("gateway", "gateway");
+        let receiver = DeviceSecret::generate("wallet", "payer");
+        let recipient = receiver.public().unwrap().x25519().unwrap();
+        for body in [
+            Body::SyncReq { have_height: 17, have_hash: "a".into() },
+            Body::SyncRes { reset: true, prev_hash: "b".into(), blocks: vec![], chain_tip: 29 },
+            Body::FundRes { ok: true, detail: "funded".into() },
+            Body::Sub { tx: vec![1, 9, 3], txid: "c".into(), notify: vec!["wallet".into()] },
+        ] {
+            let inner = Inner { from: sender.name.clone(), from_key: sender.public().unwrap().ed25519, body: body.clone() };
+            let sealed_forgery = seal(&inner, &recipient).unwrap();
+            let forgery = open(&sealed_forgery, &receiver.x25519_secret().unwrap()).unwrap();
+            assert!(authenticated_body(&forgery, &sender.public().unwrap(), &recipient).is_err());
+            let mut signed = authenticate(inner, &sender, &recipient).unwrap();
+            assert_eq!(authenticated_body(&signed, &sender.public().unwrap(), &recipient).unwrap(), body);
+            signed.from = "impersonated".into();
+            assert!(authenticated_body(&signed, &sender.public().unwrap(), &recipient).is_err());
+        }
     }
 }

@@ -5,12 +5,15 @@ The same device as `ozm-node`, packaged for [Logos Basecamp](https://docs.logos.
 | Module | Type | What |
 |---|---|---|
 | [`zcash_offline_module`](zcash_offline_module) | core (Rust, cdylib) | Runs the `ozm-node` device in-process: mesh with LAN discovery, wallet, payer, payee, relay and gateway roles |
-| [`zcash_offline_ui`](zcash_offline_ui) | ui_qml | Setup (paste invite), wallet, pay, receive and payments screens. It talks only to the core module, because Basecamp sandboxes UI apps |
+| [`zcash_offline_ui`](zcash_offline_ui) | ui_qml | Open start or optional invite, wallet, address payments, Max, receive and payments screens. It talks only to the core module, because Basecamp sandboxes UI apps |
 | [`zcash_offline_organiser`](zcash_offline_organiser) | ui_qml | Create a session, select/combine device roles, export invites to a folder, optionally join this device |
 | [`zcash_offline_gateway`](zcash_offline_gateway) | ui_qml | Join a gateway invite, check chain RPC, start/update gateway and Regtest mining, show funding address/balance and submissions |
 
-A Basecamp device works with plain `ozm-node` devices in the same fleet, with no
-wire changes. A three-laptop session can use only Basecamp for all device roles;
+A Basecamp device works with plain `ozm-node` devices in open or invited mode.
+New signed announcements/authentication append message kinds; v0.5.x nodes
+drop unsupported messages without crashing. Upgrade payment endpoints together:
+v0.6.0 rejects unsigned legacy envelopes and acks, including invited peers.
+A three-laptop session can use only Basecamp for all device roles;
 the operator still runs the Docker-backed `ths start` chain outside Basecamp.
 Install the service once and any combination of the three apps. They all depend
 on the **same module name**, so Basecamp loads one core process/identity, wallet
@@ -18,7 +21,13 @@ and mesh per user directory, not one per app. Closing an app leaves that shared
 dependency loaded ([Basecamp lifecycle spec](https://github.com/logos-co/logos-basecamp/blob/f2fae630737bc56ef8c4bb33ce92ae365ba8abb9/docs/spec.md#ui-app-lifecycle)).
 Installing Gateway never grants authority: its controls and the engine reject
 non-gateway invites. The existing fleet/invite format is trusted organiser setup,
-not organiser-signed enrollment; it is unchanged in v0.5.0.
+not organiser-signed enrollment. Open wallets generate keys locally; only gateway
+operators still require a gateway invite. First gateway use pins its self-signed
+key; changes are blocked and warned. Address bindings prove receiving authority
+(without revealing a viewing key) and pin the mesh key at first receipt routing.
+Open/unknown payers wait for gateway-reported inclusion, not pending acceptance.
+These are not chain proofs or spending-authority proofs.
+[Selection and trust model](../docs/basecamp-install.md#open-mode-trust-and-faucet-limits).
 
 ## Install by name
 
@@ -66,10 +75,11 @@ Every method returns a JSON string, and failures are `{"error": "..."}`. The dev
 | `check_rpc(rpc_url)` | `getblockchaininfo` result, or `error`; no role grant or startup |
 | `open_fleet_folder(folder)` | `{ok, folder, message}` after requesting the desktop folder opener; validates `fleet.json`. Runs in the core because QML's sandbox blocks local file URLs. Copy the displayed path if no file manager is available |
 | `join(invite_json)` | `{"ok":true,"message":...}` |
-| `start(options_json)` | Status. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
+| `start(options_json)` | Status. Without an installed invite, creates persistent local keys and an open wallet. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
 | `status()` | As `GET /api/status`, plus `joined`, `running` and `home`; `rpc`, `mine` and invite `role` describe gateway configuration |
 | `fleet()`, `list_payments()` | As `GET /api/fleet` and `GET /api/payments` |
-| `pay(to, amount_zec)` | The payment |
+| `pay(to, amount_zec)` | The payment; `to` is a Regtest unified address with an Ironwood receiver. Legacy fleet names remain accepted for scripts. An unknown mesh address submits without a payee receipt |
+| `max_payment()` | `{amount, amount_zat, fee_zat}` at the same ZIP 317 padded action count as the builder; excludes locked/unmined notes and uneconomic inputs |
 | `sync_now()`, `request_funds(notes, amount_zec)` | As `POST /api/sync` and `POST /api/fund` |
 | event `node_event(event, detail_json)` | Every node event (`built`, `receipt`, `result`, `synced`, `neighbor-up`, ...) |
 
@@ -95,10 +105,10 @@ Under `logosctl`, one daemon per device:
 logosctl --config-dir ./a daemon start --detach
 logosctl --config-dir ./a package install --file logos-zcash_offline_module-module-lib.lgx -y
 logosctl --config-dir ./a module load zcash_offline_module
-logosctl --config-dir ./a call zcash_offline_module join @A.invite.json
 logosctl --config-dir ./a call zcash_offline_module start 'str:{"listen":"0.0.0.0:7801"}'
 logosctl --config-dir ./a call zcash_offline_module request_funds 3 str:0.1
-logosctl --config-dir ./a call zcash_offline_module pay B str:0.05
+logosctl --config-dir ./a call zcash_offline_module pay 'str:<recipient-regtest-address>' str:0.05
+logosctl --config-dir ./a call zcash_offline_module max_payment
 logosctl --config-dir ./a watch zcash_offline_module --json
 ```
 
@@ -142,7 +152,22 @@ including a `#` in the path; opening runs through the core, not a sandboxed
 QML file URL. A second UI payment of 0.0137 ZEC mined at height 135 on both
 wallets after reinstalling those packages, with the same gateway identity.
 
-**macOS `.lgx` packages have not yet run on a real Mac.** Local Network permission
+The owner tested **v0.5.1 successfully on three real Macs**. v0.6.0 needs retesting
+on those machines. Local Network permission
 support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527));
 the fallback is **Dial address** = `<operator-ip>:7777`. Linux verification does
 not establish macOS discovery, sandbox permissions or BLE support.
+
+**v0.6.0, released Basecamp 0.3.2, Ubuntu 24.04 container under Xvfb:** all four
+packages built sequentially as both `.#lgx-portable` and `.#lgx`. The final portable
+core was loaded in all three installed user directories (matching library SHA-256);
+the two wallet directories contained only the Node app. Both started without an
+invite or dial, generated their own identities, selected/pinned Operator and synced
+the existing chain. A requested five 0.1 ZEC notes through the UI, then paid B's
+address 0.0137 ZEC. B used Max to return 0.0136 ZEC, with the builder's 0.0001 ZEC
+fee. Both wallets and independent RPC lookups showed the two transactions mined
+at heights 286 and 287. B ended with zero spendable/locked balance; A retained
+0.4998 ZEC. Gateway displayed both submissions; each user had one core process.
+Restarting B preserved its secret, gateway/address pins and mined payments.
+Screenshots and a moving-pointer Max recording were inspected. This is packaged
+Linux/TCP verification, not a macOS, Android or radio run.

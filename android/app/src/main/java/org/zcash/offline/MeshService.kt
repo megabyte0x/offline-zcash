@@ -46,7 +46,7 @@ class MeshService : Service() {
             .setContentIntent(open).setOngoing(true).build())
         worker.execute {
             node = OfflineNode(filesDir.resolve("ozm").absolutePath)
-            if (JSONObject(node.status()).optBoolean("joined")) startNode() else radioStatus = "Import your device invite to join"
+            if (JSONObject(node.status()).optBoolean("joined")) startNode() else radioStatus = "Tap Start mesh without an invite, or import an invite first"
         }
     }
 

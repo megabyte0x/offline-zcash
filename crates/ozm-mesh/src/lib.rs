@@ -42,6 +42,8 @@ impl LinkKind {
 #[derive(Clone, Debug)]
 pub struct MeshConfig {
     pub peer_id: PeerId,
+    /// Authenticate delivery acks. Production nodes set their identity key; `None` is legacy transport-only mode.
+    pub ack_signer: Option<ed25519_dalek::SigningKey>,
     /// TCP listen address, e.g. `0.0.0.0:7777`. `None` (the default) only dials.
     pub listen: Option<SocketAddr>,
     /// `host:port` neighbours to dial; DNS is resolved on every attempt and dialing never gives up.
@@ -84,6 +86,7 @@ impl Default for MeshConfig {
     fn default() -> Self {
         MeshConfig {
             peer_id: PeerId::random(),
+            ack_signer: None,
             listen: None,
             dial: Vec::new(),
             mtu: 512,
@@ -135,6 +138,9 @@ pub struct Mesh {
 
 impl Mesh {
     pub async fn start(cfg: MeshConfig) -> Result<(Mesh, mpsc::Receiver<MeshEvent>)> {
+        if let Some(key) = &cfg.ack_signer {
+            ensure!(packet::peer_for(&key.verifying_key()) == cfg.peer_id, "ack key does not match peer ID");
+        }
         ensure!((1..=u16::MAX as usize).contains(&cfg.mtu), "mtu must be 1..=65535");
         ensure!(cfg.default_ttl >= 1, "default_ttl must be at least 1");
         if let Some(d) = &cfg.discovery {

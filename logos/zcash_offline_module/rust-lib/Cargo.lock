@@ -1606,7 +1606,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "ozm-ble"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bluer",
@@ -1620,9 +1620,11 @@ dependencies = [
 
 [[package]]
 name = "ozm-mesh"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
+ "blake2b_simd",
+ "ed25519-dalek",
  "hex",
  "if-addrs",
  "rand 0.8.8",
@@ -1635,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "ozm-node"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3030,13 +3032,15 @@ dependencies = [
 
 [[package]]
 name = "zcash-offline-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bincode",
  "blake2b_simd",
  "chacha20poly1305",
  "ed25519-dalek",
+ "ff",
+ "group",
  "hex",
  "incrementalmerkletree",
  "rand 0.10.3",
@@ -3049,6 +3053,7 @@ dependencies = [
  "x25519-dalek",
  "zakura-keys",
  "zakura-orchard",
+ "zakura-pasta-curves",
  "zakura-primitives",
  "zakura-protocol",
  "zcash_note_encryption",
@@ -3080,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "zcash_offline_module"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",

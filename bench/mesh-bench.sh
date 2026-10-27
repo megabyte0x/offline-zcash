@@ -166,6 +166,12 @@ PY
 
   # ---------------- Test 3 ----------------
   log "Test 3: B stores and receipts; A leaves; B restarts; D appears later"
+  # A mining result can precede the payee's wallet scan. Both need the anchor before D leaves.
+  local tip; tip=$(rpc getblockcount '[]')
+  for n in A B; do
+    node "$n" sync >/dev/null
+    wait_until 90 "$n scanned the anchor before disconnect" bash -c "docker exec ozm-$n ozm-node status | jq -e '.wallet.tip == $tip'"
+  done
   docker stop ozm-D >/dev/null
   local tx3; tx3=$(node A pay --to B --amount "$AMOUNT" | jq -r .txid)
   if wait_until 60 "A has B's receipt" bash -c "$(declare -f node payments pay_state); pay_state A $tx3 accepted-pending"; then
@@ -229,7 +235,7 @@ timeline() {
   { for n in A R B D; do node "$n" events; done; } | jq -s --arg t "$tx" --argjson t0 "$t0" -r '
     add | map(select(.ms >= $t0)) | sort_by(.ms) |
     map(select((.detail.txid? == $t) or (.event == "mesh-recv") or (.event == "mesh-delivered"))) |
-    .[] | "  +\(.ms - $t0 | tostring | (" " * (6 - length)) + .) ms  \(.node)  \(.event)  \(.detail | del(.txid, .envelope_id, .msg_id) | tostring)"' | head -40
+    .[] | "  +\(.ms - $t0 | tostring | (" " * (6 - length)) + .) ms  \(.node)  \(.event)  \(.detail | del(.txid, .envelope_id, .msg_id) | tostring)"' | sed -n '1,40p'
 }
 
 case "${1:-all}" in

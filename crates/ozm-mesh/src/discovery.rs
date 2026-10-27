@@ -270,7 +270,8 @@ async fn recv_loop(sock: Arc<UdpSocket>, tag: [u8; 8], node: Arc<Node>) {
             }
         };
         let Some(b) = Beacon::decode(&buf[..n]) else { continue };
-        if b.tag != tag || b.peer == node.me {
+        // Zero is open discovery. Fleet tags remain filters, never authentication.
+        if (b.tag != tag && b.tag != [0; 8] && tag != [0; 8]) || b.peer == node.me {
             continue;
         }
         let addr = SocketAddr::new(from.ip(), b.port);

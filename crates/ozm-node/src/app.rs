@@ -23,7 +23,7 @@ use zcash_offline_core::{
     rpc::{Rpc, RpcError},
     verify::{self, code, Reject},
     wallet::{write_atomic, BlockData, ChunkSource, WalletState},
-    DeviceSecret, Fleet,
+    DevicePublic, DeviceSecret, Fleet,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,6 +59,9 @@ pub struct Payment {
     /// Set on debug payments deliberately tampered for tests; never sent to a gateway.
     #[serde(default)]
     pub test_tamper: Option<String>,
+    /// Absent when the destination address has no unique mesh binding.
+    #[serde(default)]
+    pub receipt_peer: Option<String>,
 }
 
 impl Payment {
@@ -96,6 +99,8 @@ pub struct Book {
     pub last_seq_in: BTreeMap<String, u64>,
     #[serde(default)]
     pub gw_seq: u64,
+    #[serde(default)]
+    pub faucet_last: BTreeMap<String, u64>,
 }
 
 pub struct Config {
@@ -120,6 +125,9 @@ pub struct App {
     pub(crate) ble: std::sync::OnceLock<ozm_ble::Ble>,
     pub x25519: x25519_dalek::StaticSecret,
     pub state: Mutex<(WalletState, Book)>,
+    pub(crate) peers: Mutex<BTreeMap<String, crate::discovery::Seen>>,
+    pub(crate) trust: Mutex<crate::discovery::TrustPins>,
+    pub(crate) reported_tip: std::sync::atomic::AtomicU32,
     /// Serializes proving so two pays never pick the same note.
     pay_lock: tokio::sync::Mutex<()>,
     /// Gateway: blocks already read from the node, by height (checked against the node's hash).
@@ -142,13 +150,26 @@ impl App {
     pub fn new(cfg: Config, mesh: Mesh) -> Result<Arc<Self>> {
         std::fs::create_dir_all(&cfg.data)?;
         let wallet = WalletState::load(&wallet_path(&cfg))?;
-        let book: Book = match std::fs::read(book_path(&cfg)) {
+        let mut book: Book = match std::fs::read(book_path(&cfg)) {
             Ok(b) => serde_json::from_slice(&b)?,
             Err(_) => Book::default(),
         };
+        for p in book.payments.values_mut().filter(|p| p.direction == "sent" && p.receipt_peer.is_none()) {
+            if cfg.fleet.by_name(&p.counterparty).is_ok() {
+                p.receipt_peer = Some(p.counterparty.clone());
+            }
+        }
         let x25519 = cfg.me.x25519_secret()?;
         let online = Mutex::new((cfg.rpc.clone(), cfg.mine));
+        let trust = match std::fs::read(cfg.data.join("trust.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(e) => return Err(e.into()),
+        };
         Ok(Arc::new(App { cfg, mesh, online, x25519, state: Mutex::new((wallet, book)),
+            peers: Default::default(),
+            trust: Mutex::new(trust),
+            reported_tip: Default::default(),
             ble: Default::default(),
             pay_lock: Default::default(),
             block_cache: Default::default(),
@@ -194,22 +215,48 @@ impl App {
     }
 
     async fn send_to(&self, name: &str, body: Body) -> Result<()> {
-        let dev = self.cfg.fleet.by_name(name)?;
+        let dev = self.device(name)?;
+        self.send_device(&dev, body).await
+    }
+
+    pub(crate) async fn send_device(&self, dev: &DevicePublic, body: Body) -> Result<()> {
         let kind = body.kind();
         let inner = Inner {
             from: self.name().to_string(),
             from_key: hex::encode(self.cfg.me.signing_key()?.verifying_key().to_bytes()),
             body,
         };
-        let sealed = envelope::seal(&inner, &dev.x25519()?)?;
+        let recipient = dev.x25519()?;
+        let inner = envelope::authenticate(inner, &self.cfg.me, &recipient)?;
+        let sealed = envelope::seal(&inner, &recipient)?;
         let peer: PeerId = dev.peer_id.parse()?;
         let msg_id = self.mesh.send(peer, sealed.clone()).await?;
-        self.event("mesh-send", json!({"kind": kind, "to": name, "bytes": sealed.len(), "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
+        self.event("mesh-send", json!({"kind": kind, "to": dev.name, "bytes": sealed.len(), "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
         Ok(())
     }
 
     fn gateways(&self) -> Vec<String> {
-        self.cfg.fleet.gateways().map(|d| d.name.clone()).filter(|n| n != self.name()).collect()
+        let dev = self.selected_gateway().map(|g| g.announcement.body.device)
+            .or_else(|| (!self.cfg.fleet.open).then(|| self.cfg.fleet.gateways().find(|d| d.name != self.name()).cloned()).flatten());
+        dev.filter(|d| self.pin_gateway(d).is_ok()).map(|d| vec![self.route_name(&d)]).unwrap_or_default()
+    }
+
+    fn require_gateway(&self, from: &str) -> Result<()> {
+        let d = self.device(from)?;
+        let allowed = if self.cfg.fleet.open {
+            self.trust.lock().unwrap().gateway.as_ref().is_some_and(|g| g.ed25519 == d.ed25519)
+        } else {
+            self.cfg.fleet.gateways().any(|g| g.peer_id == d.peer_id)
+                && self.trust.lock().unwrap().gateway.as_ref().is_some_and(|g| g.ed25519 == d.ed25519)
+        };
+        anyhow::ensure!(allowed, "{from} is not the selected/authorised gateway");
+        Ok(())
+    }
+
+    pub fn max_payment(&self) -> Result<serde_json::Value> {
+        let st = self.state.lock().unwrap();
+        let (amount, fee) = builder::max_payment(&st.0, &self.cfg.fleet.policy)?;
+        Ok(json!({"amount": zcash_offline_core::fmt_zec(amount), "amount_zat": amount, "fee_zat": fee}))
     }
 
     // ---------- online ----------
@@ -309,7 +356,7 @@ impl App {
     }
 
     async fn on_sync_res(self: &Arc<Self>, from: &str, reset: bool, prev_hash: String, blocks: Vec<BlockData>, chain_tip: u32) -> Result<()> {
-        anyhow::ensure!(self.cfg.fleet.by_name(from)?.role.contains("gateway"), "{from} is not a gateway");
+        self.require_gateway(from)?;
         let _g = self.sync_apply.lock().await;
         let mut wallet = self.state.lock().unwrap().0.clone();
         let fvk = self.cfg.me.fvk()?;
@@ -358,9 +405,18 @@ impl App {
         let url = url.ok_or_else(|| anyhow!("this gateway is not online"))?;
         anyhow::ensure!(mine, "this gateway does not mine (faucet only runs on Regtest gateways)");
         anyhow::ensure!(notes >= 1 && amount_each > 0, "nothing requested");
-        let total = notes as u64 * amount_each;
+        let total = (notes as u64).checked_mul(amount_each).ok_or_else(|| anyhow!("faucet amount overflow"))?;
         anyhow::ensure!(total <= self.cfg.faucet_max_zat, "request of {total} zat is above this gateway's faucet limit {}", self.cfg.faucet_max_zat);
-        let to_addr = self.cfg.fleet.by_name(to)?.orchard_address()?;
+        anyhow::ensure!(notes <= 10, "at most 10 test notes per request");
+        let dev = self.device(to)?;
+        let to_addr = dev.orchard_address()?;
+        {
+            let mut st = self.state.lock().unwrap();
+            let now = now_ms();
+            anyhow::ensure!(st.1.faucet_last.get(&dev.peer_id).is_none_or(|last| now.saturating_sub(*last) >= 60_000), "faucet rate limit: one request per device per 60 seconds");
+            st.1.faucet_last.insert(dev.peer_id, now);
+            self.persist(&st.0, &st.1)?;
+        }
         let _guard = self.pay_lock.lock().await;
         let mut txids = vec![];
         for _ in 0..notes {
@@ -398,8 +454,10 @@ impl App {
 
     async fn pay_inner(self: &Arc<Self>, to: &str, amount: u64, tamper: Option<String>) -> Result<Payment> {
         let _guard = self.pay_lock.lock().await;
-        let payee = self.cfg.fleet.by_name(to)?.clone();
-        anyhow::ensure!(payee.name != self.name(), "cannot pay yourself");
+        // Names remain accepted for existing fleet scripts; all UIs use the address contract.
+        let address = self.cfg.fleet.by_name(to).map(|d| d.address.clone()).unwrap_or_else(|_| to.trim().to_string());
+        let payee = self.receipt_device(&address);
+        anyhow::ensure!(address != self.cfg.me.public()?.address, "cannot pay yourself");
         let mut policy = self.cfg.fleet.policy.clone();
         let t = tamper.as_deref();
         if t == Some("expired") {
@@ -407,7 +465,7 @@ impl App {
         }
         let me = self.cfg.me.clone();
         let mut wallet = self.state.lock().unwrap().0.clone();
-        let to_addr = if t == Some("payee") { DeviceSecret::generate("X", "payee").address()? } else { payee.orchard_address()? };
+        let to_addr = if t == Some("payee") { DeviceSecret::generate("X", "payee").address()? } else { zcash_offline_core::fleet::decode_address(&address)? };
         let (wallet, mut built) = tokio::task::spawn_blocking(move || {
             builder::build_payment(&mut wallet, &me, to_addr, amount, &policy).map(|b| (wallet, b))
         })
@@ -433,7 +491,7 @@ impl App {
                     fee: built.fee,
                     expiry_height: built.expiry_height,
                     payer: self.name().to_string(),
-                    payee: payee.name.clone(),
+                    payee: payee.as_ref().map(|p| self.route_name(p)).unwrap_or_else(|| address.clone()),
                     seq: st.1.seq_out,
                     created_ms: now_ms(),
                 },
@@ -443,7 +501,7 @@ impl App {
                 txid: built.txid.clone(),
                 auth_digest: built.auth_digest.clone(),
                 direction: "sent".into(),
-                counterparty: payee.name.clone(),
+                counterparty: address.clone(),
                 amount,
                 fee: built.fee,
                 expiry_height: built.expiry_height,
@@ -458,6 +516,7 @@ impl App {
                 last_send_ms: 0,
                 attempts: 0,
                 test_tamper: tamper.clone(),
+                receipt_peer: payee.as_ref().map(|p| self.route_name(p)),
             };
             p.note(format!("built offline: {} bytes, proved in {} ms, expiry {}", built.raw.len(), built.prove_ms, built.expiry_height));
             st.1.payments.insert(p.txid.clone(), p.clone());
@@ -465,7 +524,7 @@ impl App {
             self.persist(&st.0, &st.1)?;
             p
         };
-        self.event("built", json!({"txid": payment.txid, "bytes": built.raw.len(), "prove_ms": built.prove_ms, "amount": amount, "to": payee.name}));
+        self.event("built", json!({"txid": payment.txid, "bytes": built.raw.len(), "prove_ms": built.prove_ms, "amount": amount, "to": address}));
         self.send_payment(&payment.txid).await?;
         Ok(self.payment(&payment.txid).unwrap())
     }
@@ -475,10 +534,12 @@ impl App {
         let p = self.payment(txid).ok_or_else(|| anyhow!("unknown payment"))?;
         let tx = hex::decode(&p.tx_hex)?;
         if let Some(st) = p.statement.clone().filter(|_| p.direction == "sent") {
-            self.send_to(&p.counterparty, Body::Pay { tx: tx.clone(), statement: st }).await?;
+            if let Some(to) = &p.receipt_peer {
+                self.send_to(to, Body::Pay { tx: tx.clone(), statement: st }).await?;
+            }
         }
         for g in self.gateways() {
-            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: vec![self.name().into(), p.counterparty.clone()] }).await?;
+            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: std::iter::once(self.name().into()).chain(p.receipt_peer.clone()).collect() }).await?;
         }
         Ok(())
     }
@@ -489,14 +550,19 @@ impl App {
         let tx = hex::decode(&p.tx_hex)?;
         let statement = p.statement.clone().ok_or_else(|| anyhow!("no statement"))?;
         if p.receipt.is_none() {
-            self.send_to(&p.counterparty, Body::Pay { tx: tx.clone(), statement }).await?;
+            if let Some(to) = &p.receipt_peer {
+                // A payee disappearing must not prevent submitting the already-built transaction.
+                if let Err(e) = self.send_to(to, Body::Pay { tx: tx.clone(), statement }).await {
+                    self.event("payee-unreachable", json!({"txid": txid, "error": e.to_string()}));
+                }
+            }
         }
         for g in self.gateways().into_iter().filter(|_| p.test_tamper.is_none()) {
-            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: vec![self.name().into(), p.counterparty.clone()] }).await?;
+            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: std::iter::once(self.name().into()).chain(p.receipt_peer.clone()).collect() }).await?;
         }
         self.update(txid, |p| {
             if p.state == "built" {
-                p.state = "sent".into();
+                p.state = if p.receipt_peer.is_some() { "sent" } else { "submitted, no payee receipt" }.into();
             }
             p.attempts += 1;
             p.last_send_ms = now_ms();
@@ -520,29 +586,60 @@ impl App {
 
     pub async fn handle_mesh_event(self: &Arc<Self>, ev: MeshEvent) {
         match ev {
-            MeshEvent::Message { from, payload, hops, msg_id, .. } => {
-                let inner = match envelope::open(&payload, &self.x25519) {
+            MeshEvent::Message { from, payload, hops, msg_id, broadcast } => {
+                if broadcast {
+                    let _ = self.on_key(from, &payload).await;
+                    return;
+                }
+                let mut inner = match envelope::open(&payload, &self.x25519) {
                     Ok(i) => i,
                     Err(e) => {
                         warn!("dropping message {msg_id} from {from}: {e}");
                         return;
                     }
                 };
-                // The envelope's sender must be the fleet device that owns the originating mesh ID.
-                let dev = self.cfg.fleet.by_peer(&from.to_string());
-                if dev.map(|d| (d.name.as_str(), d.ed25519.as_str())) != Some((inner.from.as_str(), inner.from_key.as_str())) {
+                let sender = DevicePublic { name: inner.from.clone(), ed25519: inner.from_key.clone(),
+                    peer_id: from.to_string(), role: String::new(), x25519: String::new(), address: String::new() };
+                if matches!(inner.body, Body::Auth { .. }) {
+                    let result = sender.verifying_key().and_then(|vk| {
+                        anyhow::ensure!(zcash_offline_core::fleet::peer_id_for(&vk) == from.to_string(), "originating mesh ID does not match signing key");
+                        envelope::authenticated_body(&inner, &sender, x25519_dalek::PublicKey::from(&self.x25519).as_bytes())
+                    });
+                    match result {
+                        Ok(Body::Presence(p)) => {
+                            if p.body.device.name == inner.from {
+                                let _ = self.on_presence(from, p, if self.mesh.neighbors().contains(&from) { 1 } else { hops });
+                            }
+                            return;
+                        }
+                        Ok(body) => inner.body = body,
+                        Err(e) => { warn!("unauthenticated message from {from}: {e}"); return; }
+                    }
+                } else {
+                    return; // Invitations do not make unsigned requests authentic.
+                }
+                let dev = self.device(&from.to_string()).ok();
+                if dev.as_ref().map(|d| (d.name.as_str(), d.ed25519.as_str())) != Some((inner.from.as_str(), inner.from_key.as_str())) {
                     warn!("dropping message {msg_id}: sender {} does not match mesh peer {from}", inner.from);
                     return;
                 }
                 self.event("mesh-recv", json!({"kind": inner.body.kind(), "from": inner.from, "hops": hops, "bytes": payload.len(), "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
-                let from_name = inner.from.clone();
+                let from_name = self.route_name(&dev.unwrap());
                 let r = match inner.body {
                     Body::Pay { tx, statement } => self.on_pay(&from_name, tx, statement).await,
                     Body::Rcpt(r) => self.on_receipt(&from_name, r),
                     Body::Sub { tx, txid, notify } => self.on_sub(&from_name, tx, txid, notify).await,
                     Body::Res(r) => {
                         let mined = matches!(r.body.status, TxStatus::Mined { .. });
+                        let txid = r.body.txid.clone();
                         let out = self.on_result(&from_name, r);
+                        if mined && out.is_ok() {
+                            if let Some(p) = self.payment(&txid).filter(|p| p.direction == "received") {
+                                if let (Some(peer), Some(receipt)) = (p.receipt_peer, p.receipt) {
+                                    let _ = self.send_to(&peer, Body::Rcpt(receipt)).await;
+                                }
+                            }
+                        }
                         // A mined payment changes balances: refresh the chain view from the gateway.
                         if mined && out.is_ok() && self.gateway_options().0.is_none() {
                             let _ = self.request_mesh_sync(false).await;
@@ -553,12 +650,14 @@ impl App {
                     Body::SyncRes { reset, prev_hash, blocks, chain_tip } => self.on_sync_res(&from_name, reset, prev_hash, blocks, chain_tip).await,
                     Body::FundReq { notes, amount_each } => self.on_fund_req(&from_name, notes, amount_each).await,
                     Body::FundRes { ok, detail } => {
+                        if self.require_gateway(&from_name).is_err() { return; }
                         self.event("funds", json!({"from": from_name, "ok": ok, "detail": detail}));
                         if ok {
                             let _ = self.request_mesh_sync(true).await;
                         }
                         Ok(())
                     }
+                    Body::Presence(_) | Body::Auth { .. } => Ok(()),
                 };
                 if let Err(e) = r {
                     warn!("handling message from {from_name}: {e:#}");
@@ -566,12 +665,12 @@ impl App {
                 }
             }
             MeshEvent::Delivered { msg_id, by } => {
-                let by_name = self.cfg.fleet.by_peer(&by.to_string()).map(|d| d.name.clone()).unwrap_or(by.to_string());
+                let by_name = self.device(&by.to_string()).map(|d| self.route_name(&d)).unwrap_or(by.to_string());
                 self.event("mesh-delivered", json!({"msg_id": msg_id.to_string(), "by": by_name}));
                 // Mark sent payments to that payee as delivered (the mesh-level ack).
                 let txids: Vec<String> = {
                     let st = self.state.lock().unwrap();
-                    st.1.payments.values().filter(|p| p.direction == "sent" && p.counterparty == by_name && p.state == "sent").map(|p| p.txid.clone()).collect()
+                    st.1.payments.values().filter(|p| p.direction == "sent" && p.receipt_peer.as_deref() == Some(&by_name) && p.state == "sent").map(|p| p.txid.clone()).collect()
                 };
                 for t in txids {
                     let _ = self.update(&t, |p| {
@@ -586,13 +685,14 @@ impl App {
     }
 
     pub fn peer_name(&self, p: PeerId) -> String {
-        self.cfg.fleet.by_peer(&p.to_string()).map(|d| d.name.clone()).unwrap_or(p.to_string())
+        self.device(&p.to_string()).map(|d| d.name).unwrap_or(p.to_string())
     }
 
     // ---------- payee ----------
 
-    async fn verify_offline(&self, tx: &[u8]) -> Result<Result<verify::Verified, Reject>> {
-        let policy = self.cfg.fleet.policy.clone();
+    async fn verify_offline(&self, tx: &[u8], pending: bool) -> Result<Result<verify::Verified, Reject>> {
+        let mut policy = self.cfg.fleet.policy.clone();
+        if !pending { policy.floor_zat = u64::MAX; }
         let me = self.cfg.me.clone();
         let wallet = self.state.lock().unwrap().0.clone();
         let raw = tx.to_vec();
@@ -610,7 +710,9 @@ impl App {
             return Ok(());
         }
         let t = std::time::Instant::now();
-        let mut checked = self.verify_offline(&tx).await?;
+        let payer = self.device(from)?;
+        let pending = !self.cfg.fleet.open && self.cfg.fleet.by_peer(&payer.peer_id).is_some();
+        let mut checked = self.verify_offline(&tx, pending).await?;
         // The payer may have synced past this payee's view. An offline payee refreshes its
         // chain view from a gateway over the mesh and checks once more before refusing.
         if self.gateway_options().0.is_none() && matches!(&checked, Err(r) if r.code == code::ANCHOR) {
@@ -623,14 +725,14 @@ impl App {
                         break;
                     }
                 }
-                checked = self.verify_offline(&tx).await?;
+                checked = self.verify_offline(&tx, pending).await?;
             }
         }
         let verify_ms = t.elapsed().as_millis();
         let result = checked.and_then(|v| {
             let st_err = |r: &str| Reject { code: code::STATEMENT, reason: r.to_string() };
-            statement.verify(&self.cfg.fleet, from).map_err(|e| st_err(&format!("statement: {e}")))?;
-            if s.payee != self.name() {
+            self.device(from).and_then(|d| statement.verify_key(&d)).map_err(|e| st_err(&format!("statement: {e}")))?;
+            if s.payee != self.name() && s.payee != self.mesh.peer_id().to_string() {
                 return Err(st_err("statement names another payee"));
             }
             if s.txid != v.tx.txid || s.auth_digest != v.tx.auth_digest {
@@ -657,7 +759,7 @@ impl App {
         });
         match result {
             Ok(v) => {
-                let receipt = Signed::sign(
+                let receipt = pending.then(|| Signed::sign(
                     Receipt {
                         txid: v.tx.txid.clone(),
                         auth_digest: v.tx.auth_digest.clone(),
@@ -668,7 +770,7 @@ impl App {
                         created_ms: now_ms(),
                     },
                     &self.cfg.me,
-                )?;
+                )).transpose()?;
                 {
                     let mut st = self.state.lock().unwrap();
                     st.1.last_seq_in.insert(from.to_string(), s.seq);
@@ -676,35 +778,37 @@ impl App {
                         txid: v.tx.txid.clone(),
                         auth_digest: v.tx.auth_digest.clone(),
                         direction: "received".into(),
-                        counterparty: from.to_string(),
+                        counterparty: payer.address,
                         amount: v.amount,
                         fee: v.tx.fee,
                         expiry_height: v.tx.expiry_height,
-                        state: "accepted-pending".into(),
+                        state: if pending { "accepted-pending" } else { "awaiting-inclusion" }.into(),
                         tx_hex: hex::encode(&tx),
                         nullifiers: v.tx.nullifiers.clone(),
                         statement: Some(statement.clone()),
-                        receipt: Some(receipt.clone()),
+                        receipt: receipt.clone(),
                         result: None,
                         history: vec![],
                         created_ms: now_ms(),
                         last_send_ms: now_ms(),
                         attempts: 1,
                         test_tamper: None,
+                        receipt_peer: Some(from.to_string()),
                     };
-                    p.note(format!("checked offline in {verify_ms} ms at view height {}; anchor height {}; pending", v.view_height, v.anchor_height));
+                    p.note(format!("checked in {verify_ms} ms at view height {}; anchor height {}; {}", v.view_height, v.anchor_height,
+                        if pending { "fleet pending acceptance" } else { "not accepted: awaiting gateway-reported inclusion" }));
                     st.1.payments.insert(p.txid.clone(), p);
                     // fsync before the receipt leaves this device.
                     self.persist(&st.0, &st.1)?;
                 }
-                self.event("accepted", json!({"txid": v.tx.txid, "amount": v.amount, "from": from, "verify_ms": verify_ms}));
-                self.send_to(from, Body::Rcpt(receipt)).await?;
+                self.event(if pending { "accepted" } else { "awaiting-inclusion" }, json!({"txid": v.tx.txid, "amount": v.amount, "from": from, "verify_ms": verify_ms}));
+                if let Some(receipt) = receipt { self.send_to(from, Body::Rcpt(receipt)).await?; }
                 for g in self.gateways() {
                     self.send_to(&g, Body::Sub { tx: tx.clone(), txid: v.tx.txid.clone(), notify: vec![from.to_string(), self.name().into()] }).await?;
                 }
                 self.update(&v.tx.txid, |p| {
-                    p.state = "submitted".into();
-                    p.note("receipt sent; forwarded to gateway");
+                    if pending && !p.is_final() { p.state = "submitted".into(); }
+                    p.note("forwarded to gateway");
                 })?;
             }
             Err(reject) => {
@@ -735,14 +839,18 @@ impl App {
     // ---------- payer: receipts ----------
 
     fn on_receipt(&self, from: &str, r: Signed<Receipt>) -> Result<()> {
-        r.verify(&self.cfg.fleet, from)?;
+        r.verify_key(&self.device(from)?)?;
         let txid = r.body.txid.clone();
         let Some(p) = self.payment(&txid) else { bail!("receipt for unknown payment {txid}") };
-        if p.counterparty != from {
+        if p.receipt_peer.as_deref() != Some(from) {
             bail!("receipt from {from}, but {txid} was paid to {}", p.counterparty);
         }
         let state = match &r.body.state {
-            ReceiptState::Pending => "accepted-pending".to_string(),
+            ReceiptState::Pending => {
+                anyhow::ensure!(!self.cfg.fleet.open && self.cfg.fleet.by_peer(&self.device(from)?.peer_id).is_some(), "no pending acceptance outside the invited fleet");
+                "accepted-pending".to_string()
+            }
+            ReceiptState::Included => "included (gateway-reported)".into(),
             ReceiptState::Refused(rej) => format!("refused: {rej}"),
         };
         self.event("receipt", json!({"txid": txid, "from": from, "state": state}));
@@ -750,6 +858,7 @@ impl App {
             if !p.is_final() {
                 p.state = match r.body.state {
                     ReceiptState::Pending => "accepted-pending".into(),
+                    ReceiptState::Included => "included".into(),
                     ReceiptState::Refused(_) => "refused".into(),
                 };
             }
@@ -765,14 +874,12 @@ impl App {
         let url = url.ok_or_else(|| anyhow!("sub received but this device has no --rpc (not a gateway)"))?;
         let policy = self.cfg.fleet.policy.clone();
         let raw = tx.clone();
+        let expected_txid = txid.clone();
         let t = std::time::Instant::now();
         let status = tokio::task::spawn_blocking(move || -> Result<(TxStatus, u32)> {
-            let checked = verify::check_tx(&raw, &policy);
+            let (_, checked) = verify::check_tx(&raw, &policy)?;
+            anyhow::ensure!(checked.txid == expected_txid, "submission txid does not match transaction");
             let rpc = Rpc::new(&url);
-            let checked = match checked {
-                Ok((_, c)) => c,
-                Err(rej) => return Ok((TxStatus::Rejected { reason: rej.to_string() }, rpc.tip().unwrap_or(0))),
-            };
             submit_and_mine(&rpc, &raw, &checked.txid, mine)
         })
         .await??;
@@ -801,7 +908,9 @@ impl App {
         };
         self.event("gateway-result", json!({"txid": txid, "from": from, "status": status.0, "tip": status.1, "ms": elapsed}));
         for n in to {
-            self.send_to(&n, Body::Res(res.clone())).await?;
+            if let Err(e) = self.send_to(&n, Body::Res(res.clone())).await {
+                self.event("result-undelivered", json!({"txid": txid, "to": n, "error": e.to_string()}));
+            }
         }
         Ok(())
     }
@@ -809,10 +918,15 @@ impl App {
     // ---------- payer and payee: results ----------
 
     fn on_result(&self, from: &str, r: Signed<GatewayResult>) -> Result<()> {
-        r.verify(&self.cfg.fleet, from)?;
-        anyhow::ensure!(self.cfg.fleet.by_name(from)?.role.contains("gateway"), "{from} is not a gateway");
+        r.verify_key(&self.device(from)?)?;
+        self.require_gateway(from)?;
         let txid = r.body.txid.clone();
-        anyhow::ensure!(self.payment(&txid).is_some(), "result for unknown payment {txid}");
+        let p = self.payment(&txid).ok_or_else(|| anyhow!("result for unknown payment {txid}"))?;
+        let included = if p.direction == "received" && matches!(r.body.status, TxStatus::Mined { .. }) {
+            Some(Signed::sign(Receipt { txid: txid.clone(), auth_digest: p.auth_digest,
+                payee: self.name().into(), amount: p.amount, state: ReceiptState::Included,
+                view_height: r.body.tip_height, created_ms: now_ms() }, &self.cfg.me)?)
+        } else { None };
         let (state, text) = match &r.body.status {
             TxStatus::Mined { height, block_hash } => ("mined", format!("mined at height {height} in block {block_hash} (gateway-reported by {from})")),
             TxStatus::Mempool => ("in-mempool", format!("in {from}'s mempool")),
@@ -824,6 +938,7 @@ impl App {
                 p.state = state.into();
             }
             p.note(text);
+            if included.is_some() { p.receipt = included; }
             p.result = Some(r);
         })
     }
@@ -852,7 +967,7 @@ impl App {
                 let tx = hex::decode(&p.tx_hex).unwrap_or_default();
                 let mut r = Ok(());
                 for g in self.gateways() {
-                    r = r.and(self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: vec![p.counterparty.clone(), self.name().into()] }).await);
+                    r = r.and(self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: vec![p.receipt_peer.clone().unwrap_or(p.counterparty.clone()), self.name().into()] }).await);
                 }
                 let _ = self.update(&p.txid, |p| {
                     p.attempts += 1;
@@ -880,6 +995,10 @@ impl App {
             "peer_id": self.mesh.peer_id().to_string(),
             "address": me.map(|d| d.address.clone()),
             "online": rpc.is_some(),
+            "open_network": self.cfg.fleet.open,
+            "selected_gateway": self.gateway_status(),
+            "gateway_warning": self.gateway_warning(),
+            "trust": "gateway-reported",
             "rpc": rpc,
             "mine": mine,
             "ble": self.ble.get().is_some(),

@@ -18,7 +18,8 @@ The existing invite/fleet format is trusted setup from the organiser, **not an
 organiser-signed enrollment format**. Do not edit or accept invites from strangers.
 Each invite contains private test keys: give it only to its named owner.
 
-**macOS packages have not yet run on a real Mac.** Local Network permission
+The owner ran v0.5.1 successfully on three real Macs using this guide. That does
+not verify v0.6.0 or Bluetooth on macOS. Local Network permission
 support is pending upstream in
 [logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527).
 If discovery fails, use **Dial address** = `<operator-ip>:7777`. All three Macs
@@ -68,7 +69,7 @@ logosctl call zcash_offline_module status
 
 `logosctl` installs into its own session, **not Basecamp's data directory**.
 Use Basecamp's Package Repositories screen for Basecamp installs. The catalogue
-selects the newest release; add `--version 0.5.1` to pin a CLI install.
+selects the newest release; add `--version 0.6.0` to pin a CLI install.
 Its identity card points to `releases/latest/download/index.json`; every release
 also attaches its own index, merged packages and `catalogue.sha256`. Content
 roots bind the index to the downloaded packages, but do not authenticate the
@@ -76,11 +77,11 @@ publisher. Packages are unsigned (`trustedSigners` is empty).
 
 ### Manual LGX fallback
 
-From [Offline Zcash v0.5.1](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.5.1),
+From [Offline Zcash v0.6.0](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.6.0),
 download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`
-(or the merged `<name>-0.5.1.lgx` files, which contain all three):
+(or the merged `<name>-0.6.0.lgx` files, which contain all three):
 
-1. `zcash_offline_module-0.5.1-<platform>.lgx` — **Offline Zcash service**, always needed.
+1. `zcash_offline_module-0.6.0-<platform>.lgx` — **Offline Zcash service**, always needed.
 2. The apps from the table above: `zcash_offline_ui`,
    `zcash_offline_organiser`, `zcash_offline_gateway`, with the same version/platform suffix.
 
@@ -125,17 +126,17 @@ Keep it running. You do not run an `ozm-node` organiser or gateway process.
 ### 2. Operator: create the fleet in Organiser
 
 1. Open **Offline Zcash Organiser**.
-2. Enter a session name and the devices. Defaults are `Operator` (`gateway`),
-   `Alice` and `Bob` (both `payer` + `payee`). Check extra roles if needed.
+2. Enter a session name and at least `Operator` (`gateway`). The default Alice
+   and Bob entries can remain for optional invited devices; open devices do not need them.
 3. Choose a new session folder, or keep the suggested one. Existing fleet/key
    files are never overwritten.
 4. Set **Join this device as** to `Operator` (leave it empty to export only).
 5. Click **Create fleet and invites**. It writes `fleet.json` and each device's
    `.invite.json` and `.secret.json`, shows the folder and invite paths, and joins
    the operator without starting a second engine.
-6. **Open session folder**, then AirDrop `Alice.invite.json` to Alice and
-   `Bob.invite.json` to Bob. If the desktop cannot open the folder automatically,
-   copy its displayed path into Finder → Go → Go to Folder. Keep all other files private.
+6. Keep the exported keys private. Only distribute named invites if you want
+   invited devices instead of the open join below. **Open session folder** opens
+   the export; if no file manager opens, paste its path into Finder → Go → Go to Folder.
 
 An organiser can export later sessions without replacing its installed identity.
 One Basecamp user directory holds one device; replacing it requires a separate
@@ -160,13 +161,20 @@ Installing Gateway with an Alice/Bob invite shows **This invite does not grant
 the gateway role** and disables Start. Neither installing the app nor setting an
 RPC URL changes the invite's role.
 
-### 4. Alice and Bob: join in Offline Zcash
+### 4. Alice and Bob: start without invites in Offline Zcash
 
-1. Open the invite in a text editor; copy its entire JSON into **Join a fleet**.
+1. Leave **Invite JSON** empty. Each device generates and stores its own private
+   keys and Regtest unified address; the organiser never receives those keys.
 2. Leave listen/dial empty for normal LAN discovery. If it fails, set **Dial
    address** to `<operator-ip>:7777` (for example `192.168.1.20:7777`).
-3. Leave experimental Bluetooth off. Click **Join and start**.
-4. Wait for mesh neighbours and a synced wallet. Click **Sync now** if needed.
+3. Leave experimental Bluetooth off. Click **Start without invite**.
+4. Wait for the selected gateway and synced wallet. Wallet shows its name, mesh
+   ID, hop count and advertised tip. Click **Sync now** if needed.
+
+Optional: before first start, paste your own organiser invite and click **Join
+and start** instead. Invited devices retain their configured gateway authority;
+an open device accepts a self-signed gateway on the reachable mesh. One installed
+identity cannot be replaced by another invite: preserve the wallet and keys.
 
 Do not install organiser/gateway apps on these two Macs unless they need those
 controls. Gateway authority still requires a gateway invite.
@@ -174,15 +182,73 @@ controls. Gateway authority still requires a gateway invite.
 ### 5. Alice: get test coins and pay Bob
 
 1. Click **Get test funds (5 × 0.1 ZEC)**; wait for a 0.5 ZEC balance.
-2. Under **Pay offline**, choose Bob, enter `0.01`, and click
+2. Bob copies **Your address** and shares it with Alice outside the app. Under
+   **Pay offline**, Alice pastes Bob's Regtest unified address, enters `0.01`, and clicks
    **Build, prove and send over the mesh**.
-3. Both devices show the payment: `sent` → `accepted-pending` → `mined`.
+3. Open devices wait for gateway-reported inclusion: `sent` → `awaiting-inclusion` → `mined`.
+   Pending acceptance remains available only between devices in the same invited fleet.
    Fast LAN payments may jump straight to `mined`; expand **history** for each step.
 4. The operator's Gateway app shows the txid, submission count and mined result.
 
 Bob can spend the received coins after `mined` and a balance refresh. `mined`
 means **gateway-reported**, not an independently verified chain proof. The wider
 chain-proof protocol remains unbuilt.
+
+**Max** fills the largest sendable amount using the same padded Ironwood action
+count and ZIP 317 fee rule as the builder (and the configured fee floor). It
+excludes locked notes and unmined change. Uneconomic dust stays behind if adding
+it would reduce the sendable amount. The quote can change after another payment
+or sync; Max does not send anything itself.
+
+Any valid Regtest unified address with an Ironwood receiver works, including an
+address not on the mesh. Such a payment goes to the gateway and displays
+**submitted, no payee receipt**, then **mined · no payee receipt**. No device
+directory or recipient list is needed. Other networks and transparent-only
+addresses are rejected rather than silently using another receiver.
+
+### Open-mode trust and faucet limits
+
+All inner envelopes (including sync, faucet and submission requests/replies) are
+signed by their sender and bound to the intended recipient. Mesh delivery acks
+are signed by the original destination. Sealing alone is not authentication.
+Gateway announcements and address bindings are individually sealed; only mesh
+IDs and public routing keys are broadcast. A fresh announcement lasts 35 seconds.
+Before first use, devices choose fewest hops, then highest advertised tip, then
+mesh ID. **First use pins the gateway's key** in `data/trust.json`, across restarts.
+A nearer/newer gateway cannot silently replace it. An unavailable pin produces a
+warning and blocks automatic switching. To deliberately change operators, stop
+the device, verify the new operator's mesh ID outside the app, remove only
+`data/trust.json`, and restart. Never delete `secret.json` or wallet data.
+
+**First contact is still trust-on-first-use, not operator authentication.** A Sybil
+gateway can win the initial choice. Hop counts/tips are not independently proved;
+**sync, inclusion and mined results are gateway-reported**. Use a trusted local
+operator and test coins only. Gateway signatures do not prove chain facts.
+
+Address bindings include a domain-separated Schnorr proof of knowledge of the
+Ironwood receiver's incoming-viewing scalar, bound to the exact address and mesh
+identity. No viewing/spending key is shared. This proves **receiving authority,
+not spending authority**; a holder of a copied incoming viewing key can also prove
+it. First receipt routing pins address → mesh key; changed/ambiguous bindings
+disable receipt routing, never redirect funds. The typed address always determines
+the transaction's destination. This experimental proof implementation has not
+had an independent cryptographic review.
+
+Open-mode and unknown payers **never receive pending acceptance**. A payee waits
+for its pinned gateway to report inclusion before issuing an `Included` receipt.
+That receipt is not an independently verified inclusion or finality proof.
+
+The loopback web API requires a per-run random token and a loopback Host header;
+the UI and CLI obtain the token from the local page. Remote strings are rendered
+as text. Keep the API bound to `127.0.0.1`; `--api 0.0.0.0` is for isolated tests,
+not a secure network API. There is no protection from programs running as your user.
+
+The Regtest faucet allows one request per device per 60 seconds (persisted over
+gateway restarts), at most 10 notes and the configured total cap (default 1 ZEC).
+New identities can evade the limit: it is not Sybil protection. Keep the gateway
+wallet funded. v0.5.x nodes ignore unsupported new messages without crashing;
+upgrade all payment/sync endpoints to v0.6.0: unsigned legacy envelopes/acks are
+no longer accepted. Invite creation and joining remain supported in v0.6.0.
 
 ## Problems
 
@@ -192,10 +258,10 @@ chain-proof protocol remains unbuilt.
 | Package refused | Match platform/version and use portable, not `-dev`, with released Basecamp |
 | Missing app icon / module not reachable | Manage Packages must list the service plus the chosen app; reopen the app |
 | RPC check fails | Keep `ths start` running on the gateway machine; check the RPC URL |
-| No mesh neighbours | Same fleet, same Wi-Fi, no guest-network isolation; allow TCP 7777 and UDP 7778; dial `<operator-ip>:7777` |
+| No mesh neighbours | Same Wi-Fi, no guest-network isolation; allow TCP 7777 and UDP 7778; dial `<operator-ip>:7777` |
 | macOS discovery fails | Local Network support is pending upstream (#527); use the dial fallback above, without assuming a permission prompt exists |
 | Wallet has never synced | Wait for the gateway, then Sync now; check Gateway's RPC result |
-| Test funds fail | Enable mining on the local Regtest gateway and fund its displayed address |
+| Test funds fail | Enable Regtest mining, fund the gateway address, and wait 60 seconds between requests from one device |
 | Payment refused | Read its history; pending is not final and testnet/mainnet are not supported here |
 | Multiple Basecamp instances on one Linux host | Use separate user directories and unique mesh listen ports; ordinary laptops all use 7777 |
 
