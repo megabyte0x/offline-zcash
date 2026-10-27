@@ -121,6 +121,31 @@ The design is written for the right-hand column. The left-hand column says only 
 
 ## Trust assumptions at v0.7.0
 
+**v0.7.0 implementation update:** compact sync and new-tip/control messages use
+512 B / 4 KiB / 16 KiB padding buckets; `pay`, `sub` and `rcpt` retain their old
+padding. **Sync and payment traffic are distinguishable by size.** Their timing
+already distinguished them; no cover traffic or recipient hiding is claimed.
+Mesh sync follows signed height/hash tips coalesced for 15 minutes or 200 blocks,
+with a 15-minute fallback backing off to an hour when unchanged, rather than
+polling blindly every 30 seconds. Normal requests omit checkpoint history; only
+a predecessor mismatch exchanges the retained hashes. Payment results still
+push immediately. Full signed presence is hourly on stable links (three-hour
+expiry), and immediate on link-up; gateway role/change or loss may take up to an
+hour to be noticed on a stable link. The dated replay measured 1,144,132 compact
+payload bytes, 2,118,573 framed sync bytes and **2,404,889 total BLE-link framed
+bytes / 2,520,079 TCP** per 86,390 seconds, including hourly presence, key exchanges,
+acks and keepalives. Reconnects/reorgs/retransmits and radio/IP headers are excluded
+([measurement boundaries](components/mesh.md#v070-compact-sync)).
+
+Chain state remains explicitly trusted TLS-lightwalletd/gateway reporting, not
+PoW/MMR/inclusion proof verification. Reachable configured servers are compared
+for common-height hashes, frontier, compact content and transaction inclusion;
+disagreements withhold the affected answer. Unreachable/lagging sources reduce
+the source count and display a single-source warning. Zaino returned 503 on
+27 October; a single source is accepted for this testnet release. Tasks 7–9 are
+still mainnet gates. Refusal is not cancellation, and expiry unlock uses the
+locally scanned tip (itself gateway-reported), not a standalone status message.
+
 **v0.6.0 implementation update:** the review below is preserved at its stated
 v0.5.1 source revision. v0.6.0 signs every inner envelope and mesh ack (R1/R4/S1),
 adds loopback API tokens/Host checks and text-only web rendering (S5/OS4), proves
@@ -160,8 +185,8 @@ Status: **Enforced** (in code, holds at v0.7.0), **Partial**, **Not** (no contro
 | A4 | The statement matches the transaction | S | Amount, payee or txid mismatch | — | `node/app.rs:630-644` | **Enforced** | — |
 | A5 | The payer's device protects its spending key | S | Theft from `secret.json`, the organiser's copy (F6) or the invite in transit | Medium / High | 0600 `node/lib.rs:185-193`; Android backup off | **Partial** | Keystore/Keychain and on-device keys before mainnet |
 | A6 | Synced notes and balance are true | S | Lying gateway or lightwalletd shows fake notes or hides real ones | Medium / Medium | None (F2) | **Not** | As B1 |
-| A7 | A refusal means the payment won't settle | S | Payee refuses but A already submitted (F5); A pays again, pays twice | Medium / Medium | Locks persist after refusal | **Not** | Show "refused, may still mine until expiry"; or submit after receipt |
-| A8 | Withheld transactions release their notes | S | Gateway or lightwalletd swallows the tx; notes locked for good (F9), fleet expiry ~21 days | Medium / Medium | Retries `node/app.rs:836-868` | **Not** | Unlock after verified expiry |
+| A7 | A refusal means the payment won't settle | S | Payee refuses but A already submitted; A pays again, pays twice | Medium / Medium | Locks persist; UI says "refused, may still mine until expiry"; results can supersede refusal | **Partial** (warning enforced; refusal still cannot cancel) | Never treat a refusal as cancellation |
+| A8 | Withheld transactions release their notes | S | Gateway or lightwalletd swallows the tx; a lying view can still stall or falsify expiry | Medium / Medium | Durable reservations release only at locally scanned tip > inclusive expiry, after rollback-aware scanning | **Partial** (expiry unlock enforced; chain view trusted) | Tasks 7–9 before claiming verified expiry |
 | A9 | Paying B doesn't reveal that A paid B | P | Packet header shows sender and recipient; the 12 KiB bucket marks `pay` (`mesh/packet.rs:41-70`, `core/envelope.rs:20, 50`) | High / Medium | Sealed payload | **Not** | Fixed size, recipient hiding, cover traffic before mainnet |
 | A10 | Max doesn't leak the payer's state | P | Max spends ≤2 notes minus fee (`core/builder.rs:48-71`), so B learns note inventory | Low / Low | — | **Planned** | Accept or warn |
 
@@ -199,7 +224,7 @@ Status: **Enforced** (in code, holds at v0.7.0), **Partial**, **Not** (no contro
 | G4 | The gateway is legitimate | S+P | v0.5.1: organiser-granted role (`node/lib.rs:222-224`, `node/app.rs:813`). v0.6: self-signed announcement, nearest wins: Sybil or eclipse. **Regression** | High / High (inferred) | Fleet role | **Planned** | Fleet-signed gateway certificates; open mode needs two agreeing gateways |
 | G5 | The gateway doesn't learn payer and payee | P | Learns both (F4) | High / Medium | — | **Not** | Nonce-addressed acks |
 | G6 | The gateway isn't a first spy and doesn't learn interest | P | Sees every tx first and each device's sync height (`node/app.rs:263-268`); v0.7 adds birthdays | High / Medium | — | **Not** (Tor, task 10, unbuilt) | Accept on testnet; Tor before mainnet |
-| G7 | The honest path is correct | S | The "already" match can show a conflicted tx as `in-mempool` forever (F3, inferred) | Medium / Medium | — | **Not** | Exact error codes. v0.7 |
+| G7 | The honest path is correct | S | Unknown node wording must not become success | Medium / Medium | Exact code/message pairs; structured nullifier conflict; queued-download/full/behind-tip are retryable, not accepted | **Enforced** (v0.7 classifier; unknown wording rejects) | Update tested mappings deliberately if server versions change |
 | G8 | The gateway holds no wallet | P | At v0.7 any internet device is a gateway and a wallet; lightwalletd first-spies its own txs with its IP | High / Medium (inferred) | — | **Not** | Separate gateway identity, or Tor |
 | G9 | The gateway can't be flooded | S | Unlimited `Sub` proof checks `node/app.rs:763-807` | Medium / Low | — | **Designed only** | Quotas |
 
@@ -209,10 +234,10 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
 |---|---|---|---|---|---|---|---|
-| L1 | It returns the true chain | S | Fabricates compact actions, tree state, nullifiers and confirmations for the whole fleet; compact blocks carry no header and GetTreeState only a frontier, so no PoW check. **Regression** from an own node | Low–Medium / High | — | **Not** | A second independent server compared on every answer; own node plus tasks 7–8 before mainnet |
+| L1 | It returns the true chain | S | Fabricates compact actions, tree state, nullifiers and confirmations; compact headers are empty | Low–Medium / High | Compare reachable configured servers' hashes, compact ranges, frontiers and transaction answers; withhold disagreement | **Partial** (comparison implemented; only primary reachable in public check) | Tasks 7–9 before mainnet; agreement is not proof |
 | L2 | It forwards `SendTransaction` | S | Censors while replying OK | Low–Medium / Medium | — | **Not** | Send to two or more servers; confirm via another source |
 | L3 | It doesn't deanonymize the fleet | P | Sees the gateway IP, every fleet tx with timing, birthdays, sync ranges, txid queries (inferred) | High / Medium | TLS on the path | **Not** | Tor per tx; status from blocks, not per-txid queries |
-| L4 | It is available | S | Single point of failure; the backup returns 503 | Medium / High | — | **Not** | Multiple endpoints |
+| L4 | It is available | S | All configured servers can fail; Zaino backup returns 503 | Medium / High | Configurable TLS list and connection failover; UI reports one source | **Partial** (fallback implemented; second public endpoint unavailable) | Add independent reachable endpoints when available |
 | L5 | TLS authenticates the server | S | Mis-issued certificate or DNS hijack | Low / High | WebPKI (planned) | **Planned** | SPKI pinning |
 
 ### 6. Zcash network, miners and testnet
@@ -221,8 +246,8 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 |---|---|---|---|---|---|---|---|
 | Z1 | Consensus mines at most one conflicting spend | S | — | — | Duplicate nullifiers rejected by nodes | **Enforced** (network) | — |
 | Z2 | 10 confirmations mean final | S | Testnet minimum-difficulty blocks after 450 s gaps make cheap reorgs feasible | Medium / Low (test coins) | — | **Not** | Testnet is a functional test only |
-| Z3 | Common 4.0 output is valid on public testnet | S | All payments rejected | Medium / Medium | Accepted on Regtest only | **Planned** | Mined testnet smoke test before tagging v0.7.0 |
-| Z4 | The fleet fee fits every transaction shape | S | Split txs with more than 2 actions need more than 10,000 zat (ZIP 317), but the gateway requires exactly the fleet fee (`core/verify.rs:75-78`) | High / Medium (inferred) | — | **Not** | Fee policy per action count |
+| Z3 | Common 4.0 output is valid on public testnet | S | All payments rejected | Medium / Medium | Regtest acceptance; public compact scan/format checks only | **Unverified** (funding blocked; release exception approved) | Funded split/payment smoke test remains open; exact faucet errors in offline-builder.md |
+| Z4 | The fleet fee fits every transaction shape | S | Large splits need more than 10,000 zat | High / Medium | Builder and verifier use max(fleet floor, ZIP 317 padded-action fee); optional change included | **Enforced** (v0.7) | Keep 10,000 zat for two actions, not all shapes |
 | Z5 | On-chain privacy | P | Fingerprints: 72,576-block expiry (`core/fleet.rs:37`), anchor age, 2-action shape, split outputs | High / Medium | Accepted (P4) | **Partial** | Accept on testnet |
 | Z6 | Testnet stays live through the expiry window | S | A reset or upgrade kills unmined txs | Low / Medium | — | **Not** | — |
 
@@ -252,7 +277,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.0 | Fix and when |
 |---|---|---|---|---|---|---|---|
 | FA1 | The public faucet doesn't link requesters | P | Learns requester IP and address | High / Low | — | **Not** | Request via the gateway or Tor, fresh address |
-| FA2 | The faucet pays Ironwood addresses on NU7 testnet | S | No funds reach devices | Medium / Medium | Untested | **Planned** | Test before v0.7.0 |
+| FA2 | The faucet pays Ironwood addresses on NU7 testnet | S | No funds reach devices | Medium / Medium | Valar queued then failed `the wallet cannot pay this address`; zecpages timed out | **Unverified** (funded run deferred by owner) | Preserve test wallet; complete funded split/payment when TAZ arrives |
 | FA3 | The gateway faucet can't be drained | S | Per-request cap only (`node/app.rs:362`) | — | Off unless `mine` (`node/app.rs:359`), so off on testnet | **Enforced** (off) | — |
 
 ### 10. Software distribution

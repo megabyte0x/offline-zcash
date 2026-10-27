@@ -32,6 +32,11 @@ pub enum Body {
     /// Appended variants preserve all v0.5.x discriminants. Older nodes drop unknown variants.
     Presence(Signed<Presence>),
     Auth { body: Vec<u8>, sig: String },
+    CompactReq { have_height: u32, have_hash: String, checkpoints: Vec<(u32, String)>, birthday: u32 },
+    CompactPart(crate::sync::Part),
+    Tip { height: u32, hash: String },
+    /// Request the retained fork history only after a predecessor mismatch.
+    CheckpointReq { have_height: u32, have_hash: String },
 }
 
 impl Body {
@@ -47,6 +52,10 @@ impl Body {
             Body::FundRes { .. } => "fundr",
             Body::Presence(_) => "presence",
             Body::Auth { .. } => "auth",
+            Body::CompactReq { .. } => "syncq",
+            Body::CompactPart(_) => "syncr",
+            Body::Tip { .. } => "tip",
+            Body::CheckpointReq { .. } => "syncq",
         }
     }
 }
@@ -106,6 +115,11 @@ pub enum TxStatus {
     Mined { height: u32, block_hash: String },
     Mempool,
     Rejected { reason: String },
+    Included { height: u32, block_hash: String },
+    Submitted,
+    Retryable { reason: String },
+    Expired,
+    Conflict { reason: String },
 }
 
 /// The gateway's signed report ("gateway-reported": not checked against the chain by A or B).

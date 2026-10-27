@@ -1,26 +1,74 @@
 # Offline builder
 
 The payer's builder creates, proves and signs a v6 Ironwood-only transaction with no network. It takes the fleet expiry, fee and branch ID from configuration and outputs the raw bytes.
-It is Rust on Zakura Common `=2.2.0` (the stack `ths` v0.4.1 uses) behind our own mobile wrapper (Swift for iOS or Kotlin/JNI for Android; the first phone platform is not decided). The app and wrapper are not built. Scratch research compiled the direct builder and mined ordinary-signature transactions; FROST PCZT variants validated on a synthetic tree, not mined ([expiry-reissue.md](expiry-reissue.md)). The wallet-DB path remains unverified.
+The application uses Zakura Common `=4.0.0`, with UniFFI/Kotlin Android bindings and one shared Logos Basecamp engine. `ths` v0.4.1 still uses Common 2.2.0; compatible NU7 transaction bytes cross that process boundary, not Rust types. iOS and the upstream wallet-DB path remain unbuilt. Historical scratch research below uses its stated older versions.
 Chain and protocol constants are in [chain.md](chain.md). Checking the result on the payee side is in [payee-verifier.md](payee-verifier.md).
+
+## v0.7.0 testnet note plan
+
+Choose fleet `network: "testnet"` and a birthday at or after NU7 height 4,465,026,
+before any funding. A fresh wallet seeds its Ironwood ShardTree from
+`GetTreeState(birthday - 1)`; compact sync discovers notes locally. No viewing key
+goes to the gateway. The wallet persists a pruned tree and 200 checkpoints/roots;
+reorgs rewind notes, spends and witnesses to a retained checkpoint. A deeper reorg
+stops with a resync error rather than silently trusting a replacement history.
+
+Obtain TAZ at [Valar](https://faucet.testnet.valargroup.dev), advertised as 0.125 TAZ
+per address per 24 hours with Ironwood `utest1` support. **Our 27 October claim
+failed**: HTTP 202 queued claim `4b03979781900d2c7a46ada8ffbc04e2` later returned
+`failed`, `the wallet cannot pay this address`, broadcast attempts `0/3`.
+The zecpages fallback failed with `curl: (28) Connection timed out after 30001 milliseconds`.
+Neither is evidence of a funded wallet; do not repeatedly submit claims to bypass
+the faucet's rate limit. There is no gateway faucet on testnet.
+
+**Pre-tag scan, 27 October 22:22 UTC:** the orb's internet-connected gateway
+served public compact data to payer A on an internal Docker network without an
+internet route (payee B is isolated there too). A scanned birthday 4,548,674
+through **4,548,872**, finding **zero notes / zero received or spendable zat**.
+This was local viewing-key scanning of compact actions, not a GitHub or
+transparent-balance query. A's keys and wallet remain in the orb. The owner
+approved release with the funded split → offline payment → ten-confirmation
+public run and independent public confirmation **unverified**.
+
+**Prepare for offline** builds a self-payment from one mined note into N equal
+notes and optional change (for example 10 × 0.0101 TAZ). Its fee is the larger of
+the fleet floor (10,000 zat) and ZIP 317's fee for the padded action count;
+change can add an action. Builder and verifier apply the same policy. Wait for
+`mined` (10 confirmations, gateway-reported) **and a completed wallet sync** before
+disconnecting. CLI `prepare --notes 10 --amount 0.0101` waits for the mined report;
+web, Basecamp and Android show the split in payment history. Never spend unmined
+change. One note limits how many independent offline payments can be made.
+
+**Local-chain check, 27 October 2026:** Prepare split a 12,500,000-zat note into
+10 × 1,010,000-zat notes and 2,345,000-zat change, with **11 actions and a
+55,000-zat fee**. `ths` v0.4.1 mined
+`20831a69d1475a45d39dcc1bc5c05659fdf694f86da146b808a806c95b6edb47`
+at height 119; verbose RPC independently reports 11 actions and a 0.00055 value
+balance. This proves the Common 4 split on the local chain, **not public testnet**.
+
+Reservations persist before broadcast, survive rollback/restart, and release only
+when the **locally scanned** tip exceeds the signed transaction's inclusive expiry.
+A gateway's expiry result alone cannot unlock them. This is not cancellation of
+an accepted debt; the family/renewal protocol below remains deferred. A refusal
+means **refused, may still mine until expiry**, because the same bytes may already
+have been submitted.
 
 ## Decided
 
 ### Crate pins [decided]
 
-The 2.2.0, 3.x and 4.x type families cannot be mixed in one binary, so pin every crate exactly. `zakura-client-*` rc7 asks for `^2.0.0` and would otherwise float.
+The 2.x, 3.x and 4.x type families cannot be mixed in one binary; pin every crate exactly.
 
 | Crate | Version | Features |
 |---|---|---|
-| `zakura-protocol` | `=2.2.0` | `local-consensus` |
-| `zakura-primitives` | `=2.2.0` | `circuits`, `std`, `multicore` |
-| `zakura-orchard` | `=2.2.0` | `circuit` |
-| `zakura-keys` | `=2.2.0` | |
-| `zakura-proofs` | `=2.2.0` | |
-| `zakura-pczt` (optional) | `=0.1.0-rc4` | |
-| `zakura-client-backend`, `zakura-client-sqlite` (optional, synced wallet DB) | `=0.1.0-rc7` | |
+| `zakura-protocol` | `=4.0.0` | `local-consensus` |
+| `zakura-primitives` | `=4.0.0` | `circuits`, `std`, `multicore` |
+| `zakura-orchard` | `=4.0.0` | `circuit` |
+| `zakura-keys` | `=4.0.0` | |
+| `zakura-note-encryption`, `zakura-pasta-curves` | `=4.0.0` | Matching type family |
+| `zakura-client-backend` | `=0.1.0-rc9.5` | Compact gRPC types and tree serialization |
 
-Import under the upstream names, as `ths` does, for example `zcash_primitives = { package = "zakura-primitives", version = "=2.2.0" }`.
+Import under upstream names, for example `zcash_primitives = { package = "zakura-primitives", version = "=4.0.0" }`. `ProvingKey::build` now returns a Result. Relock the Basecamp module independently after migration. The optional PCZT family is rc9; it is not linked by the application.
 
 ### Function sequence [decided as the plan; direct path exercised in scratch research]
 
@@ -30,8 +78,8 @@ Import under the upstream names, as `ths` does, for example `zcash_primitives = 
 
 ### Rules [decided]
 
-- Expiry is always set explicitly from fleet policy, either `with_expiry_height` or `Some(h)`. Never rely on the library default of 40 blocks (issue log #6 in [AGENTS.md](../../AGENTS.md); [chain.md](chain.md#expiry-zip-203-zip-218)).
-- Fee: 10,000 zats for 2 actions, from configuration. Output is padded to 2 actions.
+- Expiry is always set explicitly from fleet policy. Never rely on library defaults (Common 2.2: 40 blocks; Common 4 at NU7: 120).
+- Fee: configured 10,000-zat floor for two actions; larger transactions pay the ZIP 317 action-count fee. Minimum two actions, not an exact two-action restriction.
 - Proving stays on the payer's device, never on a gateway or shared prover. Delegating proving "reveals the private data of the notes being spent or created" ([ZIP 374](https://zips.z.cash/zip-0374)).
 - The output is the raw tx bytes plus the txid and auth digest. The payer then signs the 276-byte **PaymentStatement** ([pending-tier.md](pending-tier.md)) with its device-bound Ed25519 payment key, after persisting `seq + 1`, and sends tx plus statement to the payee only, over the Noise private channel. Relays and the gateway see tx bytes only.
 - **Escrow notes (v1.1)** are spent through the PCZT path instead: `DeferredPcztBuilder` or the standard builder emits a PCZT, the Redactor strips value, recipient, rseed, fvk, witness and rcv, the co-signer signs with FROST, and `Signer::apply_ironwood_signature` completes it ([double-spend.md](double-spend.md)). α is fixed in the PCZT by the payer before the co-signer commits nonces. Ordinary notes keep the direct path above.

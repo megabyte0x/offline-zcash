@@ -1,4 +1,47 @@
-# Chain: mainnet target, local Regtest harness, Ironwood v6 rules, fees
+# Chain: public testnet, Regtest harness, Ironwood v6 rules, fees
+
+## v0.7.0 public-testnet operation (27 October 2026)
+
+Public testnet is now the experiment target: NU7 from **4,465,026**, branch
+`0x77190AD9`, roughly 25-second blocks. Frequent reorgs are expected; ten
+confirmations are a UI policy, not finality. Regtest remains available for benches.
+Fleet `network` selects parameters and address encoding; the RPC chain name
+`test` cannot distinguish public testnet from Zakura Regtest.
+
+The gateway is a **TLS light client**, not a full node. Defaults:
+`https://testnet.zec.rocks:443` and
+`https://zaino.testnet.unsafe.zec.rocks:443`; configure `fleet.json`'s `servers`
+or the gateway's comma-separated endpoint setting. The secondary returned
+gRPC `UNAVAILABLE: Received http2 header with status: 503` on 27 October.
+Use the primary when no secondary is reachable, with a single-source warning.
+Compare reachable servers' common-height hashes, compact batches, tree states
+and transaction answers; withhold disagreeing answers. Agreement is not a proof.
+
+**Security exception accepted for v0.7.0:** chain state, `included` (1
+confirmation) and `mined` (10) are gateway-reported. TLS authenticates the
+server, not its chain. PoW, sampled headers, MMR anchor paths and txid inclusion
+proofs (tasks 7–9) remain deferred. The older design below describes the eventual
+mainnet requirements, not checks already performed by this release.
+
+### Dated service checks
+
+27 October 2026, 18:31–20:14 UTC, `testnet.zec.rocks:443`: ECC lightwalletd
+v0.5.4 (`c22ca9b`), Zebra 7.0.0 (`e8db87e`), branch `77190ad9`.
+
+| Check | Observed result |
+|---|---|
+| GetBlockRange | Compact headers are **empty**. Ironwood actions contain 32-byte nf/cmx/epk and 52-byte compact ciphertext |
+| GetTreeState | `ironwoodTree` contains the serialized frontier. Decode with Common 4's `read_frontier_v0`; its computed root matches the canonical anchor encoding without byte reversal |
+| GetTransaction | Mined height 4,548,314 for `25122ba33a82eac6a4d947c3cc6e8ae6824ebedc355c1483d6fab8d60280e6d8`; raw bytes returned |
+| Duplicate mined tx | SendTransaction code −25, `failed to validate tx: WtxId("private"), error: transaction is already in state` |
+| Expired fixture | Code −25, `transaction must not be mined at a block Height(4548566) greater than its expiry Height(4548564)` inside the consensus-validation error |
+| Conflicting-nullifier fixture | Code −25, `ironwood double-spend: duplicate nullifier: Nullifier(Nullifier(0x…)), in finalized state: false` inside the contextual-validation error |
+| Malformed encoding | Code −22, `io error: failed to fill whole buffer`; empty input is gRPC INVALID_ARGUMENT `bad transaction data` |
+
+The expiry/conflict fixtures were mutations with invalid signatures. They establish
+rejection ordering and wording, **not** a successful funded double-spend test.
+Queue-full, queued-download and behind-tip errors are classified from the pinned
+Zebra/lightwalletd source and tested locally; they were not induced on the public service.
 
 The design target is Zcash mainnet under NU7 (branch ID `0x77190AD9`, active from height 3,543,405). Development and the four-Mac demo run on a local Regtest **harness** from thus-spoke-zakura (`ths`) v0.4.1: a Zakura 1.6.0 node with every upgrade through NU7 active at height 1, the same branch ID, v6 transactions and the Ironwood pool. Nothing in the design is weakened because the harness cannot exercise it; where Regtest differs from mainnet (no proof of work, synthetic timestamps, one local miner), the gap gets an explicit test flag and mainnet vectors.
 This file holds the chain and protocol facts the other components depend on: size, expiry, branch binding, anchors, headers and fees. Mainnet uses real ZEC and needs explicit approval for every send.
@@ -95,13 +138,13 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 - **Testnet needs no library change:** Common 2.2.0 `TEST_NETWORK` already sets NU7 = 4,465,026 (`zcash_protocol/src/consensus.rs` L491–536 at `b6cf4ce`); only `MAIN_NETWORK` has `None`.
 - **4.0 migration:** Common 4.0, PCZT rc9, wallet clients rc9.3. FROST moves to `zakura-reddsa-frost` 4.0 (`pallas-pasta` feature), still frost-core 3.0. The `use_qsk` FVK helper stays ours. Default expiry changes 40 → 120, so keep the explicit fleet expiry and fee. Types from different families can't be mixed directly, but serialized transactions cross between them (measured).
 - **Testnet difficulty:** a block more than 450 s after its parent may use the PoW-limit difficulty (ZIP 218). The testnet verifier must allow that rule; testnet results never stand in for mainnet sampled-header security.
-- Testnet endpoints: prefer our own Zebra + lightwalletd; `testnet.zec.rocks:443` is the public fallback. Faucets `faucet.testnet.valargroup.dev` and `faucet.zecpages.com` (untested).
+- Testnet endpoints: the configurable public TLS lightwalletd list above; no VPS or own node. Funding and the live-run limitations are in [install.md](../install.md#public-testnet-v070).
 
 ### Mainnet step
 
 - Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None`. Before mainnet, move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This is a library step, not a design change, and does not block the harness work.
 - A tx signed under NU6.3 and still unmined at activation becomes invalid.
-- Ironwood itself arrived with NU6.3: mainnet 3,428,143, testnet 4,134,000 (branch `0x37A5165B`). Testnet NU7 activated at 4,465,026 ([ZIP 258](https://zips.z.cash/zip-0258), Zebra releases). Public testnet is not a project target.
+- Ironwood itself arrived with NU6.3: mainnet 3,428,143, testnet 4,134,000 (branch `0x37A5165B`). Testnet NU7 activated at 4,465,026 ([ZIP 258](https://zips.z.cash/zip-0258), Zebra releases). Public testnet is the v0.7.0 experiment target.
 - Moving to mainnet changes libraries, endpoints and the PoW flag only: same builder, transport, verifier, gateway duties and bundle format; Tor submission and ≥ 2 gateways are already in the design ([gateway.md](gateway.md)); real ZEC. The archive's "mainnet stage" wording ([MVP v1 design, Stages](../../archive/reports/MVP%20v1%20design.md)) that deferred Tor and header validation is superseded.
 
 ## Open

@@ -24,6 +24,35 @@ impl std::fmt::Display for RpcError {
 }
 impl std::error::Error for RpcError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubmitDisposition { Accepted, Duplicate, Retryable, Conflict, Rejected }
+
+/// Only documented code/message pairs count as duplicate success. Queued downloads
+/// are not acceptance; unknown wording must never turn into success.
+pub fn classify_submit(code: i64, message: &str) -> SubmitDisposition {
+    use SubmitDisposition::*;
+    if code == 0 { return Accepted; }
+    if matches!(code, -28 | -342) { return Retryable; }
+    let reason = message.strip_prefix("failed to validate tx: WtxId(\"private\"), error: ").unwrap_or(message);
+    if code == -25 {
+        if let Some(nf) = reason.strip_prefix("transaction did not pass consensus validation: could not contextually validate transaction on best chain: ironwood double-spend: duplicate nullifier: Nullifier(Nullifier(0x") {
+            if [")), in finalized state: true", ")), in finalized state: false"].iter()
+                .filter_map(|suffix| nf.strip_suffix(suffix))
+                .any(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())) {
+                return Conflict;
+            }
+        }
+    }
+    match (code, reason) {
+        (-1 | -25, "transaction already exists in mempool" | "transaction was committed to the best chain" | "transaction is already in state") => Duplicate,
+        (-1, "any transaction with the same effects will be rejected from the mempool until a chain reset: transaction was committed to the best chain") => Duplicate,
+        (-1 | -25, "transaction dropped because it is already queued for download"
+            | "transaction dropped because the queue is full"
+            | "mempool is disabled since synchronization is behind the chain tip") => Retryable,
+        _ => Rejected,
+    }
+}
+
 impl Rpc {
     pub fn new(url: &str) -> Self {
         Rpc {
@@ -72,5 +101,32 @@ impl Rpc {
 
     pub fn block_hash(&self, h: u32) -> Result<String> {
         Ok(self.call("getblockhash", json!([h]))?.as_str().unwrap_or_default().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn queued_or_behind_tip_is_not_success_and_unknown_already_is_not_a_duplicate() {
+        use SubmitDisposition::*;
+        for reason in ["transaction dropped because it is already queued for download", "transaction dropped because the queue is full",
+            "mempool is disabled since synchronization is behind the chain tip"] {
+            assert_eq!(classify_submit(-25, reason), Retryable);
+            assert_eq!(classify_submit(-25, &format!("failed to validate tx: WtxId(\"private\"), error: {reason}")), Retryable);
+        }
+        assert_eq!(classify_submit(-25, "failed to validate tx: WtxId(\"private\"), error: transaction is already in state"), Duplicate);
+        assert_eq!(classify_submit(-1, "transaction was committed to the best chain"), Duplicate);
+        let cached_mined = "any transaction with the same effects will be rejected from the mempool until a chain reset: transaction was committed to the best chain";
+        assert_eq!(classify_submit(-1, cached_mined), Duplicate);
+        assert_eq!(classify_submit(-22, cached_mined), Rejected);
+        assert_eq!(classify_submit(-1, &(cached_mined.to_string() + " extra")), Rejected);
+        assert_eq!(classify_submit(-22, "transaction already exists in mempool"), Rejected);
+        assert_eq!(classify_submit(-25, "already spent by a different transaction"), Rejected);
+        assert_eq!(classify_submit(-25, "transaction is already in state: conflicting variant"), Rejected);
+        let conflict = format!("failed to validate tx: WtxId(\"private\"), error: transaction did not pass consensus validation: could not contextually validate transaction on best chain: ironwood double-spend: duplicate nullifier: Nullifier(Nullifier(0x{})), in finalized state: false", "ab".repeat(32));
+        assert_eq!(classify_submit(-25, &conflict), Conflict);
+        assert_eq!(classify_submit(-22, &conflict), Rejected);
+        assert_eq!(classify_submit(-25, &(conflict + " extra")), Rejected);
     }
 }

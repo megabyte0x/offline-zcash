@@ -19,7 +19,7 @@ pub(crate) struct TrustPins {
 }
 
 const KEY_MAGIC: &[u8] = b"ozmk";
-const LIVE_MS: u64 = 35_000;
+const LIVE_MS: u64 = 3 * 60 * 60 * 1000;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Seen {
@@ -84,7 +84,7 @@ impl App {
     }
 
     pub(crate) async fn announce(&self) -> Result<()> {
-        if let Some(url) = self.gateway_options().0 {
+        if let Some(url) = self.gateway_options().0.filter(|_| self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest) {
             if let Ok(Ok(tip)) = tokio::task::spawn_blocking(move || zcash_offline_core::rpc::Rpc::new(&url).tip()).await {
                 self.reported_tip.store(tip, std::sync::atomic::Ordering::Relaxed);
             }
@@ -99,12 +99,12 @@ impl App {
 
     async fn send_presence(&self, to: &DevicePublic) -> Result<()> {
         let body = Presence {
-            device: self.cfg.me.public()?,
+            device: self.cfg.me.public_on(self.cfg.fleet.network)?,
             gateway: self.gateway_options().0.is_some(),
             tip: if self.gateway_options().0.is_some() { self.reported_tip.load(std::sync::atomic::Ordering::Relaxed) }
                 else { self.state.lock().unwrap().0.tip_height },
             created_ms: now_ms(),
-            address_proof: zcash_offline_core::binding::prove(&self.cfg.me)?,
+            address_proof: zcash_offline_core::binding::prove_on(&self.cfg.me, self.cfg.fleet.network)?,
         };
         self.send_device(to, Body::Presence(Signed::sign(body, &self.cfg.me)?)).await
     }
@@ -129,6 +129,7 @@ impl App {
         ensure!(d.x25519 == hex::encode(vk.to_montgomery().to_bytes()), "presence sealing key mismatch");
         ensure!(!d.name.is_empty() && d.name.len() <= 64 && d.name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "invalid device name");
         zcash_offline_core::binding::verify(d, &p.body.address_proof)?;
+        self.cfg.fleet.network.decode_address(&d.address)?;
         ensure!(self.trust.lock().unwrap().addresses.get(&d.address).is_none_or(|key| key == &d.ed25519), "address binding changed; pinned identity retained");
         let now = now_ms();
         ensure!(p.body.created_ms <= now.saturating_add(5_000) && now.saturating_sub(p.body.created_ms) < LIVE_MS, "stale presence");

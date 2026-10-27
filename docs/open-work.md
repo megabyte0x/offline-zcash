@@ -4,7 +4,7 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 ## Built
 
-Everything below runs on the local `ths` NU7 chain. Releases are on GitHub.
+v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. Releases are on GitHub.
 
 | Version | What it proves | Doc |
 |---|---|---|
@@ -17,7 +17,37 @@ Everything below runs on the local `ths` NU7 chain. Releases are on GitHub.
 | v0.5.1 | Public custom Logos catalogue: install all four packages by name, merged portable variants, content-root verification and checksums; changelog-driven release notes. Android 0.5.1/code 7. Official-catalogue submission remains a draft | [basecamp-install](basecamp-install.md#install-by-name-recommended), [changelog](../CHANGELOG.md), [submission](logos-catalogue-submission.md) |
 | v0.6.0 | Invite-free local identities, open LAN/BLE discovery, signed/sealed envelopes and destination-authenticated acks; nearest-first gateway selection then persistent pinning, proof-bearing/pinned address bindings and rate-limited funds. Address payments and exact builder-fee Max in Basecamp/web/Android. Open/unknown payers wait for inclusion, never pending acceptance. Loopback API token/Host checks and text-only web rendering. Six-device no-invite bench. Chain views remain gateway-reported | [basecamp-install](basecamp-install.md#open-mode-trust-and-faucet-limits), [install](install.md), [changelog](../CHANGELOG.md) |
 
-The owner tested **v0.5.1 on three real Macs successfully**. v0.6.0 still needs
+**v0.7.0:** configurable TLS lightwalletd gateway (no full node/viewing-key scanning),
+fleet network/birthday, Common 4.0, compact Ironwood chunks and empty runs,
+persisted ShardTree with 200 checkpoints and reorg rollback. Gateway pushes
+`submitted` / `included` at 1 / `mined` at 10, all gateway-reported; retries every
+three blocks, conservative exact error mapping, source comparison/single-source
+warnings. Prepare for offline self-splits in CLI/web/Basecamp/Android use the
+ZIP 317 action-count fee; notes unlock only after local scan passes expiry.
+Sync/control padding is smaller; new-tip sync replaces blind 30-second polling.
+The dated 3,457-block replay measures **2.40 MB/day total stable BLE-link framing**
+(2.12 MB sync-only), or 2.52 MB TCP, including hourly signed presence and idle
+control. Presence remains immediate on link-up and expires after three hours;
+gateway changes/loss may take an hour to notice on stable links. These are
+lossless serialization/framing results, not physical-radio measurements.
+See [chain evidence](components/chain.md#dated-service-checks),
+[testnet installation](install.md#public-testnet-v070) and
+[funding failures](components/offline-builder.md#v070-testnet-note-plan).
+**Still open:** funded public split → offline mesh payment → ten confirmations
+on payer/payee, independent public confirmation and radio/phone/macOS checks.
+The approximate 1.2 MB/day target must be compared with full framed wire bytes,
+not only compact payload. PoW/MMR/inclusion proofs remain tasks 7–9.
+
+**27 October release checks:** `cargo test --workspace` passed 37 tests;
+`cargo clippy --workspace --all-targets -- -D warnings` passed. Mesh bench: 23/0;
+LAN bench: 10/0, including received-note spending after the payment-result
+refresh fix. Kotlin-only links passed at 20/182/514-byte chunks, with receipts,
+mining, restart inventory and callback backpressure. All four `nix build .#lgx`
+packages built on Linux x86_64. Android release Kotlin compilation and lint
+passed; no arm64 APK/device or macOS run is implied. Web screenshots use the live
+testnet wallet; QML screenshots/interaction use a fixture bridge, not Basecamp.
+
+The owner tested **v0.5.1 on three real Macs successfully**. v0.7.0 still needs
 real-Mac retesting. Basecamp Local Network
 permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
 fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs do not verify macOS or radios.

@@ -54,7 +54,7 @@ logosctl module load zcash_offline_module
 logosctl call zcash_offline_module status
 ```
 
-No GitHub authentication is required. Packages are unsigned experimental Regtest
+No GitHub authentication is required. Packages are unsigned experimental testnet/Regtest
 builds: expect a warning, not a trusted Logos publisher signature. The catalogue
 uses the upstream schema-v2 index generator, full manifest and Merkle root
 bindings; it merges the three portable variants into one package per name.
@@ -71,15 +71,16 @@ Every method returns a JSON string, and failures are `{"error": "..."}`. The dev
 
 | Method | Returns |
 |---|---|
-| `fleet_init(options_json)` | `{folder, fleet_path, devices:[{name, role, peer_id, address, invite_path, secret_path}], joined?}`. Options: `out` folder, `name` session, `devices` (`["Operator:gateway", "Alice:payer+payee", ...]`), optional `join_device` name. Refuses existing fleet/key files; joins but does not start |
-| `check_rpc(rpc_url)` | `getblockchaininfo` result, or `error`; no role grant or startup |
+| `fleet_init(options_json)` | `{folder, fleet_path, devices:[{name, role, peer_id, address, invite_path, secret_path}], joined?}`. Options: `out` folder, `name` session, `devices` (`["Operator:gateway", "Alice:payer+payee", ...]`), optional `network`, `birthday`, `join_device`. Refuses existing fleet/key files; joins but does not start |
+| `check_rpc(rpc_url)` | Testnet TLS lightwalletd status for the fleet's network, or Regtest `getblockchaininfo`; endpoint may be a comma-separated TLS server list. No role grant or startup |
 | `open_fleet_folder(folder)` | `{ok, folder, message}` after requesting the desktop folder opener; validates `fleet.json`. Runs in the core because QML's sandbox blocks local file URLs. Copy the displayed path if no file manager is available |
 | `join(invite_json)` | `{"ok":true,"message":...}` |
-| `start(options_json)` | Status. Without an installed invite, creates persistent local keys and an open wallet. Options are all optional: `listen`, `dial` (list), `rpc`, `mine`, `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
+| `start(options_json)` | Status. Without an installed invite, creates persistent local keys and an open wallet. Options are all optional: `network` (default Regtest), `birthday` (0 selects 1 on Regtest / 4465026 testnet), `listen`, `dial` (list), `rpc`, `mine` (Regtest only), `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. Existing fleets retain their network/birthday. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
 | `status()` | As `GET /api/status`, plus `joined`, `running` and `home`; `rpc`, `mine` and invite `role` describe gateway configuration |
 | `fleet()`, `list_payments()` | As `GET /api/fleet` and `GET /api/payments` |
-| `pay(to, amount_zec)` | The payment; `to` is a Regtest unified address with an Ironwood receiver. Legacy fleet names remain accepted for scripts. An unknown mesh address submits without a payee receipt |
+| `pay(to, amount_zec)` | The payment; `to` is a unified address for the fleet network with an Ironwood receiver. Legacy fleet names remain accepted for scripts. An unknown mesh address submits without a payee receipt |
 | `max_payment()` | `{amount, amount_zat, fee_zat}` at the same ZIP 317 padded action count as the builder; excludes locked/unmined notes and uneconomic inputs |
+| `prepare_offline(notes, amount_zec)` | The self-split payment, using one mined note and the action-count fee. Wait for gateway-reported mined and wallet sync before going offline |
 | `sync_now()`, `request_funds(notes, amount_zec)` | As `POST /api/sync` and `POST /api/fund` |
 | event `node_event(event, detail_json)` | Every node event (`built`, `receipt`, `result`, `synced`, `neighbor-up`, ...) |
 

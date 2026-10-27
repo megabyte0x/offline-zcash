@@ -227,6 +227,8 @@ Rectangle {
                               : "Start without an invite to create your keys locally and find a gateway. Optional: paste an organiser invite instead."
                     }
                     Label2 { visible: !root.joined; text: "Invite JSON" }
+                    ComboBox { id: network; visible: !root.joined; model: ["regtest", "testnet"]; Accessible.name: "Network for new identity" }
+                    Field { id: birthday; visible: !root.joined; placeholderText: "Birthday height (0 = network default)"; text: "0"; Accessible.name: "Birthday height" }
                     Rectangle {
                         visible: !root.joined
                         Layout.fillWidth: true
@@ -270,6 +272,8 @@ Rectangle {
                             setup.busy = true
                             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
                             var opts = peers.length ? { dial: peers } : {}
+                            opts.network = network.currentText
+                            opts.birthday = Number(birthday.text)
                             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
                             opts.ble = bluetooth.checked
                             var startNode = function () {
@@ -334,9 +338,9 @@ Rectangle {
                         Muted {
                             text: root.st && root.st.selected_gateway
                                   ? "Gateway " + root.st.selected_gateway.name + " · " + root.st.selected_gateway.peer_id + " · " + root.st.selected_gateway.hops + " hops · tip " + root.st.selected_gateway.tip + " (gateway-reported)"
-                                  : root.st && root.st.online ? "Local chain RPC · results are gateway-reported" : "Finding a gateway · sync and results are gateway-reported"
+                                  : root.st && root.st.online ? "Chain service · results are gateway-reported" : "Finding a gateway · sync and results are gateway-reported"
                         }
-                        Muted { text: root.st ? root.st.gateway_warning || "" : ""; color: root.warn }
+                        Muted { text: root.st ? (root.st.network || "regtest") + " · " + (root.st.single_source ? "WARNING: single chain source (or not connected)" : "Compared chain sources: " + root.st.chain_sources.length) + " · " + (root.st.gateway_warning || "") : ""; color: root.warn }
                         Btn {
                             text: root.st && root.st.online ? "Sync now (from the node)" : "Sync now (from a gateway over the mesh)"
                             enabled: !wallet.busy
@@ -352,7 +356,7 @@ Rectangle {
                             }
                         }
                         Btn {
-                            visible: root.st !== null && !root.st.online
+                            visible: root.st !== null && !root.st.online && root.st.network !== "testnet"
                             text: "Get test funds (5 × 0.1 ZEC)"
                             enabled: !wallet.busy
                             onClicked: {
@@ -362,6 +366,20 @@ Rectangle {
                                     wallet.msg = r.error ? r.error
                                         : "Asked " + r.requested_from + "; funds arrive after they are mined (about a minute)"
                                 })
+                            }
+                        }
+                        Muted { visible: root.st !== null && root.st.network === "testnet"; text: "TAZ faucet: faucet.testnet.valargroup.dev · 0.125 TAZ / 24 h (service may fail). No gateway faucet." }
+                        Field { id: splitCount; text: "10"; Accessible.name: "Prepare note count" }
+                        Field { id: splitValue; text: "0.0101"; Accessible.name: "Amount per prepared note" }
+                        Btn {
+                            text: "Prepare for offline"; enabled: !wallet.busy
+                            onClicked: {
+                                wallet.busy = true; wallet.msg = "Proving split…"
+                                root.call("prepare_offline", [Number(splitCount.text), splitValue.text], function (r) {
+                                    wallet.busy = false
+                                    wallet.msg = r.error || "Split submitted. Wait for mined (10 confirmations on testnet), then sync before going offline. Never spend unmined change."
+                                    root.refresh()
+                                }, 120000)
                             }
                         }
                         Muted { text: wallet.msg; visible: text !== "" }
@@ -379,7 +397,7 @@ Rectangle {
                         Field {
                             id: to
                             objectName: "recipientAddress"
-                            placeholderText: "uregtest…"
+                            placeholderText: root.st && root.st.network === "testnet" ? "utest1…" : "uregtest…"
                             Accessible.name: "Recipient Zcash address"
                         }
                         Label2 { text: "Amount (ZEC)" }
@@ -473,7 +491,7 @@ Rectangle {
                                     ColumnLayout {
                                         Layout.preferredWidth: 170; Layout.alignment: Qt.AlignTop
                                         spacing: 2
-                                        Text { text: prow.modelData.state; color: root.stateColor(prow.modelData.state); font.pixelSize: 14; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        Text { text: prow.modelData.state + (["included", "mined"].indexOf(prow.modelData.state) >= 0 ? " (gateway-reported)" : ""); color: root.stateColor(prow.modelData.state); font.pixelSize: 14; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
                                         Muted { visible: prow.modelData.direction === "sent" && !prow.modelData.receipt_peer; text: "No payee receipt"; font.pixelSize: 12 }
                                         Text {
                                             text: (prow.open ? "▾ " : "▸ ") + "history"

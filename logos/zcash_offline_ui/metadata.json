@@ -1,7 +1,7 @@
 {
   "name": "zcash_offline_ui",
   "display_name": "Offline Zcash",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "ui_qml",
   "category": "wallet",
   "description": "Offline Zcash payments over a mesh: wallet, pay offline, receive, payment states and fleet setup. All actions go through zcash_offline_module.",

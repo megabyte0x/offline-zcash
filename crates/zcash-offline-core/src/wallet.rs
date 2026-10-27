@@ -5,7 +5,7 @@
 //! each block (the payee's known anchors), and its own notes. After that it can
 //! build (payer) or check (payee) payments with no connection.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use incrementalmerkletree::{Position, Retention};
 use orchard::{
     keys::{FullViewingKey, PreparedIncomingViewingKey, Scope},
@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, path::Path};
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::consensus::BranchId;
 
-use crate::rpc::Rpc;
+use crate::{rpc::Rpc, sync::{Batch, CompactBlock, Seed}, wallet_tree::{TreeData, CHECKPOINTS}};
 
 pub type Tree = ShardTree<MemoryShardStore<MerkleHashOrchard, u32>, 32, 16>;
 
@@ -61,7 +61,8 @@ impl StoredNote {
 pub struct WalletState {
     pub tip_height: u32,
     pub tip_hash: String,
-    /// Every Ironwood note commitment on the chain, in tree order (hex).
+    /// Legacy v0.6 inventory, converted once to a pruned ShardTree on next sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commitments: Vec<String>,
     /// Ironwood tree root after each scanned block (hex), by height.
     pub roots: BTreeMap<u32, String>,
@@ -69,6 +70,19 @@ pub struct WalletState {
     /// Every Ironwood nullifier revealed on chain (hex), for conflict checks.
     #[serde(default)]
     pub chain_nullifiers: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub tree: Option<TreeData>,
+    #[serde(default)]
+    pub hashes: BTreeMap<u32, String>,
+    #[serde(default)]
+    pub nullifiers_by_height: BTreeMap<u32, Vec<String>>,
+    #[serde(default)]
+    pub spent_heights: BTreeMap<String, u32>,
+    /// Reservations survive rollback, including notes temporarily orphaned off chain.
+    #[serde(default)]
+    pub reservations: BTreeMap<String, (String, u32)>,
+    #[serde(default)]
+    pub birthday: u32,
 }
 
 impl WalletState {
@@ -97,11 +111,12 @@ impl WalletState {
     }
 
     fn rebuild_tree(&self, marked: &[u64]) -> Result<Tree> {
-        let mut tree = Tree::new(MemoryShardStore::empty(), 1000);
+        if let Some(data) = &self.tree { return data.load(); }
+        let mut tree = Tree::new(MemoryShardStore::empty(), CHECKPOINTS);
         for (i, c) in self.commitments.iter().enumerate() {
             let b: [u8; 32] = hex::decode(c)?.try_into().map_err(|_| anyhow!("cmx"))?;
             let leaf = Option::from(MerkleHashOrchard::from_bytes(&b)).ok_or_else(|| anyhow!("cmx"))?;
-            let r = if marked.contains(&(i as u64)) { Retention::Marked } else { Retention::Ephemeral };
+            let r = if marked.contains(&(i as u64)) || self.notes.iter().any(|n| n.position == i as u64) { Retention::Marked } else { Retention::Ephemeral };
             tree.append(leaf, r).map_err(|e| anyhow!("tree append: {e:?}"))?;
         }
         tree.checkpoint(self.tip_height).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
@@ -125,16 +140,9 @@ impl WalletState {
     /// Forgets the chain view for a rescan, keeping notes locked by offline
     /// payments so a reorg never frees a note we already paid with.
     pub fn reset_keep_locks(&mut self) {
-        let notes = std::mem::take(&mut self.notes);
+        let reservations = std::mem::take(&mut self.reservations);
         *self = WalletState::default();
-        self.notes = notes
-            .into_iter()
-            .filter(|n| n.locked_by.is_some())
-            .map(|mut n| {
-                n.spent_in = None;
-                n
-            })
-            .collect();
+        self.reservations = reservations;
     }
 
     /// Scans new blocks from the node. Rescans from scratch after a reorg.
@@ -145,71 +153,168 @@ impl WalletState {
     /// Scans new blocks from any source: the node's RPC, or blocks a gateway sent over the mesh.
     pub fn sync_from<S: BlockSource>(&mut self, rpc: &S, fvk: &FullViewingKey) -> Result<SyncReport> {
         let chain_tip = rpc.tip()?;
-        let mut rescanned = false;
+        let mut view = self.clone();
         if self.tip_height > 0 && (self.tip_height > chain_tip || rpc.block_hash(self.tip_height)? != self.tip_hash) {
-            self.reset_keep_locks();
-            rescanned = true;
+            let ancestor = self.hashes.iter().rev().find(|(h, hash)| **h <= chain_tip && rpc.block_hash(**h).is_ok_and(|v| v == **hash));
+            if let Some((height, _)) = ancestor {
+                view.rollback(*height)?;
+            } else {
+                view.reset_keep_locks();
+            }
         }
+        let mut batch = Batch { prev_height: view.tip_height, prev_hash: view.tip_hash.clone(), seed: None,
+            blocks: vec![], chain_tip, sources: vec!["Regtest JSON-RPC".into()] };
+        for h in view.tip_height + 1..=chain_tip {
+            let (hash, txs) = rpc.block_txs(h).with_context(|| format!("block {h}"))?;
+            batch.push(CompactBlock::from_raw(h, hash, &txs)?);
+        }
+        let report = view.apply_batch(&batch, fvk)?;
+        *self = view;
+        Ok(report)
+    }
+
+    pub fn seed(&mut self, seed: &Seed) -> Result<()> {
+        ensure!(self.tip_height == 0, "cannot reseed an existing wallet");
+        let bytes = hex::decode(&seed.frontier)?;
+        let frontier = zcash_primitives::merkle_tree::read_frontier_v0::<MerkleHashOrchard, _>(&bytes[..])?;
+        let mut tree = Tree::new(MemoryShardStore::empty(), CHECKPOINTS);
+        tree.insert_frontier(frontier, Retention::Ephemeral).map_err(|e| anyhow!("seed frontier: {e:?}"))?;
+        tree.checkpoint(seed.height).map_err(|e| anyhow!("seed checkpoint: {e:?}"))?;
+        let root = tree.root_at_checkpoint_id(&seed.height).map_err(|e| anyhow!("seed root: {e:?}"))?
+            .ok_or_else(|| anyhow!("missing seed root"))?;
+        self.roots.insert(seed.height, hex::encode(root.to_bytes()));
+        self.tree = Some(TreeData::capture(&tree)?);
+        self.birthday = seed.height + 1;
+        self.tip_height = seed.height;
+        self.tip_hash = seed.hash.clone();
+        self.hashes.insert(seed.height, seed.hash.clone());
+        Ok(())
+    }
+
+    pub fn rollback(&mut self, height: u32) -> Result<()> {
+        let mut tree = self.rebuild_tree(&[])?;
+        ensure!(tree.truncate_to_checkpoint(&height).map_err(|e| anyhow!("rollback: {e:?}"))?,
+            "reorg exceeds retained checkpoints; resync from the original birthday");
+        self.tip_hash = self.hashes.get(&height).cloned().ok_or_else(|| anyhow!("missing checkpoint hash at {height}"))?;
+        self.tip_height = height;
+        self.notes.retain(|n| n.height <= height);
+        for note in &mut self.notes {
+            if self.spent_heights.get(&note.nullifier).is_some_and(|h| *h > height) {
+                note.spent_in = None;
+                note.locked_by = self.reservations.get(&note.nullifier).map(|r| r.0.clone());
+            }
+        }
+        self.spent_heights.retain(|_, h| *h <= height);
+        self.nullifiers_by_height.retain(|h, _| *h <= height);
+        self.chain_nullifiers = self.nullifiers_by_height.values().flatten().cloned().collect();
+        self.roots.retain(|h, _| *h <= height);
+        self.hashes.retain(|h, _| *h <= height);
+        self.tree = Some(TreeData::capture(&tree)?);
+        self.commitments.clear();
+        Ok(())
+    }
+
+    pub fn lock_notes(&mut self, positions: &[u64], txid: &str, expiry: u32) {
+        for note in self.notes.iter_mut().filter(|n| positions.contains(&n.position)) {
+            note.locked_by = Some(txid.into());
+            self.reservations.insert(note.nullifier.clone(), (txid.into(), expiry));
+        }
+    }
+
+    /// Expiry is inclusive. Only a scanned tip beyond it releases an unspent note.
+    pub fn release_expired(&mut self) {
+        // Keep expired reservations through the rewind window so a reorg can relock them.
+        let oldest = self.tip_height.saturating_sub(CHECKPOINTS as u32 - 1);
+        self.reservations.retain(|_, (_, expiry)| *expiry == 0 || oldest <= *expiry);
+        for n in &mut self.notes {
+            n.locked_by = self.reservations.get(&n.nullifier)
+                .filter(|(_, expiry)| n.spent_in.is_none() && (*expiry == 0 || self.tip_height <= *expiry))
+                .map(|(txid, _)| txid.clone());
+        }
+    }
+
+    /// An invalid or interrupted batch cannot publish a cursor ahead of its tree or notes.
+    pub fn apply_batch(&mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<SyncReport> {
+        let mut next = self.clone();
+        let report = next.apply_batch_inner(batch, fvk)?;
+        *self = next;
+        Ok(report)
+    }
+
+    fn apply_batch_inner(&mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<SyncReport> {
+        let rescanned = batch.prev_height < self.tip_height;
+        if let Some(seed) = &batch.seed { self.seed(seed)?; }
+        if batch.prev_height < self.tip_height { self.rollback(batch.prev_height)?; }
+        ensure!(self.tip_height == batch.prev_height && self.tip_hash == batch.prev_hash, "sync predecessor mismatch");
         let ivk = PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
         let mut tree = self.rebuild_tree(&[])?;
         let mut new_notes = 0;
-        for h in self.tip_height + 1..=chain_tip {
-            let (hash, txs) = rpc.block_txs(h).with_context(|| format!("block {h}"))?;
-            for bytes in txs {
-                let tx = Transaction::read(&bytes[..], BranchId::Nu7).with_context(|| format!("parse tx in block {h}"))?;
-                let txid = tx.txid().to_string();
-                let Some(bundle) = tx.ironwood_bundle() else { continue };
-                for action in bundle.actions() {
-                    let nf = hex::encode(action.nullifier().to_bytes());
-                    self.chain_nullifiers.insert(nf.clone());
+        let mut position = tree.max_leaf_position(None).map_err(|e| anyhow!("position: {e:?}"))?.map_or(0, |p| u64::from(p) + 1);
+        for block in &batch.blocks {
+            ensure!(block.height > self.tip_height && block.height <= batch.chain_tip, "non-monotonic sync height");
+            ensure!(block.txs.is_empty() || block.height == self.tip_height + 1, "nonempty block skips heights");
+            for tx in &block.txs {
+                let mut id = tx.txid;
+                id.reverse();
+                let txid = hex::encode(id);
+                for a in &tx.actions {
+                    let action = a.compact()?;
+                    let nf = hex::encode(a.nf);
+                    self.nullifiers_by_height.entry(block.height).or_default().push(nf.clone());
                     for n in self.notes.iter_mut().filter(|n| n.nullifier == nf) {
                         n.spent_in = Some(txid.clone());
+                        self.spent_heights.insert(nf.clone(), block.height);
                     }
-                    let domain = orchard::note_encryption::IronwoodDomain::for_action(action);
-                    if let Some((note, _, _)) = zcash_note_encryption::try_note_decryption(&domain, &ivk, action) {
-                        let position = self.commitments.len() as u64;
+                    let domain = orchard::note_encryption::IronwoodDomain::for_compact_action(&action);
+                    let decrypted = zcash_note_encryption::try_compact_note_decryption(&domain, &ivk, &action);
+                    let marked = decrypted.is_some();
+                    if let Some((note, _)) = decrypted {
                         let nullifier = hex::encode(note.nullifier(fvk).to_bytes());
-                        // A rescan after a reorg may meet a note we kept because it was locked.
                         if !self.notes.iter().any(|n| n.nullifier == nullifier) {
                             self.notes.push(StoredNote {
                                 position,
-                                height: h,
+                                height: block.height,
                                 txid: txid.clone(),
                                 value: note.value().inner(),
                                 recipient: hex::encode(note.recipient().to_raw_address_bytes()),
                                 rho: hex::encode(note.rho().to_bytes()),
                                 rseed: hex::encode(note.rseed().as_bytes()),
+                                locked_by: self.reservations.get(&nullifier).map(|r| r.0.clone()),
                                 nullifier,
                                 spent_in: None,
-                                locked_by: None,
                             });
                             new_notes += 1;
                         } else if let Some(n) = self.notes.iter_mut().find(|n| n.nullifier == nullifier) {
                             n.position = position;
-                            n.height = h;
+                            n.height = block.height;
                         }
                     }
-                    let cmx = action.cmx().to_bytes();
-                    self.commitments.push(hex::encode(cmx));
-                    let leaf = Option::from(MerkleHashOrchard::from_bytes(&cmx)).ok_or_else(|| anyhow!("cmx"))?;
-                    tree.append(leaf, Retention::Ephemeral).map_err(|e| anyhow!("tree append: {e:?}"))?;
+                    let leaf = Option::from(MerkleHashOrchard::from_bytes(&a.cmx)).ok_or_else(|| anyhow!("cmx"))?;
+                    tree.append(leaf, if marked { Retention::Marked } else { Retention::Ephemeral }).map_err(|e| anyhow!("tree append: {e:?}"))?;
+                    position += 1;
                 }
             }
-            tree.checkpoint(h).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
-            let root = tree
-                .root_at_checkpoint_id(&h)
-                .map_err(|e| anyhow!("root: {e:?}"))?
-                .ok_or_else(|| anyhow!("no root at {h}"))?;
-            self.roots.insert(h, hex::encode(root.to_bytes()));
-            self.tip_height = h;
-            self.tip_hash = hash;
-        }
-        // Unlock notes whose offline payment was mined (spent_in is set) — they are spent, not locked.
-        for n in self.notes.iter_mut() {
-            if n.spent_in.is_some() {
-                n.locked_by = None;
+            // Empty runs advance checkpoints without transporting per-block ciphertexts or hashes.
+            for h in self.tip_height + 1..=block.height {
+                tree.checkpoint(h).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
             }
+            let root = tree
+                .root_at_checkpoint_id(&block.height)
+                .map_err(|e| anyhow!("root: {e:?}"))?
+                .ok_or_else(|| anyhow!("no root"))?;
+            self.roots.insert(block.height, hex::encode(root.to_bytes()));
+            self.tip_height = block.height;
+            self.tip_hash = block.hash.clone();
+            self.hashes.insert(block.height, block.hash.clone());
         }
+        let floor = self.tip_height.saturating_sub(CHECKPOINTS as u32 - 1);
+        self.roots.retain(|h, _| *h >= floor);
+        self.hashes.retain(|h, _| *h >= floor);
+        self.nullifiers_by_height.retain(|h, _| *h >= floor);
+        self.chain_nullifiers = self.nullifiers_by_height.values().flatten().cloned().collect();
+        self.tree = Some(TreeData::capture(&tree)?);
+        self.commitments.clear();
+        self.release_expired();
         Ok(SyncReport { tip: self.tip_height, new_notes, rescanned })
     }
 }
@@ -291,4 +396,50 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync::{Action, CompactTx};
+
+    #[test]
+    fn persisted_reorg_restores_spends_and_expiry_unlocks_only_beyond_the_boundary() {
+        let fvk = crate::DeviceSecret::generate("A", "payer").fvk().unwrap();
+        let block = |height, hash: &str, n: u8| CompactBlock { height, hash: hash.into(), txs: vec![CompactTx {
+            txid: [n; 32], actions: vec![Action { nf: [n; 32], cmx: [n; 32], epk: [0; 32], ct: vec![0; 52] }],
+        }] };
+        let batch = |prev_height, prev_hash: &str, blocks: Vec<CompactBlock>, tip| Batch {
+            prev_height, prev_hash: prev_hash.into(), seed: None, blocks, chain_tip: tip, sources: vec![],
+        };
+        let mut wallet = WalletState::default();
+        wallet.apply_batch(&batch(0, "", vec![block(1, "a1", 1)], 1), &fvk).unwrap();
+        wallet.notes.push(StoredNote { position: 0, height: 1, txid: "owned".into(), value: 70_001,
+            recipient: String::new(), rho: String::new(), rseed: String::new(), nullifier: hex::encode([2; 32]), spent_in: None, locked_by: None });
+        wallet.lock_notes(&[0], "pending", 3);
+        let original = wallet.clone();
+        wallet.apply_batch(&batch(1, "a1", vec![block(2, "a2", 2)], 2), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (0, 0));
+        // Restart from the durable representation, then replace the spending block.
+        let mut wallet: WalletState = serde_json::from_slice(&serde_json::to_vec(&wallet).unwrap()).unwrap();
+        wallet.apply_batch(&batch(1, "a1", vec![block(2, "b2", 3)], 2), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (0, 70_001));
+        assert_eq!(wallet.notes[0].spent_in, None);
+        let mut one_pass = original;
+        one_pass.apply_batch(&batch(1, "a1", vec![block(2, "b2", 3)], 2), &fvk).unwrap();
+        assert_eq!(wallet.roots, one_pass.roots);
+        wallet.apply_batch(&batch(2, "b2", vec![block(3, "b3", 4)], 3), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (0, 70_001));
+        let before = serde_json::to_value(&wallet).unwrap();
+        assert!(wallet.apply_batch(&batch(3, "wrong fork", vec![block(4, "b4", 5)], 4), &fvk).is_err());
+        assert_eq!(serde_json::to_value(&wallet).unwrap(), before);
+        wallet.apply_batch(&batch(3, "b3", vec![block(4, "b4", 5)], 4), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (70_001, 0));
+        // Expiry is not finality: rewinding below the boundary restores the reservation.
+        let mut wallet: WalletState = serde_json::from_slice(&serde_json::to_vec(&wallet).unwrap()).unwrap();
+        wallet.apply_batch(&batch(2, "b2", vec![block(3, "c3", 6)], 3), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (0, 70_001));
+        wallet.apply_batch(&batch(3, "c3", vec![block(4, "c4", 7)], 4), &fvk).unwrap();
+        assert_eq!(wallet.balance(), (70_001, 0));
+    }
 }

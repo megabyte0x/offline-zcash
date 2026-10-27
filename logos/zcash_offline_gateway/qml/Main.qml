@@ -18,6 +18,7 @@ Rectangle {
     property bool settingsLoaded: false
     readonly property bool joined: st !== null && st.joined === true
     readonly property bool allowed: joined && String(st.role || "").split("+").indexOf("gateway") >= 0
+    readonly property bool testnet: st !== null && st.network === "testnet"
 
     function unwrap(payload) {
         var v = payload
@@ -39,6 +40,7 @@ Rectangle {
             root.st = s
             if (!root.settingsLoaded) {
                 if (s.rpc) rpc.text = s.rpc
+                else if (s.network === "testnet") rpc.text = "https://testnet.zec.rocks:443,https://zaino.testnet.unsafe.zec.rocks:443"
                 mine.checked = !!s.mine
                 root.settingsLoaded = true
             }
@@ -50,12 +52,12 @@ Rectangle {
         })
     }
     function checkRpc(startAfter) {
-        root.busy = true; root.failed = false; root.message = "Checking getblockchaininfo…"
+        root.busy = true; root.failed = false; root.message = root.testnet ? "Checking TLS lightwalletd…" : "Checking getblockchaininfo…"
         root.call("check_rpc", [rpc.text.trim()], function (info) {
             if (info.error) { root.busy = false; root.failed = true; root.message = "RPC check failed: " + info.error; return }
-            root.message = "RPC answers getblockchaininfo · " + info.chain + " · height " + info.blocks
+            root.message = "Chain service · " + info.chain + " · height " + info.blocks
             if (!startAfter) { root.busy = false; return }
-            if (mine.checked && info.chain !== "test" && info.chain !== "regtest") {
+            if (mine.checked && root.testnet) {
                 root.busy = false; root.failed = true; root.message = "Mining is for Regtest only. Disable mining for this chain."; return
             }
             var opts = { rpc: rpc.text.trim(), mine: mine.checked }
@@ -99,7 +101,7 @@ Rectangle {
         ColumnLayout {
             width: scroll.availableWidth; spacing: 12
             Text { text: "Offline Zcash Gateway"; color: root.fg; font.pixelSize: 24; font.bold: true }
-            Label2 { text: "Bridge mesh payments to the local chain. The operator runs ths start outside Basecamp." }
+            Label2 { text: "Testnet uses TLS lightwalletd, not a full node. Regtest uses ths start outside Basecamp. The fleet selects the network." }
             Label2 { text: root.joined ? root.st.name + " · " + root.st.role + (root.st.running && root.st.online ? " · gateway online" : " · gateway not online") : "Join with a gateway invite, or create one in Offline Zcash Organiser." }
             ColumnLayout {
                 visible: !root.joined
@@ -129,10 +131,11 @@ Rectangle {
                 text: "This invite does not grant the gateway role. Installing this app does not change your role. Ask the organiser for a gateway invite on a new device."
                 color: "#f85149"; font.pixelSize: 16; wrapMode: Text.Wrap; Layout.fillWidth: true
             }
-            Label2 { text: "Chain RPC URL" }
+            Label2 { text: root.testnet ? "Testnet TLS lightwalletd servers (comma-separated)" : "Chain RPC URL (Regtest)" }
             Field { id: rpc; objectName: "rpcUrl"; text: "http://127.0.0.1:18232"; Accessible.name: "Chain RPC URL" }
-            Switch { id: mine; objectName: "mineBlocks"; text: "Mine blocks (Regtest)"; palette.windowText: root.fg; Accessible.name: text }
+            Switch { id: mine; objectName: "mineBlocks"; enabled: !root.testnet; text: "Mine blocks (Regtest)"; palette.windowText: root.fg; Accessible.name: text }
             Label2 { text: "Mining also enables test-fund requests. Use only the local ths Regtest chain, never real ZEC." }
+            Label2 { text: (root.st ? root.st.network || "regtest" : "No fleet") + " · " + (root.st && !root.st.single_source ? "Compared chain sources: " + root.st.chain_sources.length : "WARNING: single source (or not connected)") + " · included at 1 confirmation, mined at 10 on testnet. Both are gateway-reported, not PoW/MMR inclusion proofs." }
             RowLayout {
                 Layout.fillWidth: true
                 Field { id: dial; placeholderText: "Dial address (optional): operator-ip:7777"; Accessible.name: "Dial address" }
@@ -155,9 +158,9 @@ Rectangle {
                 text: root.st && root.st.address ? root.st.address : ""
                 color: root.fg; font.pixelSize: 13; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true
             }
-            Label2 { visible: root.allowed; text: "Fund this address from the operator's terminal (test coins):" }
+            Label2 { visible: root.allowed; text: root.testnet ? "Testnet faucet: faucet.testnet.valargroup.dev · 0.125 TAZ / 24 h (service may fail); no gateway faucet." : "Fund this address from the operator's terminal (test coins):" }
             TextEdit {
-                visible: root.allowed
+                visible: root.allowed && !root.testnet
                 text: "ths faucet " + (root.st && root.st.address ? root.st.address : "<address>") + " --amount 2"
                 color: root.fg; font.family: "monospace"; font.pixelSize: 13; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true
             }
@@ -173,7 +176,8 @@ Rectangle {
                 Label2 {
                     readonly property var result: modelData.result.body.status
                     text: modelData.txid + "\n" + (result.Mined ? "mined at height " + result.Mined.height
-                          : result.Rejected ? "rejected: " + result.Rejected.reason : "in mempool") + " · submissions " + modelData.submissions
+                          : result.Included ? "included at height " + result.Included.height
+                          : result.Rejected ? "rejected: " + result.Rejected.reason : JSON.stringify(result)) + " (gateway-reported) · submissions " + modelData.submissions
                     color: result.Mined ? "#3fb950" : result.Rejected ? "#f85149" : root.fg
                 }
             }

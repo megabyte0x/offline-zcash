@@ -14,6 +14,7 @@ class MainActivity : Activity() {
     private var mesh: MeshService.LocalBinder? = null
     private var bound = false
     private var pendingStart = false
+    private var selectedNetwork = "regtest"
     private lateinit var status: TextView
     private lateinit var neighbours: TextView
     private lateinit var payments: TextView
@@ -23,7 +24,7 @@ class MainActivity : Activity() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             mesh = binder as MeshService.LocalBinder
-            if (pendingStart) { pendingStart = false; mesh?.start(::showResult) }
+            if (pendingStart) { pendingStart = false; mesh?.startOn(selectedNetwork, ::showResult) }
             refresh()
         }
         override fun onServiceDisconnected(name: ComponentName) { mesh = null }
@@ -52,14 +53,16 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(column) })
         fun label(text: String, size: Float = 16f) = TextView(this).apply { this.text = text; textSize = size; setPadding(0, 12, 0, 12); setTextIsSelectable(true); column.addView(this) }
         fun button(text: String, action: () -> Unit) { column.addView(Button(this).apply { this.text = text; setOnClickListener { action() } }) }
-        label("Offline Zcash · 0.6.0", 24f)
-        label("Regtest only · no real ZEC\nOpen/unknown payers are not accepted pending. Inclusion and mined are gateway-reported, not independent verification.")
+        label("Offline Zcash · 0.7.0", 24f)
+        label("Test coins only · Regtest or public testnet\nOpen/unknown payers are not accepted pending. Included (1 confirmation) and mined (10 on testnet) are gateway-reported, not independent verification.")
         status = label("Starting…")
         result = label("")
+        val network = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, arrayOf("regtest", "testnet")); contentDescription = "Network for new identity"; column.addView(this) }
         button("Start mesh without invite / grant permissions") {
+            selectedNetwork = network.selectedItem.toString()
             pendingStart = true
             connect()
-            mesh?.let { pendingStart = false; it.start(::showResult) }
+            mesh?.let { pendingStart = false; it.startOn(selectedNetwork, ::showResult) }
         }
         button("Join with invite file") {
             if (mesh == null) { result.text = "Start mesh and grant permissions first" }
@@ -67,13 +70,24 @@ class MainActivity : Activity() {
         }
         button("Sync from gateway") { mesh?.call({ it.syncNow() }, ::showResult) }
         button("Request 3 × 0.1 test ZEC") { mesh?.call({ it.requestFunds(3u, "0.1") }, ::showResult) }
+        label("Testnet: faucet.testnet.valargroup.dev offers 0.125 TAZ / 24 h (service may fail); no gateway faucet. Split mined funds before going offline.")
+        val notes = EditText(this).apply { setText("10"); hint = "Equal note count"; contentDescription = "Prepare note count"; inputType = InputType.TYPE_CLASS_NUMBER; column.addView(this) }
+        val noteValue = EditText(this).apply { setText("0.0101"); hint = "Amount per note"; contentDescription = "Amount per prepared note"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL; column.addView(this) }
+        button("Prepare for offline") {
+            val count = notes.text.toString().toUIntOrNull()
+            if (count == null) result.text = "Enter a positive note count" else {
+                val value = noteValue.text.toString()
+                mesh?.call({ it.prepareOffline(count, value) }, ::showResult)
+            }
+        }
+        label("Split fee grows with action count. Wait for mined, then sync before going offline. Never spend unmined change.")
         label("Your address is shown in status. Share it outside the app.")
         button("Copy your address") {
             (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Zcash address", ownAddress))
             result.text = "Address copied"
         }
         label("Pay a Zcash address", 20f)
-        val to = EditText(this).apply { hint = "Recipient Regtest unified address"; contentDescription = "Recipient Zcash address"; isSingleLine = true; column.addView(this) }
+        val to = EditText(this).apply { hint = "Recipient unified address (same network)"; contentDescription = "Recipient Zcash address"; isSingleLine = true; column.addView(this) }
         val amount = EditText(this).apply { hint = "Amount in ZEC, e.g. 0.01"; contentDescription = "Amount in ZEC"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL; column.addView(this) }
         button("Max") { mesh?.call({ it.maxPayment() }) { text ->
             val quote = JSONObject(text)
@@ -134,7 +148,7 @@ class MainActivity : Activity() {
             ownAddress = s.optString("address")
             val gateway = s.optJSONObject("selected_gateway")
             val gatewayText = if (gateway == null) "Finding gateway" else "Gateway ${gateway.optString("name")} · ${gateway.optString("peer_id")} · ${gateway.optInt("hops")} hops · tip ${gateway.optLong("tip")}"
-            status.text = "${s.optString("name")} · ${if (s.optBoolean("running")) "running" else "stopped"}\nTip ${wallet?.optLong("tip") ?: 0} · spendable ${zec(wallet?.optLong("spendable") ?: 0)} ZEC\n$gatewayText (gateway-reported)\n${s.optString("gateway_warning")}\nYour address: $ownAddress\n${m.radio()}"
+            status.text = "${s.optString("name")} · ${s.optString("network")} · ${if (s.optBoolean("running")) "running" else "stopped"}\nTip ${wallet?.optLong("tip") ?: 0} · spendable ${zec(wallet?.optLong("spendable") ?: 0)} ZEC\n$gatewayText (gateway-reported)\n${if (s.optBoolean("single_source", true)) "WARNING: single chain source (or not connected)" else "Compared chain sources"}\n${s.optString("gateway_warning")}\nYour address: $ownAddress\n${m.radio()}"
             val links = s.optJSONArray("neighbor_links")
             val peers = if (links == null || links.length() == 0) "None yet" else (0 until links.length()).joinToString("\n") { i ->
                 val link = links.getJSONObject(i)
@@ -144,7 +158,7 @@ class MainActivity : Activity() {
             val list = obj.getJSONObject("payments").optJSONArray("payments")
             payments.text = "Payments\n" + if (list == null || list.length() == 0) "No payments" else (0 until list.length()).joinToString("\n\n") { i ->
                 val p = list.getJSONObject(i)
-                "${p.getString("direction")} · ${p.getString("counterparty")} · ${zec(p.getLong("amount"))} ZEC\n${p.getString("state")}${if (p.getString("direction") == "sent" && p.isNull("receipt_peer")) " · no payee receipt" else ""}\n${p.getString("txid")}"
+                "${p.getString("direction")} · ${p.getString("counterparty")} · ${zec(p.getLong("amount"))} ZEC\n${p.getString("state")}${if (p.getString("state") in listOf("included", "mined")) " (gateway-reported)" else ""}${if (p.getString("direction") == "sent" && p.isNull("receipt_peer")) " · no payee receipt" else ""}\n${p.getString("txid")}"
             }
         }
     }

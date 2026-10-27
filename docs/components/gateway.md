@@ -1,8 +1,37 @@
 # Gateway submitter
 
-The gateway is the one device with internet. It submits the transaction bytes it receives, returns a broadcast receipt, and later sends signed chain bundles back over the mesh: the tip header, MMR paths for anchors, txid inclusion branches and conflict notices.
-It holds no spending or viewing key and sees only raw tx bytes. The design treats it as untrusted (ADV-G in [privacy-and-threats.md](../privacy-and-threats.md)): it can withhold, delay or lie about chain state, so every chain fact the payee acts on is checked against proof of work and Merkle paths, never against the gateway's word.
-The design target is mainnet. In the harness D is the Mac that runs `ths`; on mainnet it is any fleet device with backhaul, submitting over Tor. Payee-side use of the bundles is in [payee-verifier.md](payee-verifier.md), and the chain endpoints are in [chain.md](chain.md).
+## Built in v0.7.0
+
+A gateway is any gateway-role device with internet. On public testnet it is a
+**light client** using configurable TLS lightwalletd servers, not a full node or
+VPS. It serves GetBlockRange compact actions and GetTreeState birthday frontiers
+without receiving viewing keys or scanning anyone else's wallet. A combined-role
+device can still scan its own wallet locally. Regtest retains ths JSON-RPC.
+
+It verifies raw transactions, submits with SendTransaction, persists the exact
+bytes and notification recipients, and watches the server's tip. It reconciles
+GetTransaction before retrying the same bytes every three blocks. Signed result
+transitions are pushed to payer and payee; mesh storage carries them through
+disconnects. `submitted` is not acceptance or inclusion. `included` means one
+server-reported confirmation, `mined` means ten on testnet. A later reorg can
+downgrade either state. Expiry and conflict reports do not independently prove
+anything or release locks; only local wallet sync beyond expiry releases unspent
+reservations. Refusal does not cancel bytes already submitted.
+
+Exact error code/message pairs distinguish duplicates from queued downloads,
+full queues and a behind-tip node. Those transient cases retry, never claim
+success. Unknown errors reject conservatively. A server-reported conflicting
+Ironwood nullifier is a conflict warning, not a Merkle proof.
+
+Reachable second servers are compared, disagreements withheld, and one-source
+operation visibly warned. The Zaino secondary returned HTTP/2 **503** on
+27 October; it is not required to proceed. Endpoint evidence is in [chain.md](chain.md).
+Testnet refuses `--mine` and gateway funding; use the public faucet instead.
+
+**The owner explicitly defers PoW/MMR/txid inclusion proofs (tasks 7–9).**
+TLS lightwalletd chain state and signed gateway reports are trusted in this
+release. The remaining sections specify the eventual untrusted-gateway mainnet
+design; they must not be read as implemented security guarantees.
 
 ## Decided
 

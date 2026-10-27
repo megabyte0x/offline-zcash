@@ -10,8 +10,10 @@ pub mod envelope;
 pub mod fleet;
 pub mod messages;
 pub mod rpc;
+pub mod sync;
 pub mod verify;
 pub mod wallet;
+mod wallet_tree;
 
 pub use fleet::{DevicePublic, DeviceSecret, Fleet, Policy};
 

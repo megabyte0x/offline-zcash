@@ -23,7 +23,11 @@ fn challenge(device: &DevicePublic, r: &[u8; 32]) -> Result<pallas::Scalar> {
 }
 
 pub fn prove(me: &DeviceSecret) -> Result<String> {
-    let device = me.public()?;
+    prove_on(me, crate::fleet::Network::Regtest)
+}
+
+pub fn prove_on(me: &DeviceSecret, network: crate::fleet::Network) -> Result<String> {
+    let device = me.public_on(network)?;
     let ivk = me.fvk()?.to_ivk(Scope::External).to_bytes();
     let x = Option::<pallas::Scalar>::from(pallas::Scalar::from_repr(ivk[32..].try_into()?))
         .ok_or_else(|| anyhow!("invalid incoming scalar"))?;

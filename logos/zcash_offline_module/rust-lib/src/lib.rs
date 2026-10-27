@@ -43,6 +43,9 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Largest spendable amount and the exact builder fee. Does not lock notes or make a payment.
     fn max_payment(&mut self) -> String;
 
+    /// Splits one mined note into equal self outputs. Wait for mined and sync before going offline.
+    fn prepare_offline(&mut self, notes: i64, amount_zec: String) -> String;
+
     /// Auto-starts a device that was already joined, so restarts resume.
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
 }
@@ -74,6 +77,8 @@ fn rt() -> &'static tokio::runtime::Runtime {
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct StartOptions {
+    network: Option<zcash_offline_core::fleet::Network>,
+    birthday: Option<u32>,
     listen: Option<String>,
     dial: Option<Vec<String>>,
     rpc: Option<String>,
@@ -125,7 +130,7 @@ impl Node {
                 // Not running: name, role and address from the installed files.
                 let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(home.join("secret.json"))?)?;
                 let fleet = Fleet::load(&home.join("fleet.json"))?;
-                json!({"name": me.name, "role": me.role, "address": fleet.by_name(&me.name).ok().map(|d| d.address.clone())})
+                json!({"name": me.name, "role": me.role, "network": fleet.network, "address": fleet.by_name(&me.name).ok().map(|d| d.address.clone())})
             }
             None => json!({}),
         };
@@ -156,7 +161,7 @@ impl Node {
             return self.status_value();
         }
         let home = home()?;
-        ozm_node::join_open(&home)?;
+        ozm_node::join_open_on(&home, o.network.unwrap_or_default(), o.birthday.unwrap_or(0))?;
         let mut opts = ozm_node::RunOpts::for_home(&home);
         if let Some(l) = &o.listen {
             opts.listen = l.parse().with_context(|| format!("listen {l}"))?;
@@ -226,6 +231,12 @@ impl ZcashOfflineModule for Node {
     fn check_rpc(&mut self, rpc_url: String) -> String {
         out((|| {
             anyhow::ensure!(!rpc_url.trim().is_empty(), "chain RPC URL is required");
+            let network = Fleet::load(&home()?.join("fleet.json")).map(|f| f.network).unwrap_or_default();
+            if network == zcash_offline_core::fleet::Network::Testnet {
+                let servers = rpc_url.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>();
+                let source = rt().block_on(ozm_node::lightwallet::Lightwallet::connect(&servers))?;
+                return Ok(json!({"chain": "testnet", "blocks": source.tip, "sources": source.sources}));
+            }
             let info = zcash_offline_core::rpc::Rpc::new(&rpc_url).call("getblockchaininfo", json!([]))?;
             anyhow::ensure!(info["blocks"].is_u64() && info["chain"].is_string(), "RPC returned no blockchain information");
             Ok(info)
@@ -286,6 +297,14 @@ impl ZcashOfflineModule for Node {
 
     fn max_payment(&mut self) -> String {
         out(self.app().and_then(|a| a.max_payment()))
+    }
+
+    fn prepare_offline(&mut self, notes: i64, amount_zec: String) -> String {
+        out((|| {
+            let notes = u32::try_from(notes).context("positive note count")?;
+            let payment = rt().block_on(self.app()?.prepare_offline(notes, parse_zec(&amount_zec)?))?;
+            Ok(serde_json::to_value(payment)?)
+        })())
     }
 
     fn request_funds(&mut self, notes: i64, amount_zec: String) -> String {

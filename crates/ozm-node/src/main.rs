@@ -33,6 +33,10 @@ enum Cmd {
         devices: Vec<String>,
         #[arg(long, default_value = "ozm-fleet")]
         name: String,
+        #[arg(long, default_value = "regtest")]
+        network: zcash_offline_core::fleet::Network,
+        #[arg(long, default_value_t = 0)]
+        birthday: u32,
     },
     /// Install an invite file (fleet + this device's keys) into the home directory.
     Join {
@@ -50,6 +54,10 @@ enum Cmd {
         /// Zakura JSON-RPC URL (gateway only).
         #[arg(long, env = "OZM_RPC")]
         rpc: Option<String>,
+        #[arg(long, env = "OZM_NETWORK", default_value = "regtest")]
+        network: zcash_offline_core::fleet::Network,
+        #[arg(long, env = "OZM_BIRTHDAY", default_value_t = 0)]
+        birthday: u32,
         /// Gateway on Regtest: mine a block after each submission and serve test funds.
         #[arg(long, env = "OZM_MINE")]
         mine: bool,
@@ -88,6 +96,15 @@ enum Cmd {
     },
     /// Quote the largest payment and its exact ZIP 317 builder fee without spending.
     Max {
+        #[arg(long, env = "OZM_API_URL", default_value = API_URL)]
+        api: String,
+    },
+    /// Prepare for offline: split one mined note, then wait for the payment's mined state and sync.
+    Prepare {
+        #[arg(long, default_value_t = 10)]
+        notes: u32,
+        #[arg(long, default_value = "0.0101")]
+        amount: String,
         #[arg(long, env = "OZM_API_URL", default_value = API_URL)]
         api: String,
     },
@@ -144,8 +161,8 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ozm_mesh=info".into()))
         .init();
     match Cli::parse().cmd {
-        Cmd::FleetInit { out, devices, name } => {
-            let result = ozm_node::fleet_init(&FleetInitOptions { out, devices, name })?;
+        Cmd::FleetInit { out, devices, name, network, birthday } => {
+            let result = ozm_node::fleet_init(&FleetInitOptions { out, devices, name, network, birthday })?;
             for d in &result.devices {
                 println!("{:<8} {:<14} peer {}  {}", d.name, d.role, d.peer_id, d.address);
             }
@@ -153,10 +170,9 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Join { invite, home } => join(&invite, home),
-        Cmd::Start { home, dial, rpc, mine, ble, api, listen, no_open } => {
+        Cmd::Start { home, dial, rpc, network, birthday, mine, ble, api, listen, no_open } => {
             let home = home_dir(home)?;
-            ozm_node::join_open(&home)?;
-            run(RunOpts { listen, dial, rpc, mine, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
+            run(RunOpts { listen, dial, rpc, network, birthday, mine, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
             .await
         }
         Cmd::Run(o) => run(o).await,
@@ -175,6 +191,21 @@ async fn main() -> Result<()> {
         }
         Cmd::Pay { to, amount, api } => client(&api, "POST", "/api/pay", Some(json!({"to": to, "amount": amount}))),
         Cmd::Max { api } => client(&api, "GET", "/api/max", None),
+        Cmd::Prepare { notes, amount, api } => {
+            let payment = client_value(&api, "POST", "/api/prepare", Some(json!({"notes": notes, "amount": amount})))?;
+            let txid = payment["txid"].as_str().ok_or_else(|| anyhow!("split returned no txid"))?;
+            println!("Split {txid}; waiting for gateway-reported mined state…");
+            loop {
+                let list = client_value(&api, "GET", "/api/payments", None)?;
+                let p = list["payments"].as_array().and_then(|ps| ps.iter().find(|p| p["txid"] == txid))
+                    .ok_or_else(|| anyhow!("split is missing from payment history"))?;
+                let state = p["state"].as_str().unwrap_or_default();
+                if state == "mined" { break; }
+                anyhow::ensure!(!matches!(state, "expired" | "conflict" | "gateway-rejected"), "split {state}; inspect payment history before retrying");
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            client(&api, "POST", "/api/sync", None)
+        },
         Cmd::Sync { api } => client(&api, "POST", "/api/sync", None),
         Cmd::Fund { notes, amount, api } => client(&api, "POST", "/api/fund", Some(json!({"notes": notes, "amount": amount}))),
         Cmd::Status { api } => client(&api, "GET", "/api/status", None),
@@ -208,6 +239,11 @@ async fn run(o: RunOpts) -> Result<()> {
 }
 
 fn client(api: &str, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&client_value(api, method, path, body)?)?);
+    Ok(())
+}
+
+fn client_value(api: &str, method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value> {
     let url = format!("{}{}", api.trim_end_matches('/'), path);
     // The local UI bootstraps the per-run token; same-origin policy prevents remote sites reading it.
     let html = ureq::get(&format!("{}/", api.trim_end_matches('/'))).call()?.into_string()?;
@@ -223,9 +259,6 @@ fn client(api: &str, method: &str, path: &str, body: Option<serde_json::Value>) 
         Err(ureq::Error::Status(_, r)) => (false, r.into_json()?),
         Err(e) => return Err(anyhow!("{url}: {e} (is `ozm-node start` running?)")),
     };
-    println!("{}", serde_json::to_string_pretty(&v)?);
-    if !ok {
-        std::process::exit(1);
-    }
-    Ok(())
+    anyhow::ensure!(ok, "{}", v["error"].as_str().unwrap_or("request failed"));
+    Ok(v)
 }

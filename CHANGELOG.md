@@ -4,13 +4,33 @@ All notable changes to this project are documented here, following
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-This is experimental software for a local NU7 Regtest chain with test coins.
+This is experimental software for NU7 public testnet and a local Regtest harness with test coins.
 It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-27
+
+### Added
+- Public-testnet fleets and persistent local identities, with `utest1` addresses, a configurable birthday at/after NU7 and a GetTreeState-seeded Ironwood tree. Regtest remains the serde/startup default, with birthday 1.
+- Configurable TLS lightwalletd gateway servers, compact GetBlockRange sync and SendTransaction submission, without a full node or gateway viewing-key scanning. Keep ths v0.4.1 JSON-RPC benches working; refuse public mining and gateway faucet requests.
+- Prepare for offline in CLI, web, Basecamp and Android: split one mined note into equal notes with the ZIP 317 action-count fee. Wait for mining and wallet sync before going offline; never spend unmined change.
+- Gateway watcher persists exact transaction bytes, retries every three blocks until expiry, and pushes signed submitted/included/mined/expiry/conflict results to payer and payee. Testnet inclusion is 1 confirmation; mined is 10, and reorgs can downgrade either.
+
 ### Changed
 - Pin the offline builder and receiving-authority proofs to Zakura Common 4.0.0, using its matching note-encryption and Pasta crates. The Basecamp service uses Rust 1.97.1.
+- Compact mesh sync transports Ironwood nf/cmx/epk/52-byte ciphertext, run-length empty blocks and digest-checked 3 KiB chunks, including splits within a block. Persist a pruned ShardTree with 200 checkpoints/roots and rewind instead of clearing the wallet on ordinary reorgs.
+- Sync/control messages use 512 B / 4 KiB / 16 KiB padding buckets; pay/sub/receipt padding is unchanged. Height/hash tips coalesce for 15 minutes or 200 blocks, with immediate payment results and manual refresh. Checkpoint history travels only on divergence. The dated daily replay measures 1.14 MB compact payload / 2.12 MB framed sync, versus 79.80 MB before batching; including hourly signed presence and idle control gives 2.40 MB per BLE link / 2.52 MB TCP. Radio/IP headers and reconnect/reorg traffic are excluded. Presence is immediate on link-up, otherwise hourly with three-hour expiry; gateway changes/loss may take an hour to be noticed on stable links. Payload and full-stream counters are distinct; sizes and timing still distinguish sync from payments.
+- Android version is 0.7.0 (version code 9); all four Logos packages share the same engine and version.
+
+### Security
+- Keep chain state and included/mined explicitly gateway-reported. Compare reachable configured servers' hashes, compact ranges, frontiers and transaction answers, withholding disagreements and warning on single-source operation. TLS/agreement are not chain proofs; PoW/MMR/inclusion tasks 7–9 remain deferred.
+- Match exact submit codes/messages; queued downloads, queue-full and behind-tip errors retry rather than claiming acceptance. Unknown error wording never becomes duplicate success.
+- Release unspent reservations only when local compact scan passes the transaction's inclusive expiry, retaining enough history to relock after a rewind below expiry. A gateway expiry report alone cannot unlock notes. Refusal now warns that the transaction may still mine until expiry.
+
+### Known limitations
+- The Zaino secondary returned HTTP 503. Valar queued our claim but failed with `the wallet cannot pay this address`; zecpages timed out after 30001 ms. The funded public split/payment/ten-confirmation run and independent confirmation remain unverified; releasing without that run is an explicit owner exception.
+- No macOS, physical radio or native Android-screen run establishes this version. Ten confirmations are not testnet finality. The approximate 1.2 MB/day budget must include mesh control, padding and framing, not just compact protobuf.
 
 ## [0.6.0] - 2026-10-27
 
@@ -115,7 +135,8 @@ It is not security reviewed and does not support real funds.
 - Offline payee checks, signed pending receipts, idempotent gateway submission/mining and signed gateway-reported results.
 - Four-container benchmarks for multi-hop delivery, restart recovery and payment handling.
 
-[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.4.1...v0.5.0

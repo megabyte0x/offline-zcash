@@ -126,10 +126,28 @@ pub fn build_payment(
     policy: &Policy,
 ) -> Result<BuiltPayment> {
     ensure!(amount > 0, "amount must be positive");
+    let (positions, fee) = select_notes(state, amount, policy)?;
+    build_selected(state, me, &[(to, amount)], positions, fee, policy)
+}
+
+/// Turn one mined note into equal self outputs, with the actual action-count fee.
+pub fn prepare_offline(state: &mut WalletState, me: &DeviceSecret, count: u32, value: u64, policy: &Policy) -> Result<BuiltPayment> {
+    ensure!((2..=100).contains(&count) && value > 0, "prepare needs 2–100 positive notes");
+    let amount = value.checked_mul(count as u64).ok_or_else(|| anyhow!("split amount overflow"))?;
+    let fee_without_change = transaction_fee(count as usize, policy)?;
+    let fee_with_change = transaction_fee(count as usize + 1, policy)?;
+    let note = state.notes.iter().filter(|n| n.spendable()).filter_map(|n| {
+        let fee = if n.value.checked_sub(amount) == Some(fee_without_change) { fee_without_change } else { fee_with_change };
+        amount.checked_add(fee).filter(|need| n.value >= *need).map(|_| (n, fee))
+    }).min_by_key(|(n, _)| n.value).ok_or_else(|| anyhow!("no single mined note covers the split plus fee"))?;
+    build_selected(state, me, &vec![(me.address()?, value); count as usize], vec![note.0.position], note.1, policy)
+}
+
+fn build_selected(state: &mut WalletState, me: &DeviceSecret, outputs: &[(orchard::Address, u64)], positions: Vec<u64>, fee: u64, policy: &Policy) -> Result<BuiltPayment> {
+    let amount = outputs.iter().map(|(_, value)| value).sum::<u64>();
     ensure!(state.tip_height > 0, "wallet has never synced; sync while online first");
     let branch = BranchId::try_from(policy.branch_id).map_err(|e| anyhow!("branch id: {e}"))?;
     ensure!(branch == BranchId::Nu7, "only NU7 (v6, Ironwood) is supported");
-    let (positions, fee) = select_notes(state, amount, policy)?;
     let sk = me.spending_key()?;
     let fvk = me.fvk()?;
     let notes: Vec<_> = positions
@@ -157,8 +175,10 @@ pub fn build_payment(
     }
     let mut memo = [0u8; 512];
     memo[0] = 0xF6; // "no memo"
-    b.add_output(Some(fvk.to_ovk(Scope::External)), to, NoteValue::from_raw(amount), memo)
-        .map_err(|e| anyhow!("add_output: {e:?}"))?;
+    for (to, value) in outputs {
+        b.add_output(Some(fvk.to_ovk(Scope::External)), *to, NoteValue::from_raw(*value), memo)
+            .map_err(|e| anyhow!("add_output: {e:?}"))?;
+    }
     let change = total - amount - fee;
     if change > 0 {
         b.add_output(Some(fvk.to_ovk(Scope::Internal)), fvk.address_at(0u32, Scope::External), NoteValue::from_raw(change), memo)
@@ -170,8 +190,8 @@ pub fn build_payment(
         .build::<ZatBalance>(StdRng::from_seed(seed))
         .map_err(|e| anyhow!("build: {e:?}"))?
         .ok_or_else(|| anyhow!("empty bundle"))?;
-    ensure!(fee >= transaction_fee(bundle.actions().len(), policy)?, "planned fee differs from built action count");
-    let expiry_height = state.tip_height + policy.expiry_delta;
+    ensure!(fee == transaction_fee(bundle.actions().len(), policy)?, "planned fee differs from built action count");
+    let expiry_height = state.tip_height.checked_add(policy.expiry_delta).ok_or_else(|| anyhow!("expiry overflow"))?;
 
     let mut rng = UnwrapErr(SysRng);
     let t = std::time::Instant::now();
@@ -189,9 +209,7 @@ pub fn build_payment(
     let mut raw = vec![];
     tx.write(&mut raw)?;
     let txid = tx.txid().to_string();
-    for n in state.notes.iter_mut().filter(|n| positions.contains(&n.position)) {
-        n.locked_by = Some(txid.clone());
-    }
+    state.lock_notes(&positions, &txid, expiry_height);
     Ok(BuiltPayment {
         raw,
         txid,

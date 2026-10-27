@@ -31,6 +31,10 @@ class MeshService : Service() {
             if (JSONObject(joined).has("error")) joined else startNode()
         }, result)
         fun start(result: (String) -> Unit) = call({ startNode() }, result)
+        fun startOn(network: String, result: (String) -> Unit) = call({
+            getSharedPreferences("mesh", MODE_PRIVATE).edit().putString("network", network).apply()
+            startNode()
+        }, result)
         fun radio() = radioStatus
     }
     private val binder = LocalBinder()
@@ -51,7 +55,8 @@ class MeshService : Service() {
     }
 
     private fun startNode(): String {
-        val result = node.start("{}") // LAN discovery remains enabled, even on a Wi-Fi without internet.
+        val network = getSharedPreferences("mesh", MODE_PRIVATE).getString("network", "regtest")
+        val result = node.start(JSONObject().put("network", network).toString()) // Existing fleet files remain authoritative.
         if (!JSONObject(result).has("error") && ble == null) {
             multicast = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createMulticastLock("ozm-discovery").apply { setReferenceCounted(false); acquire() }
             radioStatus = "BLE + LAN enabled · radio operation still experimental"

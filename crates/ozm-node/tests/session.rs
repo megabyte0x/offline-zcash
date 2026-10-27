@@ -6,6 +6,7 @@ fn generated_invites_join_and_never_overwrite_keys() {
     let mut o = FleetInitOptions {
         out: dir.path().join("session"),
         name: "Three laptops".into(),
+        network: Default::default(), birthday: 0,
         devices: vec!["Operator:gateway+relay".into(), "Alice:payer+payee".into(), "Bob:payee".into()],
     };
     let result = fleet_init(&o).unwrap();
@@ -39,6 +40,7 @@ async fn gateway_configuration_reuses_mesh_and_requires_invite_role() {
     let dir = tempfile::tempdir().unwrap();
     let result = fleet_init(&FleetInitOptions {
         out: dir.path().join("fleet"), name: "Roles".into(),
+        network: Default::default(), birthday: 0,
         devices: vec!["D:relay+gateway".into(), "A:payer+payee".into()],
     }).unwrap();
     for device in &result.devices {
@@ -72,10 +74,26 @@ async fn gateway_configuration_reuses_mesh_and_requires_invite_role() {
 }
 
 #[tokio::test]
-async fn open_identity_persists_and_signed_gateways_rank_by_hops_then_tip() {
+async fn open_identity_persists_and_first_used_gateway_stays_pinned() {
     use ozm_mesh::{MeshEvent, MsgId};
     use zcash_offline_core::{envelope::{self, Inner}, messages::{now_ms, Body, Presence, Signed}, DeviceSecret};
     let dir = tempfile::tempdir().unwrap();
+    for (network, birthday, prefix) in [
+        (zcash_offline_core::fleet::Network::Regtest, 1, "uregtest1"),
+        (zcash_offline_core::fleet::Network::Testnet, 4_465_026, "utest1"),
+    ] {
+        let home = dir.path().join(network.to_string());
+        let mut opts = RunOpts::for_home(&home);
+        opts.network = network;
+        opts.listen = "127.0.0.1:0".parse().unwrap();
+        opts.discover = false;
+        opts.auto_sync_secs = 0;
+        let app = start(&opts).await.unwrap();
+        assert_eq!(app.cfg.fleet.birthday, birthday);
+        assert!(app.status()["address"].as_str().unwrap().starts_with(prefix));
+        assert!(app.request_funds(2, 10_000).await.is_err());
+        app.mesh.shutdown();
+    }
     let incomplete = dir.path().join("missing-keys");
     std::fs::create_dir(&incomplete).unwrap();
     std::fs::write(incomplete.join("fleet.json"), b"preserve existing device").unwrap();
@@ -100,7 +118,7 @@ async fn open_identity_persists_and_signed_gateways_rank_by_hops_then_tip() {
         (&c, 1, 21, true, false), (&c, 1, 21, false, true),
     ] {
         let mut p = Signed::sign(Presence { device: key.public().unwrap(), gateway: true, tip,
-            created_ms: if stale { now_ms() - 40_000 } else { now_ms() },
+            created_ms: if stale { now_ms() - 700_000 } else { now_ms() },
             address_proof: zcash_offline_core::binding::prove(key).unwrap() }, key).unwrap();
         if corrupt { p.body.tip += 1; }
         let inner = Inner { from: key.name.clone(), from_key: key.public().unwrap().ed25519, body: Body::Presence(p) };
@@ -118,9 +136,12 @@ async fn open_identity_persists_and_signed_gateways_rank_by_hops_then_tip() {
     let inner = envelope::authenticate(inner, &c, &recipient).unwrap();
     app.handle_mesh_event(MeshEvent::Message { from: c.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
         payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    // First valid gateway presence starts sync and pins a; a later higher tip cannot replace it.
+    assert_eq!(app.status()["selected_gateway"]["peer_id"], a.public().unwrap().peer_id);
+    let c = a;
     assert_eq!(app.status()["selected_gateway"]["peer_id"], c.public().unwrap().peer_id);
     assert_eq!(app.status()["selected_gateway"]["trust"], "gateway-reported");
-    app.request_mesh_sync(true).await.unwrap(); // Pins c at first use, not at first announcement.
+    app.request_mesh_sync(true).await.unwrap();
     let forged = Inner { from: c.name.clone(), from_key: c.public().unwrap().ed25519,
         body: Body::SyncRes { reset: false, prev_hash: String::new(), chain_tip: 1,
             blocks: vec![zcash_offline_core::wallet::BlockData { height: 1, hash: "block1".into(), txs: vec![] }] } };
@@ -147,6 +168,46 @@ async fn open_identity_persists_and_signed_gateways_rank_by_hops_then_tip() {
     let restarted = start(&o).await.unwrap();
     assert!(restarted.status()["gateway_warning"].as_str().unwrap().contains(&c.public().unwrap().peer_id));
     restarted.mesh.shutdown();
+}
+
+#[tokio::test]
+async fn compact_requests_send_history_only_after_a_matching_gateway_challenge() {
+    use ozm_mesh::{MeshEvent, MsgId};
+    use zcash_offline_core::{envelope::{self, Inner}, messages::Body, DeviceSecret};
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "sync".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A:payer".into(), "G:gateway".into()] }).unwrap();
+    let home = dir.path().join("A");
+    join_invite(&std::fs::read_to_string(&fleet.devices[0].invite_path).unwrap(), &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    let app = start(&opts).await.unwrap();
+    let hash = "ab".repeat(32);
+    {
+        let mut st = app.state.lock().unwrap();
+        st.0.tip_height = 200;
+        st.0.tip_hash = hash.clone();
+        st.0.hashes = (1..=200).map(|h| (h, hash.clone())).collect();
+    }
+    app.request_mesh_sync(true).await.unwrap();
+    let g: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[1].secret_path).unwrap()).unwrap();
+    let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+    for body in [
+        Body::Tip { height: 200, hash: hash.clone() },
+        Body::CheckpointReq { have_height: 199, have_hash: hash.clone() },
+        Body::CheckpointReq { have_height: 200, have_hash: "wrong".into() },
+        Body::CheckpointReq { have_height: 200, have_hash: hash },
+    ] {
+        let inner = envelope::authenticate(Inner { from: "G".into(), from_key: g.public().unwrap().ed25519, body }, &g, &recipient).unwrap();
+        app.handle_mesh_event(MeshEvent::Message { from: g.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
+            payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    }
+    let events = std::fs::read_to_string(opts.data.join("events.jsonl")).unwrap();
+    let sizes: Vec<_> = events.lines().map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+        .filter(|v| v["event"] == "mesh-send" && v["detail"]["kind"] == "syncq")
+        .map(|v| v["detail"]["bytes"].as_u64().unwrap()).collect();
+    assert_eq!(sizes, vec![512 + 65, 16384 + 65]);
+    app.mesh.shutdown();
 }
 
 #[tokio::test]

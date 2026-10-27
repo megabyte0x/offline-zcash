@@ -46,7 +46,12 @@ fn kdf(shared: &[u8; 32], eph: &[u8; 32], recipient: &[u8; 32]) -> [u8; 32] {
 pub fn seal(inner: &Inner, recipient_x25519: &[u8; 32]) -> Result<Vec<u8>> {
     let body = bincode::serialize(inner)?;
     ensure!(body.len() + 4 <= MAX_PLAINTEXT, "message too large");
-    let padded_len = (body.len() + 4).div_ceil(PAD) * PAD;
+    let message = match &inner.body { Body::Auth { body, .. } => bincode::deserialize(body)?, b => b.clone() };
+    let control = !matches!(message, Body::Pay { .. } | Body::Sub { .. } | Body::Rcpt(_));
+    let len = body.len() + 4;
+    let padded_len = if control {
+        match len { 0..=512 => 512, 513..=4096 => 4096, _ => len.div_ceil(16 * 1024) * 16 * 1024 }
+    } else { len.div_ceil(PAD) * PAD };
     let mut plain = Vec::with_capacity(padded_len);
     plain.extend_from_slice(&(body.len() as u32).to_le_bytes());
     plain.extend_from_slice(&body);
@@ -152,6 +157,27 @@ mod tests {
         assert!(authenticated_body(&signed, &a.public().unwrap(), &c.public().unwrap().x25519().unwrap()).is_err());
         if let Body::Auth { body, .. } = &mut signed.body { body[4] ^= 1; }
         assert!(authenticated_body(&signed, &a.public().unwrap(), &recipient).is_err());
+    }
+
+    #[test]
+    fn compact_sync_fits_small_buckets_without_changing_payment_padding() {
+        let a = DeviceSecret::generate("A", "payer");
+        let g = DeviceSecret::generate("G", "gateway");
+        let recipient = a.public().unwrap().x25519().unwrap();
+        let hash = "ab".repeat(32);
+        for (body, padded) in [
+            (Body::Tip { height: 4_550_000, hash: hash.clone() }, 512),
+            (Body::CompactReq { have_height: 4_550_000, have_hash: hash.clone(), checkpoints: vec![], birthday: 4_465_026 }, 512),
+            (Body::CompactPart(crate::sync::Part { id: "ab".repeat(64), index: 0, count: 1, data: vec![7; crate::sync::CHUNK_BYTES] }), 4096),
+            (Body::CompactReq { have_height: 4_550_000, have_hash: hash.clone(),
+                checkpoints: (4_549_801..=4_550_000).map(|h| (h, hash.clone())).collect(), birthday: 4_465_026 }, 16384),
+            (Body::Sub { tx: vec![7; 9166], txid: hash, notify: vec![] }, 12288),
+        ] {
+            let inner = authenticate(Inner { from: g.name.clone(), from_key: g.public().unwrap().ed25519, body: body.clone() }, &g, &recipient).unwrap();
+            let bytes = seal(&inner, &recipient).unwrap();
+            assert_eq!(bytes.len(), padded + 65);
+            assert_eq!(authenticated_body(&open(&bytes, &a.x25519_secret().unwrap()).unwrap(), &g.public().unwrap(), &recipient).unwrap(), body);
+        }
     }
 
     #[test]

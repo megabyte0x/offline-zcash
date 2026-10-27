@@ -75,10 +75,13 @@ Rectangle {
             width: scroll.availableWidth
             spacing: 12
             Text { text: "Offline Zcash Organiser"; color: root.fg; font.pixelSize: 24; font.bold: true }
-            Label2 { text: "Create a Regtest session and give each person only their own invite. All installed Offline Zcash apps share one device." }
+            Label2 { text: "Create a test-coin session and give each person only their own invite. All installed Offline Zcash apps share one device." }
             Label2 { text: root.st && root.st.joined ? "This device: " + root.st.name + " · " + root.st.role : "This device has not joined a fleet" }
             Label2 { text: "Session name" }
             Field { id: sessionName; objectName: "sessionName"; text: "Three laptops"; Accessible.name: "Session name" }
+            Label2 { text: "Network and first scan height · choose a birthday before receiving funds; 0 uses 1 on Regtest / 4465026 on testnet" }
+            ComboBox { id: network; model: ["regtest", "testnet"]; Accessible.name: "Fleet network" }
+            Field { id: birthday; text: "0"; Accessible.name: "Fleet birthday height" }
             Label2 { text: "Devices · names use letters, digits, - or _ · combine roles as needed" }
             Repeater {
                 model: devices
@@ -133,7 +136,7 @@ Rectangle {
                         if (d.gatewayRole) roles.push("gateway")
                         list.push(d.deviceName.trim() + ":" + roles.join("+"))
                     }
-                    var opts = { out: folder.text.trim(), name: sessionName.text.trim(), devices: list }
+                    var opts = { out: folder.text.trim(), name: sessionName.text.trim(), devices: list, network: network.currentText, birthday: Number(birthday.text) }
                     if ((!root.st || !root.st.joined) && joinName.text.trim() !== "") opts.join_device = joinName.text.trim()
                     root.busy = true; root.message = "Creating…"; root.failed = false
                     root.call("fleet_init", [JSON.stringify(opts)], function (r) {

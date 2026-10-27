@@ -44,6 +44,11 @@
     <div class="mut" id="gateway"></div>
     <button id="syncb">Sync now</button>
     <button id="fundb">Get test funds from the gateway (5 × 0.1 ZEC)</button>
+    <p id="faucet" class="mut" hidden>Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; service may fail). No gateway faucet.</p>
+    <label for="notes">Prepare for offline · equal notes</label><input id="notes" type="number" min="2" max="100" value="10">
+    <label for="notevalue">TAZ / ZEC per note</label><input id="notevalue" value="0.0101" inputmode="decimal">
+    <button id="prepareb">Prepare for offline</button>
+    <p class="mut">Splits one mined note; fee grows with action count. Wait for mined and sync before going offline. Never spend unmined change.</p>
     <div class="mut" id="syncmsg"></div>
   </section>
   <section>
@@ -89,17 +94,20 @@ async function refresh() {
   try {
     const s = await api('/api/status');
     $('ver').textContent = 'v' + s.version;
-    $('who').textContent = s.name + ' · ' + s.role;
+    $('who').textContent = s.name + ' · ' + s.role + ' · ' + s.network;
     $('online').textContent = s.online ? 'gateway / online' : 'offline';
     $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');
     $('bal').textContent = zec(s.wallet.spendable);
     $('wal').textContent = `locked in pending payments: ${zec(s.wallet.locked)} · ${s.wallet.notes} notes · synced to height ${s.wallet.tip}`;
     const g = s.selected_gateway;
-    $('gateway').textContent = g ? `Gateway ${g.name} · ${g.peer_id} · ${g.hops} hops · tip ${g.tip} (gateway-reported)` : s.online ? 'Local chain RPC · results are gateway-reported' : 'Finding a gateway · sync and results are gateway-reported';
+    $('gateway').textContent = g ? `Gateway ${g.name} · ${g.peer_id} · ${g.hops} hops · tip ${g.tip} (gateway-reported)` : s.online ? 'Chain service · results are gateway-reported' : 'Finding a gateway · sync and results are gateway-reported';
     if (s.gateway_warning) $('gateway').textContent += ' · WARNING: ' + s.gateway_warning;
+    $('gateway').textContent += s.single_source ? ' · WARNING: single source (or not connected)' : ' · compared sources: ' + s.chain_sources.length;
     $('addr').textContent = s.address || '';
     $('syncb').textContent = s.online ? 'Sync now (from the node)' : 'Sync now (from a gateway over the mesh)';
-    $('fundb').style.display = s.online ? 'none' : '';
+    $('fundb').style.display = s.online || s.network === 'testnet' ? 'none' : '';
+    $('faucet').hidden = s.network !== 'testnet';
+    $('to').placeholder = s.network === 'testnet' ? 'utest1…' : 'uregtest…';
     $('mesh').textContent = `peer ${s.peer_id} · frames sent ${s.mesh.frames_sent} / received ${s.mesh.frames_received} · relayed ${s.mesh.packets_relayed} · stored ${s.mesh.stored} · Bluetooth ${s.ble ? (s.ble_running ? 'on' : 'stopped — restart node') : 'off'}`;
     const p = await api('/api/payments');
     $('pays').replaceChildren();
@@ -107,7 +115,7 @@ async function refresh() {
       const row = element('tr');
       row.append(element('td', new Date(x.created_ms).toLocaleTimeString()), element('td', x.direction), element('td', x.counterparty, 'mono'), element('td', zec(x.amount)));
       const state = element('td');
-      state.append(element('span', x.state, 'st ' + (['mined', 'refused', 'gateway-rejected'].includes(x.state) ? x.state : 'submitted')));
+      state.append(element('span', x.state + (['included', 'mined'].includes(x.state) ? ' (gateway-reported)' : ''), 'st ' + (['mined', 'refused', 'gateway-rejected'].includes(x.state) ? x.state : 'submitted')));
       if (x.direction === 'sent' && !x.receipt_peer) state.append(element('div', 'No payee receipt', 'mut'));
       const details = element('details');
       details.append(element('summary', 'history'));
@@ -120,7 +128,7 @@ async function refresh() {
       const cell = element('td', 'No payments yet', 'mut'); cell.colSpan = 6;
       const row = element('tr'); row.append(cell); $('pays').append(row);
     }
-    $('refs').replaceChildren(...p.refusals.map(r => element('div', `Refused from ${r.from}: code ${r.reject.code} ${r.reject.reason}`)));
+    $('refs').replaceChildren(...p.refusals.map(r => element('div', `Refused, may still mine until expiry — from ${r.from}: code ${r.reject.code} ${r.reject.reason}`)));
   } catch (e) { $('who').textContent = 'node not reachable: ' + e.message; }
 }
 $('payb').onclick = async () => {
@@ -148,6 +156,12 @@ $('fundb').onclick = async () => {
   try { const r = await api('/api/fund', { notes: 5, amount: '0.1' }); $('syncmsg').textContent = `Asked ${r.requested_from}; funds arrive after they are mined (about a minute)`; }
   catch (e) { $('syncmsg').textContent = e.message; }
   $('fundb').disabled = false;
+};
+$('prepareb').onclick = async () => {
+  $('prepareb').disabled = true; $('syncmsg').textContent = 'Proving split…';
+  try { const p = await api('/api/prepare', { notes: Number($('notes').value), amount: $('notevalue').value }); $('syncmsg').textContent = `Split ${p.txid}. Wait for mined (10 confirmations on testnet), then sync before going offline.`; }
+  catch (e) { $('syncmsg').textContent = e.message; }
+  $('prepareb').disabled = false; refresh();
 };
 refresh(); setInterval(refresh, 2000);
 </script>

@@ -2,8 +2,8 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. This is a local NU7 Regtest build with **test
-coins only**, not real ZEC.
+mesh nodes or listening ports. v0.7.0 supports NU7 public testnet and local Regtest,
+with **test coins only**, not real ZEC.
 
 | Your job | Install these packages |
 |---|---|
@@ -24,6 +24,46 @@ support is pending upstream in
 [logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527).
 If discovery fails, use **Dial address** = `<operator-ip>:7777`. All three Macs
 must use the same non-isolating Wi-Fi; it does not need internet.
+
+## Public testnet (v0.7.0)
+
+Install the v0.7.0 service and apps together. Keep a separate Basecamp user directory
+for each network; never change an existing funded wallet's fleet network.
+
+1. In **Organiser**, select `testnet` and a birthday at or after **4,465,026**,
+   before funds are sent. `0` selects that activation height (Regtest selects 1).
+   A recent height reduces initial sync, but excludes earlier payments. Create a
+   `Gateway:gateway+relay` invite and give it only to the internet device.
+2. In **Gateway**, join that invite. The fleet network selects TLS lightwalletd,
+   not the server's ambiguous `chain: test` string. Use the configurable
+   comma-separated servers `https://testnet.zec.rocks:443,https://zaino.testnet.unsafe.zec.rocks:443`.
+   Check and Start; mining is disabled on testnet. No VPS/full node is needed.
+3. On wallet devices, choose `testnet` and the birthday in **Offline Zcash** before
+   first Start (or use matching invites). The LAN gateway transports compact
+   blocks; wallets decrypt locally, without sharing viewing keys. Preserve keys
+   and wallet data across restart.
+4. Copy a wallet's `utest1` address to [Valar](https://faucet.testnet.valargroup.dev).
+   Its advertised allowance is 0.125 TAZ/address/24 h. There is **no gateway faucet**
+   on testnet. Our orb claim failed `the wallet cannot pay this address`; zecpages
+   timed out after 30001 ms. [Exact evidence](components/offline-builder.md#v070-testnet-note-plan).
+5. After funding and sync, use **Prepare for offline**, for example 10 notes of
+   0.0101 TAZ. Larger splits pay ZIP 317's action-count fee above the 10,000-zat
+   two-action floor. Wait for `mined` and sync until the notes are spendable,
+   then disconnect wallet devices from internet and pay by address over the mesh.
+   Never spend unmined change.
+
+`submitted` is not inclusion. `included` is 1 confirmation; `mined` is 10.
+**Both are gateway-reported, not PoW/MMR/inclusion proofs.** Testnet reorgs can
+downgrade either state. The gateway watches tips and pushes results to payer and
+payee; it retries the same transaction every three blocks until expiry. A refusal
+may still mine until expiry. Compact wallets rewind retained checkpoints instead
+of wiping history on every reorg.
+
+Zaino returned HTTP 503 on 27 October. The app displays **single source** when
+only the primary answers, compares reachable servers, and withholds disagreement;
+agreement is not independent chain verification. The funded public split/payment
+run is unverified because faucet funding failed; local-chain and read-only public
+checks must not be represented as a successful public payment.
 
 ## Install Basecamp and the packages
 
@@ -69,7 +109,7 @@ logosctl call zcash_offline_module status
 
 `logosctl` installs into its own session, **not Basecamp's data directory**.
 Use Basecamp's Package Repositories screen for Basecamp installs. The catalogue
-selects the newest release; add `--version 0.6.0` to pin a CLI install.
+selects the newest release; add `--version 0.7.0` to pin a CLI install.
 Its identity card points to `releases/latest/download/index.json`; every release
 also attaches its own index, merged packages and `catalogue.sha256`. Content
 roots bind the index to the downloaded packages, but do not authenticate the
@@ -77,11 +117,11 @@ publisher. Packages are unsigned (`trustedSigners` is empty).
 
 ### Manual LGX fallback
 
-From [Offline Zcash v0.6.0](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.6.0),
+From [Offline Zcash v0.7.0](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.7.0),
 download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`
-(or the merged `<name>-0.6.0.lgx` files, which contain all three):
+(or the merged `<name>-0.7.0.lgx` files, which contain all three):
 
-1. `zcash_offline_module-0.6.0-<platform>.lgx` — **Offline Zcash service**, always needed.
+1. `zcash_offline_module-0.7.0-<platform>.lgx` — **Offline Zcash service**, always needed.
 2. The apps from the table above: `zcash_offline_ui`,
    `zcash_offline_organiser`, `zcash_offline_gateway`, with the same version/platform suffix.
 

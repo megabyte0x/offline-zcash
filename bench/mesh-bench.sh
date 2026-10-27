@@ -196,7 +196,7 @@ PY
   declare -A EXPECT=([amount]=11 [payee]=4 [sig]=5 [branch]="1 2" [expired]=7)
   for t in amount payee sig branch expired; do
     local txt; txt=$(node A tampered --to B --amount 0.01 --tamper "$t" | jq -r .txid)
-    if wait_until 60 "B refuses $t" bash -c "$(declare -f node payments pay_state); pay_state A $txt refused"; then
+    if wait_until 60 "B refuses $t" bash -c "$(declare -f node payments pay_state); pay_state A $txt 'refused, may still mine until expiry'"; then
       local c; c=$(payments B | jq -r --arg t "$txt" '[.refusals[] | select(.txid==$t)][0].reject | "\(.code) \(.reason)"')
       if [[ " ${EXPECT[$t]} " == *" ${c%% *} "* ]]; then ok "4 $t refused: code $c"; else fail "4 $t refused with unexpected code $c"; fi
     else fail "4 $t not refused"; fi

@@ -11,6 +11,7 @@ zcash_primitives = { package = "zakura-primitives", version = "=4.0.0", features
 zcash_protocol = { package = "zakura-protocol", version = "=4.0.0", features = ["local-consensus"] }
 zcash_keys = { package = "zakura-keys", version = "=4.0.0", features = ["orchard", "sapling"] }
 zcash_note_encryption = { package = "zakura-note-encryption", version = "=4.0.0" }
+zcash_client_backend = { package = "zakura-client-backend", version = "=0.1.0-rc9.5", default-features = false, features = ["orchard", "unstable-serialization"] }
 incrementalmerkletree = "0.8.2"
 shardtree = "0.7"
 rand = { version = "0.10", features = ["sys_rng"] }

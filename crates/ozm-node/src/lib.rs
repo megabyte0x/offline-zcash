@@ -4,6 +4,7 @@
 
 pub mod app;
 mod discovery;
+pub mod lightwallet;
 
 pub use app::App;
 
@@ -27,7 +28,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use zcash_offline_core::{fleet::generate_fleet, parse_zec, DeviceSecret, Fleet, Policy};
+use zcash_offline_core::{fleet::{generate_fleet_on, Network}, parse_zec, DeviceSecret, Fleet, Policy};
 
 #[derive(Args, Clone)]
 pub struct RunOpts {
@@ -38,6 +39,12 @@ pub struct RunOpts {
     pub fleet: PathBuf,
     #[arg(long, env = "OZM_SECRET")]
     pub secret: PathBuf,
+    /// Network for a newly created invite-free identity; existing fleet files remain authoritative.
+    #[arg(long, env = "OZM_NETWORK", default_value = "regtest")]
+    pub network: Network,
+    /// First scan height; 0 selects 1 on Regtest and 4465026 on testnet.
+    #[arg(long, env = "OZM_BIRTHDAY", default_value_t = 0)]
+    pub birthday: u32,
     /// Mesh TCP listen address.
     #[arg(long, env = "OZM_LISTEN", default_value = "0.0.0.0:7777")]
     pub listen: SocketAddr,
@@ -72,8 +79,8 @@ pub struct RunOpts {
     /// Base app retry interval in seconds (doubles per attempt).
     #[arg(long, env = "OZM_RETRY_SECS", default_value_t = 30)]
     pub retry_secs: u64,
-    /// Seconds between automatic syncs from the gateway over the mesh (0 disables).
-    #[arg(long, env = "OZM_AUTO_SYNC_SECS", default_value_t = 30)]
+    /// Slow mesh-sync fallback in seconds (minimum 900, backs off to 3600; 0 disables).
+    #[arg(long, env = "OZM_AUTO_SYNC_SECS", default_value_t = 900)]
     pub auto_sync_secs: u64,
     /// Enable test-only endpoints (tampered payments, resend).
     #[arg(long, env = "OZM_DEBUG_API")]
@@ -90,6 +97,8 @@ impl RunOpts {
             data: home.join("data"),
             fleet: home.join("fleet.json"),
             secret: home.join("secret.json"),
+            network: Network::Regtest,
+            birthday: 0,
             listen: "0.0.0.0:7777".parse().unwrap(),
             dial: vec![],
             discover: true,
@@ -102,7 +111,7 @@ impl RunOpts {
             frame_delay_ms: 0,
             mtu: 512,
             retry_secs: 30,
-            auto_sync_secs: 30,
+            auto_sync_secs: 900,
             debug_api: false,
             open: false,
         }
@@ -120,6 +129,10 @@ pub struct Invite {
 pub struct FleetInitOptions {
     pub out: PathBuf,
     pub name: String,
+    #[serde(default)]
+    pub network: Network,
+    #[serde(default)]
+    pub birthday: u32,
     /// NAME:ROLE, with roles combined using +.
     pub devices: Vec<String>,
 }
@@ -160,7 +173,8 @@ pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
             anyhow::ensure!(!o.out.join(format!("{n}.{suffix}.json")).exists(), "folder already contains keys for {n}; choose a new folder");
         }
     }
-    let (fleet, secrets) = generate_fleet(&o.name, &devs, Policy::default())?;
+    let birthday = if o.birthday == 0 { match o.network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { o.birthday };
+    let (fleet, secrets) = generate_fleet_on(&o.name, &devs, Policy::default(), o.network, birthday)?;
     std::fs::create_dir_all(&o.out)?;
     let folder = o.out.canonicalize()?;
     let fleet_path = folder.join("fleet.json");
@@ -199,7 +213,7 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
     let inv: Invite = serde_json::from_str(invite_json).context("not an ozm-node invite file")?;
     let me = inv.fleet.by_name(&inv.secret.name)?;
-    anyhow::ensure!(*me == inv.secret.public()?, "invite keys do not match its fleet");
+    anyhow::ensure!(*me == inv.secret.public_on(inv.fleet.network)?, "invite keys do not match its fleet");
     if home.join("secret.json").exists() {
         let old: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(home.join("secret.json"))?)?;
         anyhow::ensure!(old.ed25519_sk == inv.secret.ed25519_sk, "{} already holds device {}; use another home", home.display(), old.name);
@@ -218,6 +232,10 @@ pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
 
 /// Creates keys on this device, once. No keys or wallet are replaced on restart.
 pub fn join_open(home: &Path) -> Result<()> {
+    join_open_on(home, Network::Regtest, 1)
+}
+
+pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> {
     if home.join("secret.json").exists() {
         return Ok(());
     }
@@ -225,7 +243,9 @@ pub fn join_open(home: &Path) -> Result<()> {
         "device files exist but secret.json is missing; restore the keys or choose a new home");
     let mut me = DeviceSecret::generate("", "payer+payee+relay");
     me.name = me.public()?.peer_id;
-    let fleet = Fleet { name: "Open Regtest mesh".into(), policy: Policy::default(), devices: vec![me.public()?], open: true, address_proofs: Default::default() };
+    let birthday = if birthday == 0 { match network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { birthday };
+    anyhow::ensure!(network != Network::Testnet || birthday >= 4_465_026, "testnet birthday must be at or after NU7");
+    let fleet = Fleet { name: format!("Open {network} mesh"), network, birthday, servers: zcash_offline_core::fleet::default_servers(), policy: Policy::default(), devices: vec![me.public_on(network)?], open: true, address_proofs: Default::default() };
     join_invite(&serde_json::to_string(&Invite { fleet, secret: me })?, home)?;
     Ok(())
 }
@@ -233,12 +253,16 @@ pub fn join_open(home: &Path) -> Result<()> {
 /// Starts the mesh, the app and its background loops. Must run inside a tokio runtime.
 pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
     if !o.secret.exists() && o.secret.file_name().is_some_and(|s| s == "secret.json") {
-        join_open(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?)?;
+        join_open_on(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?, o.network, o.birthday)?;
     }
     let fleet = Fleet::load(&o.fleet)?;
     let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(&o.secret).context("read secret")?)?;
     let pubme = fleet.by_name(&me.name)?.clone();
-    anyhow::ensure!(pubme == me.public()?, "secret for {} does not match the fleet file", me.name);
+    anyhow::ensure!(pubme == me.public_on(fleet.network)?, "secret for {} does not match the fleet file", me.name);
+    anyhow::ensure!(fleet.network != Network::Testnet || !o.mine, "--mine is Regtest-only; public testnet cannot generate blocks");
+    let rpc = o.rpc.clone().filter(|r| !r.is_empty()).or_else(|| {
+        (fleet.network == Network::Testnet && pubme.role.split('+').any(|r| r == "gateway")).then(|| fleet.servers.join(","))
+    });
     if o.rpc.as_ref().is_some_and(|r| !r.is_empty()) || o.mine {
         anyhow::ensure!(pubme.role.split('+').any(|r| r == "gateway"), "this invite does not grant the gateway role; ask the organiser for a gateway invite");
     }
@@ -262,7 +286,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
             data: o.data.clone(),
             fleet,
             me,
-            rpc: o.rpc.clone().filter(|r| !r.is_empty()),
+            rpc,
             mine: o.mine,
             retry: Duration::from_secs(o.retry_secs.max(1)),
             faucet_max_zat: parse_zec(&o.faucet_max)?,
@@ -295,13 +319,15 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
             t.tick().await;
             if a.mesh.is_shutdown() { break; }
             ticks += 1;
-            if ticks % 10 == 1 {
+            if ticks % 3600 == 1 {
                 let _ = a.announce().await;
             }
+            if ticks % 5 == 1 {
+                if let Err(e) = a.gateway_tick().await { a.event("gateway-watch-error", json!({"error": format!("{e:#}")})); }
+            }
             a.retry_tick().await;
-            // Offline devices refresh their chain view from a gateway while one is reachable.
-            if auto_sync > 0 && ticks % auto_sync == 3 % auto_sync && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
-                let _ = a.request_mesh_sync(false).await;
+            if auto_sync > 0 && ticks % 5 == 3 && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
+                a.fallback_sync(auto_sync).await;
             }
         }
     });
@@ -333,6 +359,10 @@ pub fn router(app: Arc<App>, debug_api: bool) -> Router {
             }),
         )
         .route("/api/pay", post(pay))
+        .route("/api/prepare", post(|State(a): State<Arc<App>>, Json(r): Json<FundReq>| async move {
+            let amount = parse_zec(&r.amount).map_err(err)?;
+            a.prepare_offline(r.notes, amount).await.map(Json).map_err(err)
+        }))
         .route("/api/max", get(|State(a): State<Arc<App>>| async move { a.max_payment().map(Json).map_err(err) }))
         .route("/api/sync", post(|State(a): State<Arc<App>>| async move { a.sync().await.map(Json).map_err(err) }))
         .route(

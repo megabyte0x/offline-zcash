@@ -1,24 +1,26 @@
 # AGENTS.md
 
-This repository holds research and a working proof of concept (releases v0.1.0–v0.6.0) for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what is built and what to do next; `docs/how-it-works.md` shows the flow in diagrams. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
+This repository holds research and a working proof of concept (releases v0.1.0–v0.7.0) for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what is built and what to do next; `docs/how-it-works.md` shows the flow in diagrams. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
 
-## Code (v0.6.0)
+## Code (v0.7.0)
 
 - `crates/zcash-offline-core`: wallet sync, offline builder, payee checks, `ozm1` sealing, signed messages. No transport code.
 - `crates/ozm-mesh`: BitChat-style mesh (TTL flood, 512-byte frames, store-and-forward, acks) over TCP or attached BLE streams; see its README for the wire format.
 - `crates/ozm-node`: library and daemon (roles payer, relay, payee, gateway; commands `fleet-init`, `join`, `start`, `fund`, `pay`), local HTTP API and web UI on `127.0.0.1:7780`. `ozm-mesh` LAN discovery uses UDP 7778 ([docs/components/mesh.md](docs/components/mesh.md)).
 - `crates/ozm-ffi` and `android/`: UniFFI/Kotlin node API, Android 10+ arm64 BLE + LAN test shell. Build, install and host-JVM contract checks: [docs/android-install.md](docs/android-install.md). No real-phone/radio verification yet; B2–B7 remain open.
-- `logos/zcash_offline_module` is the ONE shared Basecamp engine (logos-module-builder `8f56bf8`, Rust 1.95), with THREE thin `ui_qml` apps: `zcash_offline_ui` (wallet/pay/mesh), `zcash_offline_organiser` (fleet/invite export, optional join), `zcash_offline_gateway` (RPC check, gateway start/settings, balance/submissions). All depend on the same module; never make an engine per role. `fleet_init` lives in the ozm-node library. Roles come from the trusted organiser invite/fleet, not installed apps; the current enrollment file is not organiser-signed. See `logos/README.md`. Build each with `nix build .#lgx` / `.#lgx-portable`, sequentially on small orbs.
-- `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)); `bench/lan-bench.sh all` tests invited discovery, sync and funds ([docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md)); `bench/open-bench.sh all` tests six invite-free devices, address payments and Max; `bench/ffi-bench.sh` tests Kotlin-only links against the real chain. Releases: keep workspace/Logos/Android versions in sync; v0.6.0 ships **four `.lgx` packages × three platforms plus four merged catalogue packages**, CLI tarballs and Android APK + checksums on a `v*` tag. Run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` before committing.
-- The owner tested v0.5.1 successfully on three real Macs; v0.6.0 needs retesting there. Basecamp Local Network permission support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)); fallback: dial `<operator-ip>:7777`. All three session laptops can run only Basecamp for device roles; the operator's Docker-backed `ths start` remains outside Basecamp.
+- `logos/zcash_offline_module` is the ONE shared Basecamp engine (logos-module-builder `8f56bf8`, Rust 1.97.1), with THREE thin `ui_qml` apps: `zcash_offline_ui` (wallet/pay/mesh), `zcash_offline_organiser` (fleet/invite export, optional join), `zcash_offline_gateway` (chain service check, gateway start/settings, balance/submissions). All depend on the same module; never make an engine per role. `fleet_init` lives in the ozm-node library. Roles come from the trusted organiser invite/fleet, not installed apps; the current enrollment file is not organiser-signed. See `logos/README.md`. Build each with `nix build .#lgx` / `.#lgx-portable`, sequentially on small orbs.
+- `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)); `bench/lan-bench.sh all` tests invited discovery, sync and funds ([docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md)); `bench/open-bench.sh all` tests six invite-free devices, address payments and Max; `bench/ffi-bench.sh` tests Kotlin-only links against the real chain. Releases: keep workspace/Logos/Android versions in sync; v0.7.0 ships **four `.lgx` packages × three platforms plus four merged catalogue packages**, CLI tarballs and Android APK + checksums on a `v*` tag. Run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` before committing.
+- The owner tested v0.5.1 successfully on three real Macs; v0.7.0 needs retesting there. Basecamp Local Network permission support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)); fallback: dial `<operator-ip>:7777`. All three session laptops can run only Basecamp for device roles; the Regtest operator's Docker-backed `ths start` remains outside Basecamp. Public-testnet gateways use TLS lightwalletd, not ths or a full node.
 - Invite-free wallets create local keys, select by hops then advertised tip, and pin the first used gateway; changes are blocked/warned. All envelopes and delivery acks authenticate their sender. Address bindings prove receiving (not spending) authority and pin the mesh key at first receipt routing. Open/unknown payers never get pending acceptance; inclusion, sync and mining remain gateway-reported. Invited gateways retain fleet authority; keep Regtest-only limits explicit ([docs/basecamp-install.md](docs/basecamp-install.md#open-mode-trust-and-faucet-limits)).
 - Every user-visible change adds an entry under `Unreleased` in `CHANGELOG.md`; releases move those entries into the new version section.
 - Do not include Amp thread links in commit messages, tracked files or release notes. Automatic thread attribution is disabled in `.amp/settings.json`.
 
 ## Current target
 
-- **MVP v1 network:** a local Regtest chain with NU7 active (consensus branch ID `0x77190AD9`, v6 transactions, Ironwood shielded pool). MVP v1 stays on this local chain until the mesh transport, payment communication (receipts, chain-state feedback) and offline transaction building all work end to end.
-- **After MVP v1: public testnet, then mainnet.** Testnet activates NU7 at **4,465,026** with the same branch ID and runs the same rules, except the header verifier allows the testnet minimum-difficulty rule (ZIP 218: a block more than 450 s after its parent). Move the builder to Common 4.0 once, before testnet; stay on 2.2.0 for MVP v1. Run our own Zebra + lightwalletd gateway node on testnet.
+- **Current network: public testnet**, NU7 from **4,465,026**, branch `0x77190AD9`, v6 Ironwood, about 25-second blocks. Fleet `network` defaults to Regtest for backward compatibility. A zero birthday option resolves to 1 on Regtest and 4,465,026 on testnet; existing fleet settings are authoritative. Seed the tree at birthday−1 before compact scanning.
+- **Gateway is a light client**, not a full node or VPS. Configurable TLS servers: `https://testnet.zec.rocks:443`, `https://zaino.testnet.unsafe.zec.rocks:443` (503 on 27 October). Compare reachable servers; warn on one source. No gateway-side viewing-key scanning. Keep JSON-RPC/mining/faucet only for the ths Regtest benches. Testnet uses external TAZ faucets and Prepare for offline self-splits, never unmined change.
+- **v0.7.0 trust exception:** `included` at 1 and `mined` at 10 confirmations are explicitly gateway-reported, not independently proved. TLS lightwalletd chain state is trusted. PoW/MMR/inclusion proofs (tasks 7–9) remain deferred; ten confirmations are not finality. Persist 200 ShardTree checkpoints/roots, rewind on reorg, push result changes and new tips, retry unchanged bytes every 3 blocks until expiry. Sync/control padding uses 512 B / 4 KiB / 16 KiB buckets; payment/submission/receipt padding stays unchanged. Record compact payload separately from full framed wire traffic.
+- **Stable-link traffic:** coalesce height/hash tips for 15 minutes or 200 blocks; exchange checkpoint hashes only on divergence. Signed presence is immediate on link-up, otherwise hourly with three-hour expiry. Gateway change/loss can take an hour to notice on stable links (expiry after missed beacons can take three). The dated replay measures 2.40 MB/day total BLE-link framing, 2.12 MB sync-only; this is not a physical-radio capture. See [mesh evidence](docs/components/mesh.md#v070-compact-sync).
 - **Mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
 - **Platform order:** laptops first for the current experiments, then mobile. iOS and Android are both candidates for the first phone target; the owner said (26 October 2026) that iOS is not necessarily first. Testers today run `ozm-node` or the Logos Basecamp app on laptops ([docs/basecamp-install.md](docs/basecamp-install.md); Linux needs glibc 2.39).
@@ -93,19 +95,18 @@ Record every `ths` bug, missing feature or workaround here as you hit it, so it 
 
 ## Offline builder
 
-Build on Zakura Common **2.2.0**, the version `ths` v0.4.1 uses. The 2.2.0, 3.x and 4.x type families cannot be mixed in one binary, so pin every crate exactly; `zakura-client-*` rc7 asks for `^2.0.0` and would otherwise float.
+Build on Zakura Common **4.0.0**. `ths` v0.4.1 remains on 2.2.0; exchange compatible NU7 transaction bytes across processes, never mixed Rust types. Pin the whole family exactly and relock `logos/zcash_offline_module/rust-lib`. The module uses Rust **1.97.1**. Common 4 uses matching `zakura-note-encryption` and `zakura-pasta-curves`; `ProvingKey::build` returns a Result.
 
 | Crate | Version | Features |
 |---|---|---|
-| `zakura-protocol` | `=2.2.0` | `local-consensus` |
-| `zakura-primitives` | `=2.2.0` | `circuits`, `std`, `multicore` |
-| `zakura-orchard` | `=2.2.0` | `circuit` |
-| `zakura-keys` | `=2.2.0` | |
-| `zakura-proofs` | `=2.2.0` | |
-| `zakura-pczt` (optional) | `=0.1.0-rc4` | |
-| `zakura-client-backend`, `zakura-client-sqlite` (optional, for the synced wallet DB) | `=0.1.0-rc7` | |
+| `zakura-protocol` | `=4.0.0` | `local-consensus` |
+| `zakura-primitives` | `=4.0.0` | `circuits`, `std`, `multicore` |
+| `zakura-orchard` | `=4.0.0` | `circuit` |
+| `zakura-keys`, `zakura-note-encryption`, `zakura-pasta-curves` | `=4.0.0` | |
+| `zakura-client-backend` | `=0.1.0-rc9.5` | Compact service types and shard serialization |
+| `zakura-pczt` (optional, not linked by app) | `=0.1.0-rc9` | |
 
-Import them under their upstream names, as `ths` does, for example `zcash_primitives = { package = "zakura-primitives", version = "=2.2.0" }`.
+Import under upstream names, for example `zcash_primitives = { package = "zakura-primitives", version = "=4.0.0" }`. The configured 10,000-zat fleet fee is a floor: builder and verifier require the ZIP 317 padded action-count fee for larger payments/splits. Expiry always comes from fleet policy. Locally scanned tip > expiry unlocks unspent reserved notes; an expiry report alone does not.
 
 Function sequence (source at v2.2.0 / rc7; direct builder compiled/mined in scratch research, wallet-DB and production payee app still unverified; [evidence and pending expiry policies](docs/components/expiry-reissue.md)):
 
@@ -119,7 +120,7 @@ Limits to respect:
 - Spending change that has not been mined is not supported (`zakura-client-backend` rc7 `wallet.rs` L1414–1418), so chained offline payments wait for each parent to be mined.
 - `DeferredPcztBuilder` (sign before choosing the anchor) exists and accepts v6 only.
 - No upstream Swift or UniFFI bindings exist; `ozm-ffi` provides our Kotlin bindings. iOS is not built.
-- **Mainnet step:** Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None` (its `TEST_NETWORK` already has NU7 at 4,465,026). Before mainnet, either move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This does not block MVP v1.
+- **Mainnet step:** Common 4 includes NU7 at 3,543,405, but the application supports only Regtest/testnet. Chain-proof, security and real-value approval gates remain; this migration does not authorize mainnet.
 
 ## Agent skills
 

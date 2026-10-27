@@ -11,6 +11,50 @@ use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use zcash_keys::address::UnifiedAddress;
+use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parameters, TEST_NETWORK};
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Network {
+    #[default]
+    Regtest,
+    Testnet,
+}
+
+impl std::fmt::Display for Network {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self { Self::Regtest => "regtest", Self::Testnet => "testnet" })
+    }
+}
+
+impl std::str::FromStr for Network {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s { "regtest" => Ok(Self::Regtest), "testnet" => Ok(Self::Testnet), _ => bail!("network must be regtest or testnet") }
+    }
+}
+
+impl Parameters for Network {
+    fn network_type(&self) -> NetworkType {
+        match self { Self::Regtest => NetworkType::Regtest, Self::Testnet => NetworkType::Test }
+    }
+    fn activation_height(&self, nu: NetworkUpgrade) -> Option<BlockHeight> {
+        match self { Self::Regtest => crate::regtest_network().activation_height(nu), Self::Testnet => TEST_NETWORK.activation_height(nu) }
+    }
+}
+
+impl Network {
+    pub fn decode_address(self, address: &str) -> Result<orchard::Address> {
+        let Some(zcash_keys::address::Address::Unified(ua)) = zcash_keys::address::Address::decode(&self, address) else {
+            bail!("expected a {self} unified Zcash address with an Ironwood receiver")
+        };
+        ua.orchard().copied().ok_or_else(|| anyhow!("address has no Ironwood receiver"))
+    }
+}
+
+pub fn default_servers() -> Vec<String> {
+    vec!["https://testnet.zec.rocks:443".into(), "https://zaino.testnet.unsafe.zec.rocks:443".into()]
+}
 
 /// Policy values every device in the fleet applies. Kept in the fleet file so
 /// branch ID, expiry and fee are configuration, never hard-coded.
@@ -73,14 +117,9 @@ impl DevicePublic {
     }
 }
 
-/// Only Regtest unified addresses with an Ironwood receiver are supported. Never fall back to transparent.
+/// Decode a supported public identity; payment entry points additionally enforce the fleet network.
 pub fn decode_address(address: &str) -> Result<orchard::Address> {
-        let Some(zcash_keys::address::Address::Unified(ua)) =
-            zcash_keys::address::Address::decode(&crate::regtest_network(), address)
-        else {
-            bail!("expected a Regtest unified Zcash address with an Ironwood receiver")
-        };
-        ua.orchard().copied().ok_or_else(|| anyhow!("address has no Ironwood receiver"))
+    Network::Regtest.decode_address(address).or_else(|_| Network::Testnet.decode_address(address))
 }
 
 /// A device's private keys. Stored in its own file, never in the fleet file.
@@ -136,6 +175,10 @@ impl DeviceSecret {
     }
 
     pub fn public(&self) -> Result<DevicePublic> {
+        self.public_on(Network::Regtest)
+    }
+
+    pub fn public_on(&self, network: Network) -> Result<DevicePublic> {
         let sig = self.signing_key()?;
         let vk = sig.verifying_key();
         let ua = UnifiedAddress::from_receivers(Some(self.address()?), None, None)
@@ -146,7 +189,7 @@ impl DeviceSecret {
             peer_id: peer_id_for(&vk),
             ed25519: hex::encode(vk.to_bytes()),
             x25519: hex::encode(vk.to_montgomery().to_bytes()),
-            address: ua.encode(&crate::regtest_network()),
+            address: ua.encode(&network),
         })
     }
 
@@ -173,6 +216,13 @@ pub fn verify_sig(vk: &VerifyingKey, msg: &[u8], sig: &[u8]) -> Result<()> {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Fleet {
     pub name: String,
+    #[serde(default)]
+    pub network: Network,
+    /// First block to scan; the tree is seeded at birthday - 1, never empty at NU7.
+    #[serde(default)]
+    pub birthday: u32,
+    #[serde(default = "default_servers")]
+    pub servers: Vec<String>,
     pub policy: Policy,
     pub devices: Vec<DevicePublic>,
     /// Locally generated identity, with self-signed gateway discovery instead of an organiser allowlist.
@@ -222,13 +272,18 @@ impl Fleet {
 
 /// Generates a fleet: one secret per (name, role), and the shared fleet file.
 pub fn generate_fleet(name: &str, devices: &[(String, String)], policy: Policy) -> Result<(Fleet, Vec<DeviceSecret>)> {
+    generate_fleet_on(name, devices, policy, Network::Regtest, 1)
+}
+
+pub fn generate_fleet_on(name: &str, devices: &[(String, String)], policy: Policy, network: Network, birthday: u32) -> Result<(Fleet, Vec<DeviceSecret>)> {
     if devices.is_empty() {
         bail!("no devices");
     }
+    anyhow::ensure!(network != Network::Testnet || birthday >= 4_465_026, "testnet birthday must be at or after NU7 (4465026)");
     let secrets: Vec<_> = devices.iter().map(|(n, r)| DeviceSecret::generate(n, r)).collect();
-    let publics = secrets.iter().map(|s| s.public()).collect::<Result<Vec<_>>>()?;
-    let address_proofs = secrets.iter().map(|s| Ok((s.public()?.peer_id, crate::binding::prove(s)?))).collect::<Result<_>>()?;
-    Ok((Fleet { name: name.into(), policy, devices: publics, open: false, address_proofs }, secrets))
+    let publics = secrets.iter().map(|s| s.public_on(network)).collect::<Result<Vec<_>>>()?;
+    let address_proofs = secrets.iter().map(|s| Ok((s.public_on(network)?.peer_id, crate::binding::prove_on(s, network)?))).collect::<Result<_>>()?;
+    Ok((Fleet { name: name.into(), network, birthday, servers: default_servers(), policy, devices: publics, open: false, address_proofs }, secrets))
 }
 
 #[cfg(test)]

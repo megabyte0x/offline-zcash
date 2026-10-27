@@ -13,7 +13,7 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 
   The reasons: no radio exists in orbs, the BitChat apps are Swift-only, and Offline Protocol is an AGPL Python sidecar whose custody refuses DMs. The BitChat fork plan is archived at [../../archive/docs-2026-10-27/transport-bitchat.md](../../archive/docs-2026-10-27/transport-bitchat.md).
 - **Links:** TCP between neighbours; v0.4.0 adds an Android BLE byte-stream implementation (built, no radio validation yet). LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`, and tagged with the fleet. It works on a Wi-Fi with no internet route. Both transports share the link framing and routing.
-- **App envelope `ozm1`:** every message is sealed to its recipient's X25519 key (derived from the Ed25519 payment key) with ChaCha20-Poly1305, and padded to a multiple of 4 KiB. A relay or a packet capture sees only the recipient's mesh ID and a size bucket. Test 6 checks this with a capture.
+- **App envelope `ozm1`:** every message authenticates its sender and intended recipient, and is sealed to the recipient's X25519 key (derived from the Ed25519 payment key) with ChaCha20-Poly1305. `pay`, `sub` and `rcpt` retain 4 KiB-multiple padding. v0.7.0 sync/control uses 512 B / 4 KiB / 16 KiB buckets (then 16 KiB multiples). Sender/recipient mesh IDs, size and timing remain visible; sync and payments are distinguishable by size.
 - **Messages:**
 
   | Kind | From → to | What it carries |
@@ -28,6 +28,68 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 - **Delivery:** the mesh stores and forwards. On top of that, the app retries by txid with backoff until it has a receipt (A) or the payment is mined (B). Both A and B submit to every gateway, and submission is idempotent.
 
 ## Findings
+
+### v0.7.0 compact sync
+
+- Fleet network defaults to Regtest. Testnet identities use `utest1` and a birthday
+  at/after NU7, seeded from GetTreeState at birthday−1; Regtest starts at 1, not
+  4,465,026. Choose the birthday before receiving funds.
+- `syncq` normally requests only the current height/hash; the gateway asks for
+  the 200-hash retained history **only on predecessor mismatch**. `syncr`
+  carries Ironwood nf/cmx/epk/52-byte ct, not full transactions. Consecutive empty
+  blocks are runs ending at a height/hash. Binary batches split into 3 KiB parts,
+  including **inside a block or transaction**, with a complete-batch digest and
+  bounded 8 MiB assembly. No partial batch advances the wallet cursor.
+- Wallets persist a pruned incremental ShardTree, 200 checkpoints, recent roots,
+  hashes and recent nullifiers with their cursor. Reorgs rewind a common retained
+  checkpoint and replace orphaned effects; deeper forks require resync from the
+  original birthday. Reservations survive a rewind. No unmined change is spendable.
+- Gateway tip pushes carry only height/hash in the 512 B bucket and coalesce
+  changes for 15 minutes or 200 blocks. A device requests accumulated blocks only
+  when its view differs; catch-up batches contain at most 200 blocks. Routine
+  balance refresh may lag 15 minutes. Payment-result transitions push immediately;
+  manual/payment-triggered sync bypasses coalescing. A 15-minute fallback backs
+  off to an hour when unchanged; an unchanged answer is a small height/hash tip,
+  not a compact batch. Full signed presence refreshes **hourly** on stable links,
+  expires after three hours, and is immediate on link-up. A gateway role/change
+  or loss can now take up to an hour to be noticed on a stable link; missed
+  beacons can delay expiry to three hours. TCP/BLE keepalives still detect a dead
+  direct link on their transport timers. This is not cover traffic.
+- `sync-served` / `synced` events count binary **payload bytes**; `mesh-send`
+  also records sealed bytes. `status.mesh.bytes_sent/bytes_received` count full
+  framed mesh-stream bytes, including packet headers, fragmentation, acks,
+  inventory and keepalives. TCP/IP and BLE radio overhead are additional.
+- The 27 October 18:35 UTC sample, heights 4,544,868–4,548,324, contained
+  3,457 blocks over 86,390 seconds, 5,753 Ironwood actions and 2,515 empty blocks:
+  **1,340,049 protobuf bytes**. SHA-256 of length-prefixed protobuf records:
+  `cf430ef90b6dd2fbfc3797eb7f669177401f339e9ba8da9cae374da4f29763c5`.
+  Replaying those same blocks through the production binary batches, authenticated
+  sealing, padding and 512-byte framing gives:
+
+  | Mode | Compact payload bytes | Framed sync bytes | Total BLE-link framed bytes | Total TCP-link framed bytes |
+  |---|---:|---:|---:|---:|
+  | Initial one-request-per-block implementation, history on every request | 1,744,294 | 79,804,833 | Not replayed with idle traffic | Not replayed with idle traffic |
+  | Final 200-block catch-up, including a day's idle control | 1,130,924 | 1,776,714 | 2,063,030 | 2,178,220 |
+  | Final steady-state input, one block at a time with 15-minute coalescing | 1,144,132 | 2,118,573 | **2,404,889** | **2,520,079** |
+
+  The steady-state replay uses the recorded block timestamps and flushes the last
+  partial batch. Framed counts include both-direction sync requests, responses,
+  tip announcements and signed delivery acks on **one lossless direct link**:
+  each sealed payload adds 49 packet/link bytes and 25 bytes per 512-byte fragment;
+  each ack has 144 payload bytes plus the same framing. Total columns also include
+  **228,624 B** for 24 hourly routing-key broadcasts/full signed presence exchanges
+  and their acks in both directions, **57,590 B BLE / 172,780 B TCP** for 5-byte
+  keepalive frames every 15 s / 5 s in both directions, and **102 B** for two hellos
+  and empty initial inventories. Inventories are sent on link-up, not periodically.
+  A stalled tip can add fallback probes: one small request/reply plus acks is
+  1,788 B; 24 additional hourly probes would add 42,912 B/day. Ordinary busy-tip
+  replay groups already request the accumulated blocks at the fallback interval.
+  Reconnect inventories, reorg exchanges, retransmissions, payment traffic, UDP
+  discovery and TCP/IP/BLE radio headers are **excluded** from this stable-link
+  model. This is serialization/framing replay, not a 24-hour or physical-radio
+  capture. **Total** steady-state framing is 2.40 MB/day BLE (2.00× the approximate
+  1.2 MB/day target), or 2.52 MB/day TCP (2.10×), within the agreed **about 2×** bound.
+  Actual full-stream counters still need measurement on physical BLE.
 
 - 9,166-byte transaction → 12,353-byte `pay` envelope. With 20 ms per 512-byte frame, the full A→R→B→D→chain→A and B loop takes about 3.6 s ([../mvp-v0.1.0.md](../mvp-v0.1.0.md)).
 - An internal Docker network, like an offline Wi-Fi, has no default route. Discovery beacons must therefore go out per interface, not to the default route; this was found and fixed in v0.2.0.

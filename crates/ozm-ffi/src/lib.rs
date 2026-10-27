@@ -42,6 +42,8 @@ pub struct OfflineNode {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Options {
+    network: Option<zcash_offline_core::fleet::Network>,
+    birthday: Option<u32>,
     listen: Option<String>,
     dial: Option<Vec<String>>,
     rpc: Option<String>,
@@ -116,6 +118,8 @@ impl OfflineNode {
                     serde_json::from_str(&options_json)?
                 };
                 let mut opts = RunOpts::for_home(&self.home);
+                opts.network = o.network.unwrap_or_default();
+                opts.birthday = o.birthday.unwrap_or(0);
                 if let Some(l) = o.listen {
                     opts.listen = l.parse()?;
                 }
@@ -171,6 +175,12 @@ impl OfflineNode {
 
     pub fn max_payment(&self) -> String {
         out(self.app().and_then(|a| a.max_payment()))
+    }
+
+    pub fn prepare_offline(&self, notes: u32, amount_zec: String) -> String {
+        out((|| Ok(serde_json::to_value(self.rt.block_on(
+            self.app()?.prepare_offline(notes, parse_zec(&amount_zec)?),
+        )?)?))())
     }
 
     pub fn request_funds(&self, notes: u32, amount_zec: String) -> String {

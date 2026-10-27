@@ -16,7 +16,7 @@ You can set these options:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `OZM_VERSION` | Version to install, for example `0.6.0` | latest release |
+| `OZM_VERSION` | Version to install, for example `0.7.0` | latest release |
 | `OZM_INSTALL_DIR` | Folder for the binary | `~/.local/bin` |
 | `OZM_DRY_RUN=1` | Show what would be downloaded, then stop | off |
 
@@ -103,6 +103,61 @@ Invites still work: run `ozm-node join <invite.json>` **before** first start, th
 `ozm-node start`. Existing fleet scripts may still pass names to `pay --to`.
 For operator setup see [Basecamp](basecamp-install.md) or the older invited
 [CLI session guide](mvp-v0.2.0.md#running-a-session).
+
+## Public testnet (v0.7.0)
+
+Use a **new home/fleet**, never relabel a funded Regtest wallet. Public testnet uses
+TAZ and `utest1` addresses. Network and birthday are saved on first creation;
+existing fleet files win over startup options. The default birthday is NU7
+height 4,465,026; choose a more recent height **before funding** to reduce first
+sync. Never choose a birthday later than a payment you need to recover.
+
+Create a gateway invite, install it on the device with internet, and start:
+
+```sh copy Copy Testnet Gateway
+ozm-node fleet-init --out ./testnet-fleet --name testnet --network testnet --device Gateway:gateway+relay
+ozm-node join ./testnet-fleet/Gateway.invite.json --home ~/.ozm-testnet-gateway
+ozm-node start --home ~/.ozm-testnet-gateway
+```
+
+The gateway defaults to TLS `testnet.zec.rocks:443`, then
+`zaino.testnet.unsafe.zec.rocks:443`. Set `fleet.json`'s `servers` list or pass
+`--rpc 'https://server-a:443,https://server-b:443'` to override it. This option is
+a lightwalletd list on testnet, JSON-RPC on Regtest. No node/VPS is needed.
+Zaino returned HTTP 503 on 27 October; the primary remains usable with a
+**single-source** warning. `--mine` and gateway `fund` are refused on testnet.
+
+On each wallet laptop, create its own identity and discover the LAN gateway:
+
+```sh copy Copy Testnet Wallet
+ozm-node start --home ~/.ozm-testnet --network testnet
+```
+
+Use the UI/address from that running node. Request TAZ at
+[Valar](https://faucet.testnet.valargroup.dev) (advertised 0.125 TAZ/address/day),
+then sync and wait for spendable funds. Our orb claim failed with
+`the wallet cannot pay this address`; zecpages timed out after 30001 ms.
+[Exact funding evidence and note policy](components/offline-builder.md#v070-testnet-note-plan).
+The funded public split/payment run remains unverified; this is experimental
+testnet software, not evidence of mainnet safety.
+
+```sh copy Copy Prepare And Pay
+ozm-node prepare --notes 10 --amount 0.0101
+ozm-node pay --to '<recipient-utest1-address>' --amount 0.01
+```
+
+These client commands target the default local API; use `--api` if you changed
+its port. Prepare waits for gateway-reported mining, then requests sync. Confirm
+the split notes are spendable **before going offline**. Larger splits pay ZIP 317
+fees by padded action count; two-action payments retain the 10,000-zat floor.
+Unmined change is never spendable.
+
+The internet gateway watches blocks, resubmits unchanged bytes every three blocks
+until expiry, and pushes results to payer/payee: `submitted` → `included` (1
+confirmation) → `mined` (10). All chain facts are **gateway-reported**; TLS and
+agreement between reachable servers are not inclusion/PoW/MMR proofs. Reorgs can
+downgrade results even after ten confirmations. Refused payments may still mine
+until expiry. Keep wallet files and signed transaction history for recovery.
 
 ## Bluetooth on Linux
 
