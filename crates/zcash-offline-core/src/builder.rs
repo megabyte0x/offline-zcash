@@ -27,7 +27,7 @@ use crate::{fleet::Policy, wallet::WalletState, DeviceSecret};
 
 pub fn proving_key() -> &'static ProvingKey {
     static PK: OnceLock<ProvingKey> = OnceLock::new();
-    PK.get_or_init(|| ProvingKey::build(OrchardCircuitVersion::PostNu6_3))
+    PK.get_or_init(|| ProvingKey::build(OrchardCircuitVersion::PostNu6_3).expect("supported Ironwood circuit"))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -9,6 +9,9 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+### Changed
+- Pin the offline builder and receiving-authority proofs to Zakura Common 4.0.0, using its matching note-encryption and Pasta crates. The Basecamp service uses Rust 1.97.1.
+
 ## [0.6.0] - 2026-10-27
 
 ### Added

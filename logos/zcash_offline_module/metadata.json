@@ -27,7 +27,7 @@
       "extra_link_libraries": []
     },
     "rust": {
-      "toolchain": "1.95.0",
+      "toolchain": "1.97.1",
       "packages": {
         "build": [],
         "runtime": []
