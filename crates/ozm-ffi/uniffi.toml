@@ -1,0 +1,5 @@
+[bindings.kotlin]
+package_name = "uniffi.ozm"
+cdylib_name = "ozm_ffi"
+# Keep the exact same bindings on Android 10 and the host JVM (Java Cleaner needs API 33).
+disable_java_cleaner = true

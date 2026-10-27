@@ -2,13 +2,14 @@
 
 This repository holds research and a working proof of concept (releases v0.1.0–v0.3.0) for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what is built and what to do next; `docs/how-it-works.md` shows the flow in diagrams. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
 
-## Code (v0.3.0)
+## Code (v0.4.0 prepared; not tagged)
 
 - `crates/zcash-offline-core`: wallet sync, offline builder, payee checks, `ozm1` sealing, signed messages. No transport code.
-- `crates/ozm-mesh`: BitChat-style mesh (TTL flood, 512-byte frames, store-and-forward, acks) over TCP links; see its README for the wire format.
+- `crates/ozm-mesh`: BitChat-style mesh (TTL flood, 512-byte frames, store-and-forward, acks) over TCP or attached BLE streams; see its README for the wire format.
 - `crates/ozm-node`: library and daemon (roles payer, relay, payee, gateway; commands `fleet-init`, `join`, `start`, `fund`, `pay`), local HTTP API and web UI on `127.0.0.1:7780`. `ozm-mesh` LAN discovery uses UDP 7778 ([docs/components/mesh.md](docs/components/mesh.md)).
+- `crates/ozm-ffi` and `android/`: UniFFI/Kotlin node API, Android 10+ arm64 BLE + LAN test shell. Build, install and host-JVM contract checks: [docs/android-install.md](docs/android-install.md). No real-phone/radio verification yet; B2–B7 remain open.
 - `logos/zcash_offline_module` (Rust core module for Logos Basecamp, logos-module-builder `8f56bf8`, Rust 1.95) and `logos/zcash_offline_ui` (`ui_qml` app); see `logos/README.md`. Build with `nix build .#lgx`.
-- `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)); `bench/lan-bench.sh all` tests discovery, sync and funds over the mesh ([docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md)). Releases: bump the version in `Cargo.toml` and both `logos/*/metadata.json`, then push a `v*` tag; CI builds `ozm-node` tarballs and `.lgx` packages. Run `cargo clippy --workspace --all-targets` and `cargo test --workspace` before committing.
+- `bench/mesh-bench.sh all` runs the seven gating tests on four containers against the running `ths` chain ([docs/mvp-v0.1.0.md](docs/mvp-v0.1.0.md)); `bench/lan-bench.sh all` tests discovery, sync and funds over the mesh ([docs/mvp-v0.2.0.md](docs/mvp-v0.2.0.md)); `bench/ffi-bench.sh` tests Kotlin-only links against the real chain. Releases: keep workspace/Logos/Android versions in sync; CI builds CLI tarballs, `.lgx` and APK + checksum on a `v*` tag. **The owner will tag v0.4.0 only after a fresh orb follows the Android guide.** Run `cargo clippy --workspace --all-targets` and `cargo test --workspace` before committing.
 
 ## Current target
 
@@ -17,7 +18,7 @@ This repository holds research and a working proof of concept (releases v0.1.0�
 - **Mainnet.** Mainnet activates NU7 at height **3,543,405**, planned for around 5 November 2026 ([ZIP 259](https://zips.z.cash/zip-0259); [Zebra 7.0.0](https://zfnd.org/zebra-7-0-0-release)), so MVP v1 and mainnet both use the NU7 branch ID. A transaction signed under NU6.3 and still unmined at activation becomes invalid. Keep the branch ID, expiry delta and fee in configuration, never hard-coded. Mainnet uses real ZEC: get explicit approval before any mainnet transaction.
 - **Regtest environment:** [zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura) (`ths`) **v0.4.1**, which runs a Zakura node, lightwalletd and funded development accounts in Docker.
 - **Platform order:** laptops first for the current experiments, then mobile. iOS and Android are both candidates for the first phone target; the owner said (26 October 2026) that iOS is not necessarily first. Testers today run `ozm-node` or the Logos Basecamp app on laptops ([docs/basecamp-install.md](docs/basecamp-install.md); Linux needs glibc 2.39).
-- **Transport:** our own `ozm-mesh` with [BitChat](https://github.com/permissionlesstech/bitchat) semantics over TCP links and LAN discovery; a BLE link is the next transport step. The BitChat-fork plan is archived.
+- **Transport:** our own `ozm-mesh` with [BitChat](https://github.com/permissionlesstech/bitchat) semantics over TCP/LAN and a native Android BLE link; real-radio gates are next. The BitChat-fork plan is archived.
 
 ## thus-spoke-zakura issue log
 
@@ -113,7 +114,7 @@ Limits to respect:
 
 - Spending change that has not been mined is not supported (`zakura-client-backend` rc7 `wallet.rs` L1414–1418), so chained offline payments wait for each parent to be mined.
 - `DeferredPcztBuilder` (sign before choosing the anchor) exists and accepts v6 only.
-- No Swift or uniffi bindings exist; the iOS wrapper is our own.
+- No upstream Swift or UniFFI bindings exist; `ozm-ffi` provides our Kotlin bindings. iOS is not built.
 - **Mainnet step:** Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None` (its `TEST_NETWORK` already has NU7 at 4,465,026). Before mainnet, either move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This does not block MVP v1.
 
 ## Agent skills

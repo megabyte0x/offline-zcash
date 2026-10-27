@@ -16,6 +16,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  android:
+    uses: ./.github/workflows/android.yml
+
   linux:
     name: clippy + test (ubuntu)
     runs-on: ubuntu-latest

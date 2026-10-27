@@ -12,7 +12,7 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   - a persisted store, and dialing that never gives up.
 
   The reasons: no radio exists in orbs, the BitChat apps are Swift-only, and Offline Protocol is an AGPL Python sidecar whose custody refuses DMs. The BitChat fork plan is archived at [../../archive/docs-2026-10-27/transport-bitchat.md](../../archive/docs-2026-10-27/transport-bitchat.md).
-- **Links today:** TCP between neighbours. LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`, and tagged with the fleet. It works on a Wi-Fi with no internet route. The link layer is a single function over any byte stream, so a BLE link plugs in without touching routing.
+- **Links:** TCP between neighbours; v0.4.0 adds an Android BLE byte-stream implementation (built, no radio validation yet). LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`, and tagged with the fleet. It works on a Wi-Fi with no internet route. Both transports share the link framing and routing.
 - **App envelope `ozm1`:** every message is sealed to its recipient's X25519 key (derived from the Ed25519 payment key) with ChaCha20-Poly1305, and padded to a multiple of 4 KiB. A relay or a packet capture sees only the recipient's mesh ID and a size bucket. Test 6 checks this with a capture.
 - **Messages:**
 
@@ -46,9 +46,9 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 - **Licences for borrowed code:** BitChat iOS is Unlicense and Berty's BLE drivers (berty/weshnet `71f6981d`, berty/berty) are Apache-2.0/MIT, so code may be copied with attribution. bitchat-android is GPLv3: read it for patterns, copy nothing.
 - **Not compatible with BitChat users.** Our service UUID and packet format are our own. An interop mode (BitChat's UUID, header, fragments and signed announces) is possible later, about 3–5 extra person-weeks (estimate), and stock nodes would still never store our payments.
 
-### Proposed design
+### Implementation (v0.4.0, hardware gates open)
 
-Nothing below is built or measured on a radio. Numbers marked *estimate* come from source reading and arithmetic.
+`crates/ozm-ffi` and `android/` implement the Android-first design below. [Tester/build guide](../android-install.md). B1 runs without a radio; B2–B7 remain unverified. Numbers marked *estimate* come from source reading and arithmetic, not radio measurements. No code was borrowed from either BitChat app or Berty.
 
 ```diagram
 ┌──────────── Android app (Kotlin) ─────────────┐
@@ -63,7 +63,7 @@ Nothing below is built or measured on a radio. Numbers marked *estimate* come fr
 └────────────────────────────────────────────────┘
 ```
 
-**1. Rust side: attach any stream.** `run_link` already takes any `AsyncRead + AsyncWrite` ([`link.rs`](../../crates/ozm-mesh/src/link.rs)). Add one public call, `Mesh::attach(stream, outbound)`, that runs it. The FFI layer (uniffi, Kotlin bindings, built with `cargo-ndk`) keeps a `tokio::io::duplex` per BLE connection and exposes four calls:
+**1. Rust side: attach any stream.** `run_link` takes any `AsyncRead + AsyncWrite` ([`link.rs`](../../crates/ozm-mesh/src/link.rs)). Public `Mesh::attach(stream, outbound)` runs it. The FFI layer (uniffi, Kotlin bindings, built with `cargo-ndk`) keeps a `tokio::io::duplex` per BLE connection and exposes four calls:
 
 | Call | Direction | Meaning |
 |---|---|---|
@@ -74,19 +74,25 @@ Nothing below is built or measured on a radio. Numbers marked *estimate* come fr
 
 The Hello frame identifies the peer, and the existing rule keeps one link per pair, so the BLE layer never needs to know PeerIds. Hello, Data and Ping frames are unchanged (21 bytes of framing per 512-byte frame).
 
+`Mesh::attach` runs to completion with the BLE timer policy; TCP entry points retain their own policy. Cancellation also unregisters the neighbour. `Mesh::neighbor_links` and node status `neighbor_links` expose `tcp`/`ble` without changing the existing `neighbors` list. UniFFI uses a per-device Tokio runtime. Device operations return the same JSON objects/errors as the Logos module (join, start, status, fleet, pay, payments, sync, funds); they run on a Kotlin worker, not the UI/BLE handler. Link handles must be unique across reconnects. Incoming chunks (1–514 bytes) use a bounded 128-chunk queue and a 64 KiB duplex; oversize/overflow closes the link rather than silently dropping data. `LinkSink.write` returns only after local platform callbacks have accepted every chunk; false closes the link. Rust calls `LinkSink.link_closed` on EOF, duplicate rejection, bad framing, timeout or explicit closure. Kotlin serializes receive callbacks per link and unblocks pending writes on close.
+
 **2. GATT layout.** One service with our own random 128-bit UUID, **the same in Debug and Release** (BitChat's differ, so mixed builds never meet). One characteristic:
 
 - central → peripheral: *write without response*;
 - peripheral → central: *notify*.
 
-Each side treats its direction as an ordered byte stream: the length-prefixed frames are cut into chunks of (ATT MTU − 3) bytes and joined on the other side, with no extra header. ATT is ordered and acknowledged at the link layer; chunks are only lost if a send queue overflows, so the sender waits for the platform's flow-control callback before the next chunk (Android `onCharacteristicWrite` / `onNotificationSent`; iOS `peripheralIsReady(toSendWriteWithoutResponse:)` / `isReady(toUpdateSubscribers:)`). Any framing error closes the link; inventory sync on the next link-up repairs whatever was in flight.
+Each side treats its direction as an ordered byte stream: the length-prefixed frames are cut into chunks of (ATT MTU − 3) bytes and joined on the other side, with no extra header. The sender waits for the platform's flow-control callback before the next chunk (Android `onCharacteristicWrite` / `onNotificationSent`; iOS `peripheralIsReady(toSendWriteWithoutResponse:)` / `isReady(toUpdateSubscribers:)`). These callbacks mean **local queue readiness, not remote/application delivery**; write-without-response and notify provide no application ack. Rust's end-to-end ack and inventory repair remain necessary. A callback error or 15 s local write timeout closes the stream. Any framing error closes the link; inventory sync on the next link-up repairs whatever was in flight.
+
+Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d6e32-89f5-4a38-9761-72d1305a4f12`, standard CCCD `0x2902`. Both APK variants share them. Legacy advertisements put 128-bit service data + the four hint bytes in the primary packet, and the UUID list in the scan response: both fields together would exceed the 31-byte advertisement limit. The hint is the first four bytes of the fleet's LAN discovery tag, a filter, not authentication.
+
+**Android correction to the proposed MTU arithmetic:** actual GATT chunks are `min(ATT MTU − 3, 512)`, because Android's [`GATT_MAX_ATTR_LEN`](https://android.googlesource.com/platform/packages/modules/Bluetooth/+/refs/heads/main/framework/java/android/bluetooth/BluetoothGatt.java) rejects attribute values above 512 bytes even at MTU 517. The transport/FFI tests still cover 514-byte stream chunks. Failure to negotiate MTU does not disconnect; the link keeps its default 20-byte payload. The service UUID and full fleet hint fit without extended advertising.
 
 **3. MTU and speed.** Request MTU 517 and 2M PHY; if negotiation fails, keep the link at the default (23-byte ATT MTU) rather than disconnecting, as bitchat-android does. A 12.3 KB `pay` envelope is about 25 frames of 512 bytes, or about 27 ATT writes at MTU 517. Planning figure (*estimate*): 1–3 s per hop warm, up to ~15 s cold (scan, connect, MTU, Hello). Later option: an L2CAP connection-oriented channel (Android 10+, iOS 11+) is a real byte stream and likely faster; add it only if GATT measurements fall short.
 
 **4. Discovery and connections.**
 
 - Every device scans and advertises at once (central and peripheral). The advertisement carries the service UUID and a 4-byte fleet hint in service data, so devices from other fleets are skipped before connecting. The PeerId is not advertised; it is learned from Hello after connecting.
-- At most 6 BLE links per device (Android allows about 7–8). Prefer peers not already reachable through another link; drop the longest-idle link when full.
+- At most 6 BLE links per device, counting pending central and peripheral connections. Scans skip already connected device addresses and do not evict healthy links when full; a new inbound connection evicts the longest-idle link. Hello applies the existing one-link-per-PeerId rule across TCP/BLE. Transport preference for peers already reachable over LAN is not implemented (PeerIds are deliberately absent from advertisements); measure this before adding peer/address caching.
 - Both devices may connect to each other at once; the existing duplicate-link rule keeps one. Measure how often this wastes a connection slot before adding a tie-break.
 - Scan duty: continuous while the app is open, 25 % (for example 5 s on, 15 s off) when backgrounded. *Estimate*; tune against battery.
 
@@ -101,11 +107,11 @@ Each side treats its direction as an ordered byte stream: the length-prefixed fr
 
 **7. Then iOS.** Same GATT layout in Swift (CoreBluetooth), Rust core through uniffi Swift bindings. Borrow BitChat iOS's state restoration (`bluetooth-central` and `bluetooth-peripheral` background modes, restore identifiers). Known limits: in the background, scanning must name our exact UUID, the advertisement cannot change, and the UUID is only sent in Apple's overflow area. The payer is foreground-only on iOS (decided earlier); relaying in the background must be tested early with two phones.
 
-### Milestones and gating tests (proposed)
+### Milestones and gating tests
 
 | # | Milestone | Passes when |
 |---|---|---|
-| B1 | `Mesh::attach` and the FFI duplex, no radio | A Rust test runs the existing mesh tests over in-memory streams chunked to 20, 182 and 514 bytes with flow-control stalls; the four-container bench still passes |
+| B1 | `Mesh::attach` and the FFI duplex, no radio — built | Rust test: 20,123-byte payload over 20/182/514-byte bounded streams, callback stalls, delayed second hop/store-and-forward and ack; timer tests preserve TCP 5/20 s and BLE 15/60 s. `bench/ffi-bench.sh`: A–B–D through Kotlin callbacks only, funds + sync + payment/receipt/mined at all three chunk sizes. Container mesh/LAN benches are regression gates |
 | B2 | Two Android phones, one hop | Hello completes; a 12.3 KB message is delivered and acked; delivery time measured at MTU 517 and at the default MTU |
 | B3 | Three phones in a line | A debug allow-list forces A–R–B; a payment reaches B through R, the receipt comes back; 1-hop and 2-hop times recorded |
 | B4 | Full payment | A and B on phones, offline; the gateway is a laptop reached by a phone on a no-internet Wi-Fi; the payment is mined and `mined` reaches both phones |
@@ -117,7 +123,7 @@ Rough effort (*estimate*): B1 1.5–2 weeks; Android link and app to B4 about 3 
 
 ## Open
 
-- The BLE link above: nothing has run over a radio yet. Real per-hop times, connection-slot behaviour with many neighbours, battery cost and Android background limits on vendor ROMs are all unmeasured.
+- B2–B7: nothing has run over a radio yet. The native Android UI, permissions, actual MTU fallback, 2M PHY, scan/advertise coexistence, phone LAN bridging, proving time/RAM, per-hop times, connection slots, battery cost and screen-off/vendor background limits remain unverified. No emulator was used (the orb has no Bluetooth or KVM).
 - Whether the fleet hint in BLE advertisements, or a rotating version of it, is enough to avoid tracking ([../privacy-and-threats.md](../privacy-and-threats.md)).
 - Interoperating with BitChat's packet format, if mixed fleets are wanted.
 - Discovery beacons announce the mesh ID and fleet tag in clear on the LAN ([../privacy-and-threats.md](../privacy-and-threats.md)).

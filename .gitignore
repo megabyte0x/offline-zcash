@@ -3,3 +3,11 @@
 target/
 bench/.state/
 bench/.state-lan/
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/build/
+android/generated/
+android/jniLibs/
+android/local.properties
+bench/.state-ffi/

@@ -22,13 +22,13 @@ while let Some(ev) = events.recv().await { /* Message, Delivered, NeighborUp, Ne
 
 All integers are big-endian.
 
-**TCP frame:** `len: u32` then `len` bytes of body. A body is never larger than `mtu + 21`.
+**Stream frame (TCP or BLE):** `len: u32` then `len` bytes of body. A body is never larger than `mtu + 21`.
 
 | Body kind | Layout |
 |---|---|
 | Hello `0x01` | `"OZM"`, `version: u8` (= 1), `peer_id: [u8; 8]` — the first frame each side sends |
 | Data `0x02` | `frag_id: [u8; 16]`, `index: u16`, `count: u16`, `chunk` (≤ mtu bytes) |
-| Ping `0x03` | empty; sent every 5 s; a link with no frames for 20 s is dead |
+| Ping `0x03` | empty; TCP 5 s ping / 20 s idle timeout; BLE 15 s / 60 s |
 
 Data chunks are joined in index order into one **link message**. `frag_id` is the packet's msg_id
 (random for inventories). Incomplete reassemblies are dropped after 30 s; at most 4,096 fragments.
@@ -144,6 +144,12 @@ Platform caveats:
 ## Link layer boundary
 
 `src/link.rs` runs a link over any `AsyncRead + AsyncWrite` stream (`run_link`) and talks to the
-mesh only through `Node::link_up`, `on_link_msg` and `link_down`. TCP listen and dial are the only
-transports today; LAN discovery only finds peers and dials them over TCP. A BLE link only needs
-to produce a stream (or call those three methods).
+mesh only through `Node::link_up`, `on_link_msg` and `link_down`. TCP listen and dial retain their
+5 s ping / 20 s idle policy. Public `Mesh::attach(stream, outbound)` runs an externally supplied
+BLE stream to completion with 15 s / 60 s timers; `outbound` means central/dialer. EOF, framing
+failure, duplicate rejection, task cancellation and shutdown close the link. Reassembly stays
+at 30 s. `Mesh::neighbor_links()` returns sorted `(PeerId, LinkKind)` pairs; `neighbors()` is unchanged.
+
+`../ozm-ffi` bridges native callbacks to bounded Tokio duplex streams. Android implements GATT
+write-without-response/notify chunking and local callback flow control; routing is unchanged.
+See [Android guide](../../docs/android-install.md) and [mesh design](../../docs/components/mesh.md#ble-link-android-first).

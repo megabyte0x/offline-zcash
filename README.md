@@ -14,6 +14,7 @@ It runs as an app in [Logos Basecamp](https://docs.logos.co/basecamp) or as a co
 
 - **[Install it in Basecamp](docs/basecamp-install.md):** install the app, join a session with your invite, get test coins and pay someone.
 - **[Use the command-line node](docs/install.md):** install `ozm-node`, then `ozm-node join <invite.json>` and `ozm-node start`.
+- **[Try the Android test APK](docs/android-install.md):** Android 10+ arm64, native BLE + LAN, invite join and payments. No real-phone/radio validation yet.
 - **[Run a session](docs/mvp-v0.2.0.md#running-a-session):** run the test chain and the gateway, and hand out invites.
 
 Downloads are on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
@@ -26,5 +27,6 @@ Downloads are on the [releases page](https://github.com/megabyte0x/offline-zcash
 | [crates/ozm-mesh](crates/ozm-mesh/README.md) | BitChat-style mesh: TTL flooding, BLE-sized frames, store-and-forward, acks, LAN discovery |
 | [crates/ozm-node](crates/ozm-node) | The device: roles, payment store, gateway, HTTP API and web UI |
 | [logos](logos/README.md) | Basecamp core module and QML app |
+| [android](docs/android-install.md) | Android test shell, BLE byte link, UniFFI/Kotlin build and JVM payment check |
 | [bench](bench/README.md) | Multi-container tests: `bench/mesh-bench.sh all` (multi-hop) and `bench/lan-bench.sh all` (LAN) |
 | [docs](docs/README.md) | Design, components, results per version ([v0.1.0](docs/mvp-v0.1.0.md), [v0.2.0](docs/mvp-v0.2.0.md)) |

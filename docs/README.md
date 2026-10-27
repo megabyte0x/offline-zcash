@@ -4,7 +4,7 @@ Offline Zcash payments: a signed, proven Ironwood transaction moves between devi
 
 Rule: the design target is mainnet with an untrusted gateway; the local `ths` Regtest chain is a test harness and never a reason to weaken a check ([design.md](design.md)).
 
-Current state (27 October 2026): **v0.1.0, v0.2.0 and v0.3.0 are built and released** on the local NU7 chain: a payment built offline hops across the mesh, the payee checks it and sends a receipt, a gateway mines it and the result comes back. v0.2.0 is an installable `ozm-node` with LAN discovery; v0.3.0 runs the same device inside Logos Basecamp. See [how-it-works.md](how-it-works.md) for the flow in pictures and [open-work.md](open-work.md#built) for what is built and what is next. Design: #1 re-decided 26 October (pending below the floor, payer + 3-of-4 co-signer group above it), #2 settled, #3 decided for a minimal build; next design problem is **#4 gateway protocol**. Chain-state bundles, nullifier sharing, the co-signer group, BLE and phones are designed but not built.
+Current state (27 October 2026): **v0.1.0, v0.2.0 and v0.3.0 are built and released** on the local NU7 chain: a payment built offline hops across the mesh, the payee checks it and sends a receipt, a gateway mines it and the result comes back. v0.2.0 is an installable `ozm-node` with LAN discovery; v0.3.0 runs the same device inside Logos Basecamp. **v0.4.0 is prepared, not tagged:** an Android BLE + LAN test shell and UniFFI/Kotlin API; B1 and host-JVM payments are checked, real phones/radios are not. See [android-install.md](android-install.md), [how-it-works.md](how-it-works.md) and [open-work.md](open-work.md#built). Design: #1 re-decided 26 October (pending below the floor, payer + 3-of-4 co-signer group above it), #2 settled, #3 decided for a minimal build; next design problem is **#4 gateway protocol**. Chain-state bundles, nullifier sharing and the co-signer group are designed but not built.
 
 | Read | For |
 |---|---|
@@ -12,6 +12,7 @@ Current state (27 October 2026): **v0.1.0, v0.2.0 and v0.3.0 are built and relea
 | [mvp-v0.2.0.md](mvp-v0.2.0.md) | v0.2.0: install, invites, LAN discovery, sync and test funds over the mesh; how to run a session |
 | [../logos/README.md](../logos/README.md) | Basecamp core module and QML UI: API, build, run, what was verified |
 | [basecamp-install.md](basecamp-install.md) | Tester guide: install Offline Zcash in Logos Basecamp, join, pay |
+| [android-install.md](android-install.md) | Android 10+ arm64 APK: install, permissions, laptop gateway, join and pay; fresh-orb build and Kotlin/Rust contract test |
 | [install.md](install.md) | Installing `ozm-node` on macOS and Linux |
 | [mvp-v0.1.0.md](mvp-v0.1.0.md) | What v0.1.0 runs, measured timeline, gating test results, decisions and limits |
 | [design.md](design.md) | System view, payment flow, finalized decisions, stages |
@@ -23,7 +24,7 @@ Current state (27 October 2026): **v0.1.0, v0.2.0 and v0.3.0 are built and relea
 | [components/payee-verifier.md](components/payee-verifier.md) | Offline checks, chain-state checks with no trust in the gateway, receipt states, what headers can prove |
 | [components/pending-tier.md](components/pending-tier.md) | PaymentStatement and Receipt formats, payment keys, nullifier sharing, limits |
 | [components/gateway.md](components/gateway.md) | Submission (Tor on mainnet), signed bundles, history-MMR rebuild, untrusted-gateway mitigations |
-| [components/mesh.md](components/mesh.md) | `ozm-mesh` as built: flooding, frames, store-and-forward, acks, LAN discovery; BLE link design (Android first, proposed) |
+| [components/mesh.md](components/mesh.md) | `ozm-mesh`: flooding, frames, store-and-forward, acks, LAN discovery; Android BLE implementation (radio gates unverified) |
 | [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
 | [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
 | [../archive/](../archive/README.md) | Superseded plans (BitChat fork transport, Logos pathway plans), the original report and research notes |
