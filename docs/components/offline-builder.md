@@ -56,6 +56,10 @@ balance. This proves the Common 4 split on the local chain, **not public testnet
 
 Reservations persist before broadcast, survive rollback/restart, and release only
 when the **locally scanned** tip exceeds the signed transaction's inclusive expiry.
+Payments, Max and Prepare remain available during catch-up. Only batch application
+and installation share the proving/reservation lock; network downloads do not.
+The UI labels the balance with its scanned height, and installation merges any
+reservations made while that batch downloaded before persisting it.
 A gateway's expiry result alone cannot unlock them. This is not cancellation of
 an accepted debt; the family/renewal protocol below remains deferred. A refusal
 means **refused, may still mine until expiry**, because the same bytes may already

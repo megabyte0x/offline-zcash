@@ -31,3 +31,4 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 [dev-dependencies]
 axum = { version = "0.7", features = ["http2"] }
 tempfile = "3"
+orchard = { package = "zakura-orchard", version = "=4.0.0", features = ["circuit"] }

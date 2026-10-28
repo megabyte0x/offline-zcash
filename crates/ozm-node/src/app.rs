@@ -172,6 +172,8 @@ pub struct App {
     /// Device: when the last mesh sync request went out (ms), to avoid flooding the gateway.
     last_sync_req: std::sync::atomic::AtomicU64,
     sync_backoff: std::sync::atomic::AtomicU64,
+    /// Serializes scan jobs, not payments; network downloads never hold sync_apply.
+    sync_run: tokio::sync::Mutex<()>,
     sync_apply: tokio::sync::Mutex<()>,
     sync_running: std::sync::atomic::AtomicBool,
     sync_error: Mutex<Option<String>>,
@@ -247,6 +249,7 @@ impl App {
             block_cache: Default::default(),
             last_sync_req: Default::default(),
             sync_backoff: std::sync::atomic::AtomicU64::new(1),
+            sync_run: Default::default(),
             sync_apply: Default::default(),
             sync_running: Default::default(),
             sync_error: Default::default(),
@@ -433,7 +436,7 @@ impl App {
             let gw = self.request_mesh_sync(true).await?;
             return Ok(json!({"requested_from": gw, "tip": self.state.lock().unwrap().0.tip_height}));
         };
-        let _g = self.sync_apply.lock().await;
+        let _run = self.sync_run.lock().await;
         let fvk = self.cfg.me.fvk()?;
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
             let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
@@ -446,32 +449,48 @@ impl App {
                 let (height, hash) = next.blocks.last().map_or((wallet.tip_height, wallet.tip_hash.clone()), |b| (b.height, b.hash.clone()));
                 let known = checkpoints(&wallet);
                 let (batch, fvk) = (next, fvk.clone());
-                let apply = tokio::task::spawn_blocking(move || wallet.apply_batch(&batch, &fvk).map(|_| wallet));
+                let apply = async {
+                    let _guard = self.sync_apply.lock().await;
+                    let wallet = tokio::task::spawn_blocking(move || wallet.apply_batch(&batch, &fvk).map(|_| wallet)).await??;
+                    self.install_wallet(wallet.clone())?;
+                    Ok::<_, anyhow::Error>(wallet)
+                };
                 let fetch = async {
                     if height >= source.tip { return Ok(None); }
                     source.batch(height, &hash, &known, birthday, SCAN_BLOCKS).await.map(Some)
                 };
                 let (applied, fetched) = tokio::join!(apply, fetch);
-                wallet = applied??;
-                self.install_wallet(wallet.clone())?;
+                wallet = applied?;
                 match fetched? { Some(batch) => next = batch, None => break }
             }
             *self.sync_sources.lock().unwrap() = source.sources;
-            let out = json!({"tip": wallet.tip_height, "spendable": wallet.balance().0, "locked": wallet.balance().1});
+            let (spendable, locked) = self.state.lock().unwrap().0.balance();
+            let out = json!({"tip": wallet.tip_height, "spendable": spendable, "locked": locked});
             self.event("synced", out.clone());
             return Ok(out);
         }
         let rpc = Rpc::new(&url);
         let tip = tokio::task::spawn_blocking(move || rpc.tip()).await??;
         self.resolve_birthday(tip, 0)?;
-        let mut wallet = self.state.lock().unwrap().0.clone();
-        let (wallet, report) = tokio::task::spawn_blocking(move || {
-            let r = wallet.sync(&Rpc::new(&url), &fvk);
-            r.map(|rep| (wallet, rep))
-        })
-        .await??;
-        let (spendable, locked, _) = self.install_wallet(wallet)?;
-        let out = json!({"tip": report.tip, "new_notes": report.new_notes, "rescanned": report.rescanned, "spendable": spendable, "locked": locked});
+        let mut new_notes = 0;
+        let mut rescanned = false;
+        let (height, spendable, locked) = loop {
+            let (have, hash, checkpoints, birthday) = {
+                let st = self.state.lock().unwrap();
+                (st.0.tip_height, st.0.tip_hash.clone(), st.0.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>(), st.0.birthday)
+            };
+            let url = url.clone();
+            let batch = tokio::task::spawn_blocking(move || Rpc::new(&url).batch(have, hash, &checkpoints, birthday, SCAN_BLOCKS))
+                .await??.ok_or_else(|| anyhow!("missing reorg checkpoints"))?;
+            let _guard = self.sync_apply.lock().await;
+            let (mut wallet, fvk) = (self.state.lock().unwrap().0.clone(), fvk.clone());
+            let (wallet, report, chain_tip) = tokio::task::spawn_blocking(move || wallet.apply_batch(&batch, &fvk).map(|r| (wallet, r, batch.chain_tip))).await??;
+            new_notes += report.new_notes;
+            rescanned |= report.rescanned;
+            let (spendable, locked, height) = self.install_wallet(wallet)?;
+            if height >= chain_tip { break (height, spendable, locked); }
+        };
+        let out = json!({"tip": height, "new_notes": new_notes, "rescanned": rescanned, "spendable": spendable, "locked": locked});
         self.event("synced", out.clone());
         Ok(out)
     }
@@ -544,28 +563,7 @@ impl App {
             }
         } else {
             let hash = hash.clone();
-            tokio::task::spawn_blocking(move || -> Result<_> {
-                let rpc = Rpc::new(&url);
-                let tip = rpc.tip()?;
-                let mut prev = (have, hash);
-                let seed = if have == 0 && birthday > 1 {
-                    let seed = rpc.seed(birthday - 1)?;
-                    prev = (seed.height, seed.hash.clone());
-                    Some(seed)
-                } else { None };
-                if have > 0 && (have > tip || rpc.block_hash(have)? != prev.1) {
-                    if checkpoints.is_empty() { return Ok(None); }
-                    prev = checkpoints.iter().rev().find(|(h, s)| *h <= tip && rpc.block_hash(*h).is_ok_and(|v| v == *s))
-                        .cloned().ok_or_else(|| anyhow!("reorg exceeds retained checkpoints"))?;
-                }
-                let mut batch = zcash_offline_core::sync::Batch { prev_height: prev.0, prev_hash: prev.1, seed,
-                    blocks: vec![], chain_tip: tip, sources: vec!["Regtest JSON-RPC".into()] };
-                for h in prev.0 + 1..=tip.min(prev.0 + 200) {
-                    let (hash, txs) = rpc.block_txs(h)?;
-                    batch.push(zcash_offline_core::sync::CompactBlock::from_raw(h, hash, &txs)?);
-                }
-                Ok(Some(batch))
-            }).await??
+            tokio::task::spawn_blocking(move || Rpc::new(&url).batch(have, hash, &checkpoints, birthday, MESH_SYNC_BLOCKS)).await??
         };
         let Some(batch) = batch else {
             return self.send_to(from, Body::CheckpointReq { have_height: have, have_hash: hash }).await;
@@ -604,6 +602,7 @@ impl App {
         *self.sync_sources.lock().unwrap() = batch.sources.clone();
         self.event("synced", json!({"via": from, "tip": tip, "chain_tip": batch.chain_tip, "new_notes": report.new_notes,
             "rescanned": report.rescanned, "payload_bytes": bincode::serialized_size(&batch)?, "advanced": tip != old_tip}));
+        drop(_guard);
         if tip < batch.chain_tip { self.request_mesh_sync(true).await?; }
         Ok(())
     }
@@ -702,6 +701,7 @@ impl App {
         .await??;
         let (spendable, locked, tip) = self.install_wallet(wallet)?;
         self.event("synced", json!({"via": from, "tip": tip, "chain_tip": chain_tip, "new_notes": report.new_notes, "rescanned": reset, "spendable": spendable, "locked": locked}));
+        drop(_g);
         if last.is_some_and(|l| l < chain_tip) {
             self.request_mesh_sync(true).await?;
         }
@@ -749,6 +749,7 @@ impl App {
         let mut txids = vec![];
         for _ in 0..notes {
             self.sync().await?;
+            let apply = self.sync_apply.lock().await;
             let policy = self.cfg.fleet.policy.clone();
             let me = self.cfg.me.clone();
             let mut wallet = self.state.lock().unwrap().0.clone();
@@ -757,6 +758,7 @@ impl App {
             })
             .await??;
             self.install_wallet(wallet)?;
+            drop(apply);
             let (raw, txid) = (built.raw.clone(), built.txid.clone());
             let url2 = url.clone();
             let status = tokio::task::spawn_blocking(move || submit_and_mine(&Rpc::new(&url2), &raw, &txid, mine)).await??;
@@ -799,6 +801,7 @@ impl App {
             st.1.payments.insert(payment.txid.clone(), payment.clone());
             self.persist(&st.0, &st.1)?;
         }
+        drop(_sync);
         if self.gateway_options().0.is_some() {
             self.on_sub(self.name(), built.raw, built.txid, vec![]).await?;
         } else {
@@ -890,6 +893,7 @@ impl App {
             self.persist(&st.0, &st.1)?;
             p
         };
+        drop(_sync);
         self.event("built", json!({"txid": payment.txid, "bytes": built.raw.len(), "prove_ms": built.prove_ms, "amount": amount, "to": address}));
         self.send_payment(&payment.txid).await?;
         Ok(self.payment(&payment.txid).unwrap())

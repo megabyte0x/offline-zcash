@@ -244,12 +244,6 @@ impl Node {
         app.start_sync();
         Ok(json!({"syncing": true}))
     }
-
-    /// Payments wait for the wallet lock a sync holds; refuse instead of waiting minutes.
-    fn not_syncing(&self) -> Result<()> {
-        anyhow::ensure!(!self.app()?.status()["syncing"].as_bool().unwrap_or(false), "wallet sync in progress; try again when it finishes");
-        Ok(())
-    }
 }
 
 impl ZcashOfflineModule for Node {
@@ -332,7 +326,6 @@ impl ZcashOfflineModule for Node {
     fn pay(&self, to: String, amount_zec: String) -> String {
         out((|| {
             let a = self.app()?;
-            self.not_syncing()?;
             let zat = parse_zec(&amount_zec)?;
             let p = rt().block_on(a.pay(&to, zat))?;
             Ok(serde_json::to_value(p)?)
@@ -351,7 +344,6 @@ impl ZcashOfflineModule for Node {
         out((|| {
             let notes = u32::try_from(notes).context("positive note count")?;
             let a = self.app()?;
-            self.not_syncing()?;
             let payment = rt().block_on(a.prepare_offline(notes, parse_zec(&amount_zec)?))?;
             Ok(serde_json::to_value(payment)?)
         })())

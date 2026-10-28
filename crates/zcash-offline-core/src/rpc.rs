@@ -111,6 +111,29 @@ impl Rpc {
     pub fn block_hash(&self, h: u32) -> Result<String> {
         Ok(self.call("getblockhash", json!([h]))?.as_str().unwrap_or_default().to_string())
     }
+
+    /// Download a bounded range without holding the wallet's apply/payment lock.
+    pub fn batch(&self, have: u32, hash: String, checkpoints: &[(u32, String)], birthday: u32, limit: u32) -> Result<Option<crate::sync::Batch>> {
+        let tip = self.tip()?;
+        let mut prev = (have, hash);
+        let seed = if have == 0 && birthday > 1 {
+            let seed = self.seed(birthday - 1)?;
+            prev = (seed.height, seed.hash.clone());
+            Some(seed)
+        } else { None };
+        if have > 0 && (have > tip || self.block_hash(have)? != prev.1) {
+            if checkpoints.is_empty() { return Ok(None); }
+            prev = checkpoints.iter().rev().find(|(h, s)| *h <= tip && self.block_hash(*h).is_ok_and(|v| v == *s))
+                .cloned().ok_or_else(|| anyhow!("reorg exceeds retained checkpoints"))?;
+        }
+        let mut batch = crate::sync::Batch { prev_height: prev.0, prev_hash: prev.1, seed,
+            blocks: vec![], chain_tip: tip, sources: vec!["Regtest JSON-RPC".into()] };
+        for h in prev.0 + 1..=tip.min(prev.0.saturating_add(limit)) {
+            let (hash, txs) = self.block_txs(h)?;
+            batch.push(crate::sync::CompactBlock::from_raw(h, hash, &txs)?);
+        }
+        Ok(Some(batch))
+    }
 }
 
 #[cfg(test)]

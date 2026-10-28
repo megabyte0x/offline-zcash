@@ -6,7 +6,7 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.4. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
 
-**v0.7.4 candidate, item 1:** automatic per-device scan starts and background sync
+**v0.7.5 candidate, item 1:** automatic per-device scan starts and background sync
 replace birthday setup and a required manual sync. On 28 October, the real
 Basecamp 0.3.2 AppImage in Ubuntu 24.04/Xvfb reached testnet height 4,550,718
 1.072 seconds after the gateway link came up; the capture 4.2 seconds after
@@ -14,8 +14,18 @@ clicking Start already showed ready and the receive address. No invite, dial,
 birthday input or refresh was used. CLI link-to-tip was 0.845 seconds. These
 are fresh empty-wallet measurements, not funded-payment or macOS evidence.
 Offline/delayed-contact interpolation, floor/clamp boundaries and reset
-preservation are covered by the wallet test. Catch-up, concurrency, immediate
-incoming notes and deep-reorg recovery remain the next items in this candidate.
+preservation are covered by the wallet test.
+
+**Item 2:** downloads no longer hold the payment/apply lock; Pay, Max and Prepare
+stay available during sync. A stalled-download regression failed after ten seconds
+before the fix and passed in 0.51 seconds afterwards, including the durable reservation.
+Real Linux Basecamp sent 0.0137 Regtest ZEC while at height 109 of 709; proving
+took 207 ms and the gateway reported mined 269 ms after the build event, while
+the wallet was still behind. RPC independently confirmed height 710. A 100 ms
+per-block latency proxy made the 600-block catch-up observable; it did not fake
+blocks or submission results. Screenshots/recording are in the run artifacts.
+Catch-up, immediate incoming notes, deep-reorg recovery and automatic Prepare
+remain the next items in this candidate. macOS has not been run here.
 
 | Version | What it proves | Doc |
 |---|---|---|

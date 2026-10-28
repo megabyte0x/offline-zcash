@@ -36,7 +36,7 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   checked against the block's Ironwood commitment-tree size. Regtest uses RPC
   tip−100, at least 1. Offline-created devices retain creation time until chain
   contact, then conservatively interpolate creation−one day, not the contact tip.
-  v0.7.4 appends authenticated `clockq`/`clockr` variants carrying only the
+  v0.7.5 appends authenticated `clockq`/`clockr` variants carrying only the
   gateway's tip height/time; creation time never leaves the wallet. Existing
   compact batch, envelope and frame layouts are unchanged. Upgrade gateways for
   automatic offline-created wallet bootstrap; older nodes drop the new variants.

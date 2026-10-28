@@ -485,9 +485,9 @@ Rectangle {
                         }
                         Muted {
                             text: root.st && root.st.wallet ? "spendable · " + root.zec(root.st.wallet.locked) + " locked in pending payments · "
-                                            + root.st.wallet.notes + " notes · synced to height " + root.st.wallet.tip : ""
+                                            + root.st.wallet.notes + " notes · balance as of height " + root.st.wallet.tip : ""
                         }
-                        Msg { text: root.st && root.st.syncing ? "Syncing in the background" + (root.st.chain_tip ? ": height " + root.st.wallet.tip + " of " + root.st.chain_tip : "") + ". Payments wait until it finishes." : root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : ""
+                        Msg { text: root.st && root.st.syncing ? "Syncing in the background" + (root.st.chain_tip ? ": height " + root.st.wallet.tip + " of " + root.st.chain_tip : "") + ". Available notes can still be paid or prepared." : root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : ""
                               failed: !!(root.st && !root.st.syncing && root.st.sync_error) }
                         Rectangle {
                             Layout.fillWidth: true; Layout.topMargin: 4

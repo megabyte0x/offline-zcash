@@ -1,5 +1,76 @@
 use ozm_node::{fleet_init, join_invite, start, FleetInitOptions, RunOpts};
 
+#[tokio::test]
+async fn payment_during_sync_download_keeps_its_reservation_after_install() {
+    use std::{sync::Arc, time::Duration};
+    use axum::{routing::post, Json, Router};
+    use serde_json::{json, Value};
+    use tokio::sync::{watch, Notify};
+    use zcash_offline_core::{fleet::generate_fleet, wallet::{StoredNote, WalletState}, Policy};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (fleet, secrets) = generate_fleet("concurrent", &[("A".into(), "gateway".into()), ("B".into(), "".into())], Policy::default()).unwrap();
+    let me = secrets[0].clone();
+    let mut note = StoredNote { position: 0, height: 1, txid: "funding".into(), value: 1_000_000,
+        recipient: hex::encode(me.address().unwrap().to_raw_address_bytes()), rho: hex::encode([0; 32]),
+        rseed: hex::encode([7; 32]), nullifier: String::new(), spent_in: None, locked_by: None };
+    let owned = note.note().unwrap();
+    note.nullifier = hex::encode(owned.nullifier(&me.fvk().unwrap()).to_bytes());
+    let cm = orchard::note::ExtractedNoteCommitment::from(owned.commitment());
+    let mut wallet = WalletState { birthday: 1, tip_height: 1, tip_hash: "block1".into(),
+        commitments: vec![hex::encode(cm.to_bytes())], notes: vec![note], ..Default::default() };
+    let (_, root) = wallet.witness(0).unwrap();
+    wallet.roots.insert(1, hex::encode(root));
+    wallet.hashes.insert(1, "block1".into());
+    wallet.save(&dir.path().join("wallet.json")).unwrap();
+
+    let downloading = Arc::new(Notify::new());
+    let (release, released) = watch::channel(false);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let entered = downloading.clone();
+    let rpc = Router::new().route("/", post(move |Json(request): Json<Value>| {
+        let entered = entered.clone();
+        let mut released = released.clone();
+        async move {
+            let result = match request["method"].as_str().unwrap() {
+                "getblockcount" => json!(2),
+                "getblockhash" => json!(format!("block{}", request["params"][0])),
+                "getblock" => {
+                    entered.notify_one();
+                    while !*released.borrow_and_update() { released.changed().await.unwrap(); }
+                    json!({"hash": "block2", "tx": []})
+                }
+                method => panic!("unexpected RPC {method}"),
+            };
+            Json(json!({"result": result, "error": null, "id": 1}))
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+    let (mesh, _events) = ozm_mesh::Mesh::start(ozm_mesh::MeshConfig {
+        peer_id: me.public().unwrap().peer_id.parse().unwrap(), ack_signer: Some(me.signing_key().unwrap()),
+        ..Default::default()
+    }).await.unwrap();
+    let app = ozm_node::App::new(ozm_node::app::Config { data: dir.path().into(), fleet, me, rpc: Some(url),
+        mine: false, retry: Duration::from_secs(30), faucet_max_zat: 0 }, mesh).unwrap();
+    app.start_sync();
+    tokio::time::timeout(Duration::from_secs(5), downloading.notified()).await.unwrap();
+    assert_eq!(app.status()["syncing"], true);
+    let paid = tokio::time::timeout(Duration::from_secs(10), app.pay("B", 20_003)).await;
+    // Let the download finish even when the pre-fix lock causes the payment to time out.
+    release.send(true).unwrap();
+    let payment = paid.expect("payment waited for the sync download").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app.status()["wallet"]["tip"] != 2 { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    let durable = WalletState::load(&dir.path().join("wallet.json")).unwrap();
+    assert_eq!(durable.balance(), (0, 1_000_000));
+    assert_eq!(durable.notes[0].locked_by.as_deref(), Some(payment.txid.as_str()));
+    assert_eq!(durable.reservations[&durable.notes[0].nullifier].0, payment.txid);
+    app.stop().await;
+    server.abort();
+}
+
 #[test]
 fn generated_invites_join_and_never_overwrite_keys() {
     let dir = tempfile::tempdir().unwrap();

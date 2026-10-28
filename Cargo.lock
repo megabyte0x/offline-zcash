@@ -1901,6 +1901,7 @@ dependencies = [
  "ureq",
  "x25519-dalek",
  "zakura-client-backend",
+ "zakura-orchard",
  "zcash-offline-core",
 ]
 
