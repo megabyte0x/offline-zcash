@@ -23,8 +23,15 @@ Scanning merges by commitment and supplies the chain position and witness; only
 then can the note be selected for spending. Included/mined gateway reports start
 sync immediately; expired/conflicting reports remove unmined incoming outputs.
 The wallet persists a pruned tree and 200 checkpoints/roots;
-reorgs rewind notes, spends and witnesses to a retained checkpoint. A deeper reorg
-stops with a resync error rather than silently trusting a replacement history.
+reorgs rewind notes, spends and witnesses to a retained checkpoint. Deeper forks
+use the persisted 1,000-block hash log to find a conservative common ancestor P,
+then reseed at min(first_note_height, P+1)−1, floored at birthday−1. First-note
+height includes spent notes and mesh anchor+1 and survives reset. An empty wallet
+uses P+1; without a common historical sample the fallback is its own birthday,
+not the fleet default. Old wallets build their sparse log as they next scan.
+Sync snapshots persist every five seconds and at completion/stop; payment and
+receipt transmission always forces persistence first. A crash may replay batches,
+but cannot leave the durable cursor ahead of the durable notes/tree.
 
 Obtain TAZ at [Valar](https://faucet.testnet.valargroup.dev), advertised as 0.125 TAZ
 per address per 24 hours with Ironwood `utest1` support. **Our 27 October claim

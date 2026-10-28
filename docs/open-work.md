@@ -54,7 +54,18 @@ matching root and refuses mismatched roots/hashes and a prefetched range on a
 changed fork. The final portable module in real Linux Basecamp caught up 85,080
 blocks to 4,550,877 automatically in 27.228 seconds, with the receive address
 visible throughout (packaged/unbounded live-tip run, not the capped CLI bench).
-Deep-reorg recovery and automatic Prepare remain next. macOS has not been run here.
+macOS has not been run here.
+
+**Item 5:** first-note metadata survives reset, with sparse 1,000-block hashes.
+Synthetic 6,000-block forks test first note before/after the common sparse ancestor,
+empty-wallet recovery, reseeding, replacement roots and reservation persistence.
+The existing receipt test checks mesh anchor+1 then commitment merge. Real Linux
+Basecamp recovered automatically from `ths reorg --depth 2`: height remained 712,
+hash changed from `39e1ab…` to `9e18b4…`, and orphaned incoming value disappeared
+(3.024 → 3.0137 ZEC), with `rescanned: true` and no Refresh click. The first-note
+height stayed 107 and the device birthday stayed 5. A sparse match is a conservative
+fork bound; old wallets without historical samples can only fall back to their
+stored birthday. Automatic Prepare remains next.
 
 **Next witness work:** immediate mesh receipt does not yet mean immediate spending.
 The pending note has no canonical position/witness. A contained implementation

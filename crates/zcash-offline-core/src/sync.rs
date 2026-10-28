@@ -86,7 +86,7 @@ pub struct Batch {
 
 impl Batch {
     pub fn push(&mut self, block: CompactBlock) {
-        if block.txs.is_empty() && self.blocks.last().is_some_and(|b| b.txs.is_empty()) {
+        if block.txs.is_empty() && self.blocks.last().is_some_and(|b| b.txs.is_empty() && b.height % 1_000 != 0) {
             *self.blocks.last_mut().unwrap() = block;
         } else {
             self.blocks.push(block);

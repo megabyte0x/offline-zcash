@@ -419,6 +419,9 @@ impl App {
         // Receipts and result removals can arrive while this copy was scanning.
         wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
         wallet.pending_incoming.retain(|n| !wallet.notes.iter().any(|mined| mined.commitment().ok() == n.commitment().ok()));
+        if let Some(height) = st.0.first_note_height {
+            wallet.first_note_height = Some(wallet.first_note_height.map_or(height, |h| h.min(height)));
+        }
         for (nf, reservation) in &st.0.reservations {
             if reservation.1 == 0 || wallet.tip_height <= reservation.1 {
                 wallet.reservations.entry(nf.clone()).or_insert_with(|| reservation.clone());
@@ -452,12 +455,15 @@ impl App {
             let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
             let birthday = self.resolve_birthday(source.tip, source.tip_time().await?)?;
             let mut wallet = self.state.lock().unwrap().0.clone();
-            let checkpoints = |w: &WalletState| w.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>();
-            let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &checkpoints(&wallet), birthday, SCAN_BLOCKS).await?;
+            let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &wallet.checkpoints(), birthday, SCAN_BLOCKS).await?;
             loop {
+                if let Some(start) = wallet.recovery_start(&next) {
+                    self.event("resync-start", json!({"from": start, "ancestor": next.prev_height}));
+                    next = source.batch(0, "", &[], start, SCAN_BLOCKS).await?;
+                }
                 // Fetch the next range while this one applies off the async runtime.
                 let (height, hash) = next.blocks.last().map_or((wallet.tip_height, wallet.tip_hash.clone()), |b| (b.height, b.hash.clone()));
-                let known = checkpoints(&wallet);
+                let known = wallet.checkpoints();
                 let (batch, fvk) = (next, fvk.clone());
                 let apply = async {
                     let _guard = self.sync_apply.lock().await;
@@ -493,11 +499,18 @@ impl App {
         let (height, spendable, locked) = loop {
             let (have, hash, checkpoints, birthday) = {
                 let st = self.state.lock().unwrap();
-                (st.0.tip_height, st.0.tip_hash.clone(), st.0.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>(), st.0.birthday)
+                (st.0.tip_height, st.0.tip_hash.clone(), st.0.checkpoints(), st.0.birthday)
             };
-            let url = url.clone();
-            let batch = tokio::task::spawn_blocking(move || Rpc::new(&url).batch(have, hash, &checkpoints, birthday, SCAN_BLOCKS))
+            let rpc_url = url.clone();
+            let mut batch = tokio::task::spawn_blocking(move || Rpc::new(&rpc_url).batch(have, hash, &checkpoints, birthday, SCAN_BLOCKS))
                 .await??.ok_or_else(|| anyhow!("missing reorg checkpoints"))?;
+            let recovery = self.state.lock().unwrap().0.recovery_start(&batch);
+            if let Some(start) = recovery {
+                self.event("resync-start", json!({"from": start, "ancestor": batch.prev_height}));
+                let rpc_url = url.clone();
+                batch = tokio::task::spawn_blocking(move || Rpc::new(&rpc_url).batch(0, String::new(), &[], start, SCAN_BLOCKS)).await??
+                    .ok_or_else(|| anyhow!("missing recovery frontier"))?;
+            }
             let _guard = self.sync_apply.lock().await;
             let (wallet, fvk) = (self.state.lock().unwrap().0.clone(), fvk.clone());
             let (wallet, report, chain_tip) = tokio::task::spawn_blocking(move || wallet.into_batch(&batch, &fvk).map(|(w, r)| (w, r, batch.chain_tip))).await??;
@@ -614,6 +627,11 @@ impl App {
         let Some(batch) = batch else { return Ok(()); };
         self.reported_tip.store(batch.chain_tip, std::sync::atomic::Ordering::Relaxed);
         let wallet = self.state.lock().unwrap().0.clone();
+        if let Some(start) = wallet.recovery_start(&batch) {
+            self.event("resync-start", json!({"from": start, "ancestor": batch.prev_height, "via": from}));
+            drop(_guard);
+            return self.send_to(from, Body::CompactReq { have_height: 0, have_hash: String::new(), checkpoints: vec![], birthday: start }).await;
+        }
         let old_tip = wallet.tip_height;
         let (wallet, report) = wallet.into_batch(&batch, &self.cfg.me.fvk()?)?;
         let (_, _, tip) = self.install_wallet(wallet, report.tip >= batch.chain_tip)?;
@@ -654,7 +672,7 @@ impl App {
             // A delayed challenge must not rewind a newer successful sync.
             if st.0.tip_height != have_height || st.0.tip_hash != have_hash { return Ok(()); }
             Body::CompactReq { have_height, have_hash, birthday: st.0.birthday,
-                checkpoints: st.0.hashes.iter().map(|(h, s)| (*h, s.clone())).collect() }
+                checkpoints: st.0.checkpoints() }
         };
         self.send_to(from, body).await
     }

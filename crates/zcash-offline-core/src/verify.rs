@@ -177,6 +177,7 @@ mod tests {
         payee.record_incoming(verified.notes).unwrap();
         assert_eq!(payee.pending_incoming.iter().map(|n| n.value).sum::<u64>(), 20_003);
         assert_eq!(payee.pending_incoming.len(), 1);
+        assert_eq!(payee.first_note_height, Some(2));
         assert_eq!(payee.balance(), (0, 0));
         assert_eq!(crate::builder::max_payment(&payee, &policy).unwrap().0, 0);
         let mut payee: WalletState = serde_json::from_slice(&serde_json::to_vec(&payee).unwrap()).unwrap();
@@ -186,6 +187,7 @@ mod tests {
         assert!(payee.pending_incoming.is_empty());
         assert_eq!(payee.notes.len(), 1);
         assert_eq!(payee.balance(), (20_003, 0));
+        assert_eq!(payee.first_note_height, Some(2));
         assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
         let conflict = build_payment(&mut competing, &a, b.address().unwrap(), 20_007, &policy).unwrap();
         assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).err().unwrap().code, code::CONFLICT);

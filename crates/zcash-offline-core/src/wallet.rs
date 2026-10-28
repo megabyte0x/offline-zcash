@@ -99,6 +99,11 @@ pub struct WalletState {
     pub birthday: u32,
     #[serde(default)]
     pub created_at: u64,
+    /// Earliest possibly owned note, including spent notes and mesh receipts. Never reset.
+    #[serde(default)]
+    pub first_note_height: Option<u32>,
+    #[serde(default)]
+    pub sparse_hashes: BTreeMap<u32, String>,
 }
 
 impl WalletState {
@@ -131,7 +136,11 @@ impl WalletState {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
-        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+        let mut wallet: Self = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        for height in wallet.notes.iter().chain(&wallet.pending_incoming).map(|n| n.height).collect::<Vec<_>>() {
+            wallet.first_note_height = Some(wallet.first_note_height.map_or(height, |old| old.min(height)));
+        }
+        Ok(wallet)
     }
 
     /// Atomic, fsynced write (temp file + rename).
@@ -148,11 +157,27 @@ impl WalletState {
     pub fn record_incoming(&mut self, notes: Vec<StoredNote>) -> Result<()> {
         for note in notes {
             let commitment = note.commitment()?;
+            self.first_note_height = Some(self.first_note_height.map_or(note.height, |old| old.min(note.height)));
             if !self.notes.iter().chain(&self.pending_incoming).any(|n| n.commitment().is_ok_and(|c| c == commitment)) {
                 self.pending_incoming.push(note);
             }
         }
         Ok(())
+    }
+
+    /// Fit a conservative history plus recent checkpoints into the existing mesh request.
+    pub fn checkpoints(&self) -> Vec<(u32, String)> {
+        let stride = self.sparse_hashes.len().div_ceil(100).max(1);
+        let mut known: BTreeMap<_, _> = self.sparse_hashes.iter().step_by(stride).map(|(h, s)| (*h, s.clone())).collect();
+        for (h, s) in self.hashes.iter().rev().take(200 - known.len()) { known.insert(*h, s.clone()); }
+        if self.tip_height > 0 && !self.tip_hash.is_empty() { known.insert(self.tip_height, self.tip_hash.clone()); }
+        known.into_iter().collect()
+    }
+
+    /// A sparse match is a safe lower bound on the fork, not a retained tree checkpoint.
+    pub fn recovery_start(&self, batch: &Batch) -> Option<u32> {
+        (batch.seed.is_none() && batch.prev_height < self.tip_height && !self.hashes.contains_key(&batch.prev_height))
+            .then(|| self.first_note_height.unwrap_or(u32::MAX).min(batch.prev_height.saturating_add(1)).max(self.birthday).max(1))
     }
 
     /// Height at which this anchor (tree root) was the tip root, if known.
@@ -193,15 +218,19 @@ impl WalletState {
     pub fn reset_keep_locks(&mut self) {
         let reservations = std::mem::take(&mut self.reservations);
         let pending_incoming = std::mem::take(&mut self.pending_incoming);
+        let sparse_hashes = std::mem::take(&mut self.sparse_hashes);
+        let first_note_height = self.first_note_height;
         let (birthday, created_at) = (self.birthday, self.created_at);
         *self = WalletState::default();
         self.reservations = reservations;
         self.pending_incoming = pending_incoming;
+        self.sparse_hashes = sparse_hashes;
+        self.first_note_height = first_note_height;
         self.birthday = birthday;
         self.created_at = created_at;
     }
 
-    /// Scans new blocks from the node. Rescans from scratch after a reorg.
+    /// Scans new blocks from the node, using the same recovery floor as compact sync.
     pub fn sync(&mut self, rpc: &Rpc, fvk: &FullViewingKey) -> Result<SyncReport> {
         if self.tip_height == 0 && self.birthday > 1 { self.seed(&rpc.seed(self.birthday - 1)?)?; }
         self.sync_from(rpc, fvk)
@@ -212,11 +241,13 @@ impl WalletState {
         let chain_tip = rpc.tip()?;
         let mut view = self.clone();
         if self.tip_height > 0 && (self.tip_height > chain_tip || rpc.block_hash(self.tip_height)? != self.tip_hash) {
-            let ancestor = self.hashes.iter().rev().find(|(h, hash)| **h <= chain_tip && rpc.block_hash(**h).is_ok_and(|v| v == **hash));
-            if let Some((height, _)) = ancestor {
+            let ancestor = self.checkpoints().into_iter().rev().find(|(h, hash)| *h <= chain_tip && rpc.block_hash(*h).is_ok_and(|v| v == *hash));
+            if let Some((height, _)) = ancestor.as_ref().filter(|(h, _)| self.hashes.contains_key(h)) {
                 view.rollback(*height)?;
             } else {
+                let start = self.first_note_height.unwrap_or(u32::MAX).min(ancestor.map_or(1, |(h, _)| h + 1)).max(self.birthday).max(1);
                 view.reset_keep_locks();
+                view.seed(&rpc.seed(start - 1)?)?;
             }
         }
         let mut batch = Batch { prev_height: view.tip_height, prev_hash: view.tip_hash.clone(), seed: None,
@@ -245,6 +276,8 @@ impl WalletState {
         self.tip_height = seed.height;
         self.tip_hash = seed.hash.clone();
         self.hashes.insert(seed.height, seed.hash.clone());
+        self.sparse_hashes.retain(|h, _| *h <= seed.height);
+        self.sparse_hashes.insert(seed.height, seed.hash.clone());
         Ok(())
     }
 
@@ -266,6 +299,7 @@ impl WalletState {
         self.chain_nullifiers = self.nullifiers_by_height.values().flatten().cloned().collect();
         self.roots.retain(|h, _| *h <= height);
         self.hashes.retain(|h, _| *h <= height);
+        self.sparse_hashes.retain(|h, _| *h <= height);
         self.tree = Some(TreeData::capture(&tree)?);
         self.commitments.clear();
         Ok(())
@@ -305,7 +339,12 @@ impl WalletState {
 
     fn apply_batch_inner(&mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<SyncReport> {
         let rescanned = batch.prev_height < self.tip_height;
-        if let Some(seed) = &batch.seed { self.seed(seed)?; }
+        if let Some(seed) = &batch.seed {
+            if self.tip_height > 0 { self.reset_keep_locks(); }
+            self.seed(seed)?;
+        } else if batch.prev_height == 0 && self.tip_height > 0 && self.birthday <= 1 {
+            self.reset_keep_locks();
+        }
         if batch.prev_height < self.tip_height { self.rollback(batch.prev_height)?; }
         ensure!(self.tip_height == batch.prev_height && self.tip_hash == batch.prev_hash, "sync predecessor mismatch");
         let ivk = PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
@@ -348,6 +387,7 @@ impl WalletState {
                     let note = decrypted.next().expect("one decryption per action");
                     let marked = note.is_some();
                     if let Some(note) = note {
+                        self.first_note_height = Some(self.first_note_height.map_or(block.height, |old| old.min(block.height)));
                         self.pending_incoming.retain(|n| !n.commitment().is_ok_and(|c| c == a.cmx));
                         let nullifier = hex::encode(note.nullifier(fvk).to_bytes());
                         if !self.notes.iter().any(|n| n.nullifier == nullifier) {
@@ -376,6 +416,7 @@ impl WalletState {
             if block.height >= kept {
                 self.hashes.insert(block.height, block.hash.clone());
             }
+            if block.height % 1_000 == 0 { self.sparse_hashes.insert(block.height, block.hash.clone()); }
             self.tip_height = block.height;
             self.tip_hash = block.hash.clone();
         }
@@ -432,6 +473,7 @@ pub fn check_frontier_size(encoded: &str, expected: u64) -> Result<()> {
 pub trait BlockSource {
     fn tip(&self) -> Result<u32>;
     fn block_hash(&self, h: u32) -> Result<String>;
+    fn seed(&self, _h: u32) -> Result<Seed> { Err(anyhow!("source cannot provide a recovery frontier")) }
     /// Block hash and raw transactions. Sources may omit transactions without an Ironwood bundle.
     fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)>;
 }
@@ -443,6 +485,7 @@ impl BlockSource for Rpc {
     fn block_hash(&self, h: u32) -> Result<String> {
         Rpc::block_hash(self, h)
     }
+    fn seed(&self, h: u32) -> Result<Seed> { Rpc::seed(self, h) }
     fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)> {
         Rpc::block_txs(self, h)
     }
@@ -587,6 +630,61 @@ mod tests {
         assert_eq!(wallet.balance(), (0, 70_001));
         wallet.apply_batch(&batch(3, "c3", vec![block(4, "c4", 7)], 4), &fvk).unwrap();
         assert_eq!(wallet.balance(), (70_001, 0));
+    }
+
+    #[test]
+    fn deep_reorg_recovers_from_first_note_or_sparse_fork_without_losing_reservations() {
+        struct Fork { reads: std::cell::RefCell<Vec<u32>> }
+        impl BlockSource for Fork {
+            fn tip(&self) -> Result<u32> { Ok(6_000) }
+            fn block_hash(&self, h: u32) -> Result<String> { Ok(format!("{}{h}", if h <= 3_500 { "a" } else { "b" })) }
+            fn seed(&self, h: u32) -> Result<Seed> {
+                self.reads.borrow_mut().push(h);
+                Ok(Seed { height: h, hash: self.block_hash(h)?, frontier: "000000".into() })
+            }
+            fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)> {
+                self.reads.borrow_mut().push(h);
+                Ok((self.block_hash(h)?, vec![]))
+            }
+        }
+        let fvk = crate::DeviceSecret::generate("deep", "payer").fvk().unwrap();
+        let mut old = WalletState { birthday: 1_501, created_at: 123, ..Default::default() };
+        old.seed(&Seed { height: 1_500, hash: "a1500".into(), frontier: "000000".into() }).unwrap();
+        let mut batch = Batch { prev_height: 1_500, prev_hash: "a1500".into(), seed: None, blocks: vec![], chain_tip: 6_000, sources: vec![] };
+        for h in 1_501..=6_000 { batch.push(CompactBlock { height: h, hash: format!("a{h}"), txs: vec![] }); }
+        old.apply_batch(&batch, &fvk).unwrap();
+        assert_eq!(old.sparse_hashes.keys().copied().collect::<Vec<_>>(), vec![1_500, 2_000, 3_000, 4_000, 5_000, 6_000]);
+        old.reservations.insert("nf".into(), ("pending".into(), 9_000));
+        // Both sides of min(first note, P+1); an empty wallet needs only the sparse ancestor.
+        for (first, expected) in [(Some(2_307), 2_307), (Some(4_800), 3_001), (None, 3_001)] {
+            let mut wallet = old.clone();
+            wallet.first_note_height = first;
+            let mut wallet: WalletState = serde_json::from_slice(&serde_json::to_vec(&wallet).unwrap()).unwrap();
+            let source = Fork { reads: Default::default() };
+            let ancestor = Batch { prev_height: 3_000, prev_hash: "a3000".into(), seed: None, blocks: vec![], chain_tip: 6_000, sources: vec![] };
+            assert_eq!(wallet.recovery_start(&ancestor), Some(expected));
+            let mut compact = wallet.clone();
+            let seed = source.seed(expected - 1).unwrap();
+            let mut replacement = Batch { prev_height: seed.height, prev_hash: seed.hash.clone(), seed: Some(seed), blocks: vec![], chain_tip: 6_000, sources: vec![] };
+            for h in expected..=6_000 { replacement.push(CompactBlock { height: h, hash: source.block_hash(h).unwrap(), txs: vec![] }); }
+            compact.apply_batch(&replacement, &fvk).unwrap();
+            source.reads.borrow_mut().clear();
+            wallet.sync_from(&source, &fvk).unwrap();
+            assert_eq!(source.reads.borrow()[0], expected - 1);
+            assert_eq!(source.reads.borrow()[1], expected);
+            assert_eq!((wallet.tip_height, wallet.tip_hash.as_str()), (6_000, "b6000"));
+            assert_eq!((wallet.birthday, wallet.created_at, wallet.first_note_height), (1_501, 123, first));
+            assert_eq!(wallet.reservations["nf"].0, "pending");
+            assert_eq!(wallet.sparse_hashes[&4_000], "b4000");
+            let mut fresh = WalletState { birthday: 1_501, ..Default::default() };
+            fresh.seed(&source.seed(1_500).unwrap()).unwrap();
+            fresh.sync_from(&source, &fvk).unwrap();
+            assert_eq!(wallet.roots, fresh.roots);
+            assert_eq!(compact.roots, fresh.roots);
+            assert_eq!(compact.reservations, wallet.reservations);
+            assert_eq!(compact.first_note_height, first);
+            assert_eq!(wallet.notes, fresh.notes);
+        }
     }
 
     /// One large batch skips checkpoints that pruning would discard; it must keep exactly the

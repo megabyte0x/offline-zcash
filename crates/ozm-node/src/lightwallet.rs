@@ -164,7 +164,7 @@ impl Lightwallet {
                 for (h, hash) in checkpoints.iter().rev().filter(|(h, _)| *h <= tip) {
                     if self.block_hash(*h).await? == *hash { ancestor = Some((*h, hash.clone())); break; }
                 }
-                let (h, hash) = ancestor.ok_or_else(|| anyhow!("reorg exceeds retained checkpoints; resync from the original birthday"))?;
+                let (h, hash) = ancestor.unwrap_or_default();
                 prev_height = h;
                 prev_hash = hash;
             }
@@ -172,6 +172,7 @@ impl Lightwallet {
         };
         let end = self.tip.min(prev_height + max_blocks.max(1));
         let mut batch = Batch { prev_height, prev_hash, seed, blocks: vec![], chain_tip: self.tip, sources: self.sources.clone() };
+        if have > 0 && prev_height < have.saturating_sub(199) { return Ok(batch); }
         if end <= prev_height { return Ok(batch); }
         let blocks = Self::range(&mut self.clients[0].1, prev_height + 1, end, &batch.prev_hash).await?;
         for block in blocks { batch.push(block); }

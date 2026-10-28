@@ -48,8 +48,15 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   bounded 8 MiB assembly. No partial batch advances the wallet cursor.
 - Wallets persist a pruned incremental ShardTree, 200 checkpoints, recent roots,
   hashes and recent nullifiers with their cursor. Reorgs rewind a common retained
-  checkpoint and replace orphaned effects; deeper forks require resync from the
-  original birthday. Reservations survive a rewind. No unmined change is spendable.
+  checkpoint and replace orphaned effects. v0.7.5 also keeps sparse hashes every
+  1,000 blocks and the earliest received/spent-note height (mesh receipts lower
+  this to anchor+1). Deep forks restart at min(first note, common sparse hash+1),
+  floored at the device birthday, fetching a frontier at start−1. The sparse
+  match is a conservative ancestor, not the exact fork between samples. Empty
+  runs preserve those 1,000-block boundaries. Checkpoint challenges fit history
+  samples plus recent hashes into the existing 200-entry request; a deep match
+  asks for a fresh seed using the existing initial-sync request. No schema change.
+  Reservations and first-note metadata survive reset. No unmined change is spendable.
 - v0.7.5 online catch-up downloads 2,000-block ranges from the primary only and
   compares each locally applied batch-end root/hash with reachable secondary
   GetTreeState answers before installing it. A mismatch withholds the batch;
