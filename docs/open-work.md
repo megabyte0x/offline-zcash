@@ -34,8 +34,27 @@ received 0.0019, showed zero spendable before mining and 0.0019 after scanning 7
 Core coverage checks serialization, commitment merge and exclusion from Max;
 signed-notice integration coverage checks expired/conflict removal and that a
 Mined report alone does not make an unscanned incoming note spendable.
-Catch-up, deep-reorg recovery and automatic Prepare remain next. macOS has not
-been run here.
+
+**Item 4:** profile-first catch-up optimization. Against live testnet.zec.rocks,
+the same 85,000 blocks (4,465,798–4,550,797) took 42.13 / 40.84 / 41.80 seconds
+on v0.7.3 and 14.12 / 13.07 / 14.36 seconds on the candidate: **41.80 → 14.12 s
+median** on this 8-core, 16-GiB orb. The baseline's median phase totals were
+25.59 s roots/checkpoints, 11.36 s tree insertion, 3.65 s decryption, 0.20 s
+install/persistence and 12.05 s fetch (overlapping application, not additive).
+Parallel subtree construction/root calculation retains the same 200 checkpoints;
+all retained roots, hashes, checkpoint positions, notes, nullifiers and reservations
+match v0.7.3 in all three final runs. The bench-only builds cap the observed tip
+for identical ranges and disable automatic startup only to time the explicit CLI
+sync; production has neither override. Intermediate optimization runs took
+14.66–21.39 s before removing a redundant predecessor lookup during prefetch.
+One baseline invocation raced API startup and was discarded before any scan;
+subsequent runs wait for HTTP readiness. Zaino was unavailable, so independent
+public-secondary agreement is not claimed; a controlled gRPC test accepts the
+matching root and refuses mismatched roots/hashes and a prefetched range on a
+changed fork. The final portable module in real Linux Basecamp caught up 85,080
+blocks to 4,550,877 automatically in 27.228 seconds, with the receive address
+visible throughout (packaged/unbounded live-tip run, not the capped CLI bench).
+Deep-reorg recovery and automatic Prepare remain next. macOS has not been run here.
 
 **Next witness work:** immediate mesh receipt does not yet mean immediate spending.
 The pending note has no canonical position/witness. A contained implementation

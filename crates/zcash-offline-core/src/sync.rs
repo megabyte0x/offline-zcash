@@ -66,6 +66,14 @@ pub struct Seed {
     pub frontier: String,
 }
 
+impl Seed {
+    pub fn root(&self) -> Result<String> {
+        let bytes = hex::decode(&self.frontier)?;
+        let tree = zcash_primitives::merkle_tree::read_frontier_v0::<orchard::tree::MerkleHashOrchard, _>(&bytes[..])?;
+        Ok(hex::encode(tree.root().to_bytes()))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Batch {
     pub prev_height: u32,

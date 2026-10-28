@@ -9,6 +9,7 @@ type Client = CompactTxStreamerClient<Channel>;
 
 pub struct Lightwallet {
     clients: Vec<(String, Client, u32)>,
+    checked_endpoint: Option<(u32, String)>,
     pub tip: u32,
     pub hash: String,
     pub sources: Vec<String>,
@@ -73,7 +74,7 @@ impl Lightwallet {
                 sources.push(clients[i].0.clone());
             }
         }
-        Ok(Self { clients: clients.into_iter().map(|(s, c, h, _)| (s, c, h)).collect(), tip, hash, sources })
+        Ok(Self { clients: clients.into_iter().map(|(s, c, h, _)| (s, c, h)).collect(), checked_endpoint: None, tip, hash, sources })
     }
 
     pub async fn block_hash(&mut self, height: u32) -> Result<String> {
@@ -110,6 +111,23 @@ impl Lightwallet {
         Ok(self.clients[0].1.get_block(block_id(self.tip)).await?.into_inner().time as u64)
     }
 
+    /// Compare the locally applied root, not a second copy of the compact download.
+    pub async fn check_root(&mut self, height: u32, hash: &str, root: &str) -> Result<()> {
+        for i in 1..self.clients.len() {
+            if self.clients[i].2 < height { self.sources.retain(|s| s != &self.clients[i].0); continue; }
+            match self.clients[i].1.get_tree_state(block_id(height)).await {
+                Ok(tree) => {
+                    let tree = tree.into_inner();
+                    ensure!(tree.height == height as u64 && tree.network == "test", "wrong comparison tree-state height/network");
+                    let seed = Seed { height, hash: tree.hash, frontier: tree.ironwood_tree };
+                    ensure!(seed.hash == hash && seed.root()? == root, "testnet tree-root disagreement at {height}; sync withheld");
+                }
+                Err(_) => self.sources.retain(|s| s != &self.clients[i].0),
+            }
+        }
+        Ok(())
+    }
+
     async fn range(client: &mut Client, start: u32, end: u32, predecessor: &str) -> Result<Vec<CompactBlock>> {
         let mut stream = client.get_block_range(service::BlockRange { start: Some(block_id(start)), end: Some(block_id(end)), pool_types: vec![] }).await?.into_inner();
         let mut blocks = Vec::new();
@@ -137,7 +155,10 @@ impl Lightwallet {
             prev_hash = seed.hash.clone();
             Some(seed)
         } else {
-            if have > self.tip || self.block_hash(have).await? != hash {
+            // Prefetch follows the endpoint just checked below. The range's prev_hash check
+            // still rejects a fork that changes between these requests.
+            let checked = self.checked_endpoint.as_ref().is_some_and(|(h, s)| *h == have && s == hash);
+            if have > self.tip || (!checked && self.block_hash(have).await? != hash) {
                 let mut ancestor = None;
                 let tip = self.tip;
                 for (h, hash) in checkpoints.iter().rev().filter(|(h, _)| *h <= tip) {
@@ -153,13 +174,6 @@ impl Lightwallet {
         let mut batch = Batch { prev_height, prev_hash, seed, blocks: vec![], chain_tip: self.tip, sources: self.sources.clone() };
         if end <= prev_height { return Ok(batch); }
         let blocks = Self::range(&mut self.clients[0].1, prev_height + 1, end, &batch.prev_hash).await?;
-        // Compare the actual compact answer, not just a claimed server tip.
-        for i in 1..self.clients.len() {
-            if self.clients[i].2 < end { batch.sources.retain(|s| s != &self.clients[i].0); continue; }
-            if let Ok(other) = Self::range(&mut self.clients[i].1, prev_height + 1, end, &batch.prev_hash).await {
-                ensure!(blocks == other, "testnet servers disagree on compact blocks; sync withheld");
-            } else { batch.sources.retain(|s| s != &self.clients[i].0); }
-        }
         for block in blocks { batch.push(block); }
         while bincode::serialized_size(&batch)? > zcash_offline_core::sync::MAX_BATCH_BYTES as u64 {
             ensure!(batch.blocks.len() > 1, "one compact block exceeds sync memory limit");
@@ -168,6 +182,7 @@ impl Lightwallet {
         // A fork can change between GetLatestBlock and GetBlockRange.
         let last = batch.blocks.last().unwrap();
         ensure!(self.block_hash(last.height).await? == last.hash, "chain changed while serving compact range");
+        self.checked_endpoint = Some((last.height, last.hash.clone()));
         Ok(batch)
     }
 
@@ -251,6 +266,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn secondary_roots_and_prefetched_ranges_reject_disagreement() {
+        use prost::Message;
+        let seed = Seed { height: 4_465_126, hash: "ab".repeat(32), frontier: "000000".into() };
+        let tree = service::TreeState { height: seed.height as u64, hash: seed.hash.clone(),
+            network: "test".into(), ironwood_tree: seed.frontier.clone(), ..Default::default() };
+        let message = tree.encode_to_vec();
+        let mut frame = vec![0];
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend(message);
+        let fork = compact_formats::CompactBlock { height: seed.height as u64 + 1,
+            hash: vec![0x11; 32], prev_hash: vec![0x99; 32], ..Default::default() }.encode_to_vec();
+        let mut fork_frame = vec![0];
+        fork_frame.extend_from_slice(&(fork.len() as u32).to_be_bytes());
+        fork_frame.extend(fork);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = axum::Router::new().fallback(move |request: axum::http::Request<axum::body::Body>| {
+            let frame = if request.uri().path().ends_with("/GetBlockRange") { fork_frame.clone() } else { frame.clone() };
+            async move {
+                axum::http::Response::builder().header("content-type", "application/grpc").header("grpc-status", "0")
+                    .body(axum::body::Body::from(frame)).unwrap()
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let channel = Endpoint::from_shared(url.clone()).unwrap().connect().await.unwrap();
+        let peer = (url.clone(), Client::new(channel), seed.height);
+        let mut source = Lightwallet { clients: vec![peer.clone(), peer], checked_endpoint: None, tip: seed.height, hash: seed.hash.clone(), sources: vec![url] };
+        source.check_root(seed.height, &seed.hash, &seed.root().unwrap()).await.unwrap();
+        let error = source.check_root(seed.height, &seed.hash, &"ff".repeat(32)).await.unwrap_err();
+        assert!(error.to_string().contains("tree-root disagreement"));
+        assert!(source.check_root(seed.height, &"cd".repeat(32), &seed.root().unwrap()).await.is_err());
+        source.checked_endpoint = Some((seed.height, seed.hash.clone()));
+        source.tip += 1;
+        let error = source.batch(seed.height, &seed.hash, &[], seed.height, 200).await.unwrap_err();
+        assert!(error.to_string().contains("compact range changed forks"));
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn submission_reaches_the_other_server_when_primary_fails() {
         let mut clients = Vec::new();
         let mut servers = Vec::new();
@@ -265,7 +319,7 @@ mod tests {
             let channel = Endpoint::from_shared(url.clone()).unwrap().connect().await.unwrap();
             clients.push((url, Client::new(channel), 4_465_026));
         }
-        let mut source = Lightwallet { clients, tip: 4_465_026, hash: String::new(), sources: vec![] };
+        let mut source = Lightwallet { clients, checked_endpoint: None, tip: 4_465_026, hash: String::new(), sources: vec![] };
         assert!(matches!(source.submit(b"unchanged transaction bytes").await.unwrap(), TxStatus::Submitted));
         for server in servers { server.abort(); }
     }

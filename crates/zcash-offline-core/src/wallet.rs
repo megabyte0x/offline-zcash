@@ -6,7 +6,7 @@
 //! build (payer) or check (payee) payments with no connection.
 
 use anyhow::{anyhow, ensure, Context, Result};
-use incrementalmerkletree::{Position, Retention};
+use incrementalmerkletree::{Marking, Position, Retention};
 use orchard::{
     keys::{FullViewingKey, PreparedIncomingViewingKey, Scope},
     note::{RandomSeed, Rho},
@@ -15,7 +15,7 @@ use orchard::{
     Note, NoteVersion,
 };
 use serde::{Deserialize, Serialize};
-use shardtree::{store::memory::MemoryShardStore, ShardTree};
+use shardtree::{store::{memory::MemoryShardStore, Checkpoint, ShardStore, TreeState}, ShardTree};
 use std::{collections::BTreeMap, path::Path};
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::consensus::BranchId;
@@ -292,10 +292,15 @@ impl WalletState {
 
     /// An invalid or interrupted batch cannot publish a cursor ahead of its tree or notes.
     pub fn apply_batch(&mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<SyncReport> {
-        let mut next = self.clone();
-        let report = next.apply_batch_inner(batch, fvk)?;
+        let (next, report) = self.clone().into_batch(batch, fvk)?;
         *self = next;
         Ok(report)
+    }
+
+    /// Scanners already own an unpublished snapshot; avoid cloning it a second time.
+    pub fn into_batch(mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<(Self, SyncReport)> {
+        let report = self.apply_batch_inner(batch, fvk)?;
+        Ok((self, report))
     }
 
     fn apply_batch_inner(&mut self, batch: &Batch, fvk: &FullViewingKey) -> Result<SyncReport> {
@@ -322,10 +327,10 @@ impl WalletState {
             }).collect::<Result<Vec<_>>>()?
         };
         let mut decrypted = decrypted.into_iter();
-        // Leaves wait here until a checkpoint needs them: one bulk insert instead of a per-leaf append,
-        // which costs ~0.1 ms each on busy testnet ranges.
+        // Build subtrees in parallel, retaining every checkpoint boundary before pruning leaves.
         let mut pending: Vec<(MerkleHashOrchard, Retention<u32>)> = Vec::new();
-        let mut pending_from = position;
+        let pending_from = position;
+        let mut checkpoints = BTreeMap::new();
         for block in &batch.blocks {
             ensure!(block.height > self.tip_height && block.height <= batch.chain_tip, "non-monotonic sync height");
             ensure!(block.txs.is_empty() || block.height == self.tip_height + 1, "nonempty block skips heights");
@@ -360,24 +365,44 @@ impl WalletState {
                     position += 1;
                 }
             }
-            if block.height >= kept && !pending.is_empty() {
-                tree.batch_insert(Position::from(pending_from), pending.drain(..)).map_err(|e| anyhow!("tree insert: {e:?}"))?;
-                pending_from = position;
-            }
             // Empty runs advance checkpoints without transporting per-block ciphertexts or hashes.
             for h in (self.tip_height + 1).max(kept)..=block.height {
-                tree.checkpoint(h).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
+                checkpoints.insert(h, position.checked_sub(1));
+                if let Some((_, retention)) = pending.last_mut() {
+                    let marking = if retention.is_marked() { Marking::Marked } else { Marking::None };
+                    *retention = Retention::Checkpoint { id: h, marking };
+                }
             }
             if block.height >= kept {
-                let root = tree
-                    .root_at_checkpoint_id(&block.height)
-                    .map_err(|e| anyhow!("root: {e:?}"))?
-                    .ok_or_else(|| anyhow!("no root"))?;
-                self.roots.insert(block.height, hex::encode(root.to_bytes()));
                 self.hashes.insert(block.height, block.hash.clone());
             }
             self.tip_height = block.height;
             self.tip_hash = block.hash.clone();
+        }
+        {
+            use rayon::prelude::*;
+            let subtrees = pending.par_chunks(1024).enumerate().map(|(i, leaves)| {
+                let start = pending_from + (i * 1024) as u64;
+                shardtree::LocatedPrunableTree::from_iter(Position::from(start)..Position::from(start + leaves.len() as u64),
+                    16.into(), leaves.iter().cloned()).expect("nonempty subtree").subtree
+            }).collect::<Vec<_>>();
+            for subtree in subtrees {
+                tree.insert_tree(subtree, BTreeMap::new()).map_err(|e| anyhow!("tree insert: {e:?}"))?;
+            }
+            if let Some((&last, _)) = checkpoints.last_key_value() {
+                for (&height, &pos) in checkpoints.range(..last) {
+                    tree.store_mut().add_checkpoint(height, Checkpoint::from_parts(
+                        pos.map_or(TreeState::Empty, |p| TreeState::AtPosition(Position::from(p))), Default::default()))?;
+                }
+                tree.checkpoint(last).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
+                // Cache completed shards once, then calculate the retained roots independently.
+                tree.root_at_checkpoint_id_caching(&last).map_err(|e| anyhow!("root: {e:?}"))?;
+                let roots = self.hashes.range(kept..).collect::<Vec<_>>().par_iter().map(|(h, _)| {
+                    let root = tree.root_at_checkpoint_id(h).map_err(|e| anyhow!("root: {e:?}"))?.ok_or_else(|| anyhow!("no root"))?;
+                    Ok((**h, hex::encode(root.to_bytes())))
+                }).collect::<Result<Vec<_>>>()?;
+                self.roots.extend(roots);
+            }
         }
         let floor = self.tip_height.saturating_sub(CHECKPOINTS as u32 - 1);
         self.roots.retain(|h, _| *h >= floor);
@@ -574,7 +599,11 @@ mod tests {
             let mut cmx = [0; 32];
             cmx[..4].copy_from_slice(&h.to_le_bytes());
             CompactBlock { height: h, hash: format!("h{h}"), txs: if h % 3 == 1 { vec![] } else { vec![CompactTx {
-                txid: cmx, actions: vec![Action { nf: cmx, cmx, epk: [0; 32], ct: vec![0; 52] }] }] } }
+                txid: cmx, actions: (0..9u32).map(|i| {
+                    let mut leaf = [0; 32];
+                    leaf[..4].copy_from_slice(&(h * 10 + i).to_le_bytes());
+                    Action { nf: leaf, cmx: leaf, epk: [0; 32], ct: vec![0; 52] }
+                }).collect() }] } }
         }).collect();
         let mut one = WalletState::default();
         one.apply_batch(&Batch { prev_height: 0, prev_hash: String::new(), seed: None, blocks: blocks.clone(), chain_tip: 450, sources: vec![] }, &fvk).unwrap();
@@ -585,6 +614,14 @@ mod tests {
         }
         assert_eq!((one.tip_height, &one.roots, &one.hashes), (small.tip_height, &small.roots, &small.hashes));
         assert_eq!(*one.roots.keys().next().unwrap(), one.tip_height - CHECKPOINTS as u32 + 1);
+        // Independent append-only frontier checks roots across the 1,024-leaf parallel boundary.
+        let mut frontier = incrementalmerkletree::frontier::Frontier::<MerkleHashOrchard, 32>::empty();
+        for block in &blocks {
+            for action in block.txs.iter().flat_map(|t| &t.actions) {
+                assert!(frontier.append(MerkleHashOrchard::from_bytes(&action.cmx).unwrap()));
+            }
+            if let Some(root) = one.roots.get(&block.height) { assert_eq!(root, &hex::encode(frontier.root().to_bytes())); }
+        }
         // The oldest retained height is still a rollback target; one below it is not.
         for wallet in [&one, &small] {
             let oldest = *wallet.roots.keys().next().unwrap();

@@ -1891,6 +1891,7 @@ dependencies = [
  "hex",
  "ozm-ble",
  "ozm-mesh",
+ "prost",
  "serde",
  "serde_json",
  "tempfile",

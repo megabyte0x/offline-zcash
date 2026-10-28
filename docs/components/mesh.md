@@ -50,10 +50,23 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   hashes and recent nullifiers with their cursor. Reorgs rewind a common retained
   checkpoint and replace orphaned effects; deeper forks require resync from the
   original birthday. Reservations survive a rewind. No unmined change is spendable.
-- Since v0.7.4 gateway tip pushes carry height/hash on every observed new tip
+- v0.7.5 online catch-up downloads 2,000-block ranges from the primary only and
+  compares each locally applied batch-end root/hash with reachable secondary
+  GetTreeState answers before installing it. A mismatch withholds the batch;
+  unavailable/behind sources are excluded from the agreement label. Mesh serving
+  cross-checks the batch-end frontier across sources without downloading a second
+  compact range; recipients still trust their selected gateway. This is root
+  consistency, not proof of compact ciphertexts/nullifiers or a history-leaf proof.
+  Parallel 1,024-leaf tree fragments and retained-root queries preserve the full
+  200-checkpoint window. Sync-only snapshots persist every five seconds, at the
+  final batch and on graceful stop. A payment/receipt always forces persistence
+  before transmission, including reservations taken during scanning. A crash can
+  replay uncommitted batches; a durable cursor never outruns its tree/notes.
+  Mesh batches remain 200 blocks and their schema/framing is unchanged.
+- Since v0.7.5 gateway tip pushes carry height/hash on every observed new tip
   (polling every five seconds), so devices sync without a user action. This
   intentionally prioritises readiness over v0.7.0's 15-minute coalescing budget;
-  its dated traffic measurements below do not describe v0.7.4. A device requests
+  its dated traffic measurements below do not describe v0.7.5. A device requests
   blocks only when its view differs; mesh batches still contain at most 200
   blocks. Payment-result transitions push immediately. A 15-minute fallback backs
   off to an hour when unchanged; an unchanged answer is a small height/hash tip,

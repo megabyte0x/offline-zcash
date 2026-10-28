@@ -14,6 +14,7 @@ It is not security reviewed and does not support real funds.
 - Wallets sync automatically at startup, on gateway discovery and on new chain tips. Refresh is optional. Frontier initialization checks the Ironwood tree size against compact-block metadata. Offline bootstrap uses an authenticated chain-clock exchange; upgrade gateways together with wallets.
 - Pay, Max and Prepare remain available during sync. Block downloads no longer hold the payment/apply lock, and installed batches preserve reservations made during downloads. Wallet balances state their scanned height while catching up.
 - Verified mesh payments immediately add durable incoming notes and a separate pending incoming balance. Scanning merges them by commitment, never counts them as spendable early, and included/mined reports trigger sync. Expired/conflicting reports remove the pending incoming notes.
+- Catch-up builds tree fragments and retained roots in parallel. An 85,000-block live-testnet CLI scan fell from a 41.80-second median to 14.12 seconds on an 8-core orb. Online ranges download only from the primary; each applied root is checked against reachable secondary tree states. All 200 checkpoints remain. Sync snapshots persist every five seconds and on completion/stop, with an unconditional durable write before payments or receipts leave; interruption can replay the last uncommitted batches. Mesh batches and wire formats are unchanged.
 - Workspace, four Logos packages and Android version are 0.7.4; Android version code is 13.
 
 ## [0.7.4] - 2026-10-28
