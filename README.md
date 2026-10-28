@@ -8,12 +8,12 @@ More diagrams, inside the mesh and at the gateway: [docs/how-it-works.md](docs/h
 
 It runs in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line node, and both kinds of device can be in the same session. Basecamp has three apps: **Offline Zcash** (wallet/pay/mesh), **Organiser** (sessions and invites) and **Gateway** (chain connection and submissions). Install any combination; they share one service, identity, wallet and mesh per device. Every device can pay, receive and relay; the only role is the gateway, which the organiser assigns. **Leave session** in any Basecamp app moves the device's data to a backup folder so it can join another session (not available on Android or in the `ozm-node` CLI; use another `--home`). The operator's `ths start` Docker chain stays outside Basecamp.
 
-**Status:** experimental v0.7.4, for NU7 public testnet (TAZ) and the local Regtest harness, never real ZEC. The gateway uses configurable TLS lightwalletd, not a full node. Chain state and inclusion are explicitly gateway-reported, not independently proved. Funded public split/payment testing is blocked by faucet failures; see [testnet setup and limits](docs/install.md#public-testnet-v070). It has not been security reviewed.
+**Status:** experimental v0.7.5, for NU7 public testnet (TAZ) and the local Regtest harness, never real ZEC. The gateway uses configurable TLS lightwalletd, not a full node. Chain state and inclusion are explicitly gateway-reported, not independently proved. Funded Linux Basecamp tests exercised payments, automatic splitting, offline delivery, restart and recovery; see [the evidence and remaining limits](docs/open-work.md#built). It has not been security reviewed.
 
-This branch builds the **v0.7.5 candidate**: fresh wallets choose their scan start,
-sync automatically, show mesh receipts immediately and prepare mined funds for
-offline use. Pay remains available during catch-up. See [the measurements and
-remaining gates](docs/open-work.md#built); v0.7.5 is not tagged or released yet.
+The wallet opens with balance, Send, Receive/Copy and payments; **Debug** reveals
+technical details. Fresh wallets choose their scan start, sync automatically and
+prepare mined funds for offline use. Pay remains available during catch-up, and
+incoming payments wait for verification instead of being refused after one batch.
 
 ## Try it
 

@@ -9,7 +9,20 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-10-28
+
+### Added
+- A `testing-basecamp-testnet` skill for recorded Linux Basecamp tests, private per-device wallets and sanitized transaction/sync snapshots. Funded public-testnet testing reproduced an automatic refusal during catch-up and a gateway-wallet submission failure in v0.7.4.
+
+### Fixed
+- A recipient no longer refuses a payment after just one sync batch. Authenticated envelopes waiting for its chain view are kept in a bounded durable queue and rechecked as scanning advances, including after restart without the sender. Unknown/stale anchors are still refused once caught up; an exact payment already scanned can be reconciled after its historical root is pruned.
+- Gateway wallets submit ordinary payments directly, like self-splits, and retry the original held transaction after upgrade, including payments with a payee refusal. Recipients and retries use the same submission route. An offline address-only payment says Waiting for gateway instead of claiming submission with no gateway.
+- A full relay cache no longer blocks local gateway announcements or replies. Held relay messages and per-sender quotas remain intact.
+- Large mesh sync responses no longer overlap for the same recipient. Incoming chunks postpone fallback retries, so advancing gateway tips cannot keep resetting the recipient's unfinished batch. A live 272-chunk testnet range that stalled before the fix completed without clearing its transport cache.
+- Basecamp lists chain-scanned credits even when no mesh envelope arrived, including a previously refused payment recovered after upgrade. Entries do not invent a sender, receipt, payment time or ten-confirmation result; self-change/splits and credits with existing mesh history are not duplicated.
+
 ### Changed
+- Basecamp's wallet opens in a simple mode with balance, Send, Receive/Copy and payments. Debug reveals chain/source/trust details, transaction IDs/history, manual splitting, mesh and session controls. Reserved/incoming funds, sync errors and testnet/gateway-reporting limitations remain visible in simple mode.
 - Fresh wallets record their creation time and choose their own scan start automatically. Online creation starts 100 blocks behind the tip; offline creation uses a day of overlap estimated from the release checkpoint and first gateway contact. Existing wallet scan starts remain unchanged. Birthday inputs are removed from Basecamp; the CLI override remains for benches.
 - Wallets sync automatically at startup, on gateway discovery and on new chain tips. Refresh is optional. Frontier initialization checks the Ironwood tree size against compact-block metadata. Offline bootstrap uses an authenticated chain-clock exchange; upgrade gateways together with wallets.
 - Pay, Max and Prepare remain available during sync. Block downloads no longer hold the payment/apply lock, and installed batches preserve reservations made during downloads. Wallet balances state their scanned height while catching up.

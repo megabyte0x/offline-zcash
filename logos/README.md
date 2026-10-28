@@ -84,13 +84,13 @@ The module declares `concurrency: "multi"`, so calls run on a worker pool: `stat
 | `check_rpc(rpc_url)` | Testnet TLS lightwalletd status for the fleet's network, or Regtest `getblockchaininfo`; endpoint may be a comma-separated TLS server list. On a Regtest session only a plain `http://` Zakura JSON-RPC URL is accepted: `https://` is refused (switching to testnet means `leave()` and a testnet invite) and lightwalletd `:9067` is refused as not JSON-RPC. No role grant or startup |
 | `open_fleet_folder(folder)` | `{ok, folder, message}` after requesting the desktop folder opener; validates `fleet.json`. Runs in the core because QML's sandbox blocks local file URLs. Copy the displayed path if no file manager is available |
 | `join(invite_json)` | `{"ok":true,"message":...}` |
-| `start(options_json)` | Status. Without an installed invite, creates persistent local keys and an open wallet with an automatic per-device scan start. Options are all optional: `network` (default Regtest), `listen`, `dial` (list), `rpc`, `mine` (Regtest only), `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. Existing fleets retain their network and wallets their stored scan start. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
+| `start(options_json)` | Status. Without an installed invite, creates persistent local keys and an open wallet with an automatic per-device scan start. Options are all optional: `network` (default testnet), `listen`, `dial` (list), `rpc`, `mine` (Regtest only), `discover`, `ble` (Linux/BlueZ only), `discovery_port`, `api` (also serves the web UI). Saved for restart. Existing fleets retain their network and wallets their stored scan start. On an already running device, explicit `rpc`/`mine` update the gateway in place; transport options remain unchanged |
 | `status()` | As `GET /api/status`, plus `joined`, `running`, `home`, `sessions`, `syncing` and `sync_error`; `rpc` and `mine` describe gateway configuration, `chain_tip` is the gateway's last chain tip, and `role` is `"gateway"` or `""` |
 | `leave()` | Stops the node, moves the whole `<instance persistence path>/ozm` folder to `<instance persistence path>/ozm-backup-YYYYMMDD-HHMMSS` (UTC), moves any older `ozm/sessions` exports to `<instance persistence path>/sessions`, and returns the device to not joined. It cancels a running wallet sync and waits for an in-flight payment, then stops every writer before moving the folder. Nothing is deleted; to restore, quit Basecamp and move the backup back to `ozm`. Basecamp-only: not on Android or in the `ozm-node` CLI (use another `--home`). Platform paths: [Where the data lives](../docs/basecamp-install.md#where-the-data-lives) |
 | `fleet()`, `list_payments()` | As `GET /api/fleet` and `GET /api/payments` |
 | `pay(to, amount_zec)` | The payment; `to` is a unified address for the fleet network with an Ironwood receiver. Legacy fleet names remain accepted for scripts. An unknown mesh address submits without a payee receipt |
 | `max_payment()` | `{amount, amount_zat, fee_zat}` at the same ZIP 317 padded action count as the builder; excludes locked/unmined notes and uneconomic inputs |
-| `prepare_offline(notes, amount_zec)` | The self-split payment, using one mined note and the action-count fee. Wait for gateway-reported mined and wallet sync before going offline. `pay` and `prepare_offline` are refused while a wallet sync runs |
+| `prepare_offline(notes, amount_zec)` | The self-split payment, using one mined note and the action-count fee. Wait for gateway-reported mined and wallet sync before going offline. Since v0.7.5, `pay`, Max and `prepare_offline` remain available during sync, using only locally scanned spendable notes |
 | `sync_now()` | Optional refresh: `{"syncing":true}` at once; automatic sync already runs on opening, discovery and new tips. `status().syncing`, `ready`, `sync_error` and the `synced` / `sync-error` events report it. Module calls never wait for it |
 | `request_funds(notes, amount_zec)` | As `POST /api/fund` |
 | event `node_event(event, detail_json)` | Every node event (`built`, `receipt`, `result`, `synced`, `neighbor-up`, ...) |
@@ -138,6 +138,17 @@ logosctl --config-dir ./a watch zcash_offline_module --json
 Strings need the `str:` prefix on the command line, because otherwise `0.05` is passed as a number.
 
 In Basecamp, follow [docs/basecamp-install.md](../docs/basecamp-install.md). For a dev build of Basecamp, install the `-dev` packages with `lgpm --modules-dir <basecamp dir>/modules --ui-plugins-dir <basecamp dir>/plugins install --file ...`.
+
+## Funded verification (28 October 2026, Linux, Basecamp 0.3.2)
+
+Owner-funded public-testnet wallets exercised ordinary gateway sends, catch-up
+refusal/recovery, an automatic eight-note split, an offline payment using a
+mined split note, Max, restart and gateway reconnect. That offline payment reached
+ten gateway-reported confirmations on both wallets. Simple/Debug views and an
+800px stacked layout were rendered and inspected. See [the recorded cases,
+fixes and limitations](../docs/open-work.md#built) and the reusable
+[`testing-basecamp-testnet` skill](../.agents/skills/testing-basecamp-testnet/SKILL.md).
+This is shared-orb TCP, not physical Wi-Fi, macOS, Bluetooth or independent chain proof.
 
 ## Verified (27 October 2026, Linux, dev builds)
 

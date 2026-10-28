@@ -114,8 +114,8 @@ To switch network or invite, use [Leave session](#leave-session).
 4. Click **Start without invite**. Your receive address appears straight away;
    share it even while offline. The wallet syncs automatically when it opens,
    finds a gateway, or hears a new chain tip. The header says **ready** when caught
-   up; the chain view shows the gateway's name, mesh ID, hops and tip.
-   **Refresh balance (optional)** is only a manual retry, never a setup step.
+   up. **Debug** shows the gateway's name, mesh ID, hops and tip, along with
+   **Refresh balance (optional)** for a manual retry, never a setup step.
 
 ### With an invite
 
@@ -127,14 +127,29 @@ use [Leave session](#leave-session) first.
 
 ## Pay and receive
 
-1. On Regtest, click **Get test funds (5 × 0.1 ZEC)** and wait for the balance.
+1. On Regtest, open **Debug**, click **Get test funds (5 × 0.1 ZEC)** and wait for the balance.
    On testnet, see [Wallets on testnet](#wallets-on-testnet).
 2. The payee copies **Your address** and sends it to the payer outside the app.
-3. The payer pastes it under **Pay offline**, enters an amount or clicks **Max**,
-   and clicks **Build, prove and send over the mesh**.
-4. Expand **history** to follow each state. Invite-free and unknown payers are
+3. The payer pastes it under **Send**, enters an amount or clicks **Max**,
+   and clicks **Send**.
+4. Payments shows sent/received amounts and states. Open **Debug**, then expand
+   **history** for transaction IDs and detailed events. Invite-free and unknown payers are
    never accepted pending: the payee waits for the gateway to report inclusion.
    Fast LAN payments may jump straight to `mined`.
+
+The default wallet shows balance, Send, Receive/Copy and payments. **Debug** also
+reveals chain/trust details, offline preparation, mesh and session controls;
+**Hide debug** returns to the simple wallet. Reserved/incoming funds, interrupted
+sync and catch-up checks stay visible without Debug. A catching-up payee keeps
+the payment for verification as scanning advances, including across restart;
+this is not an acceptance or a refund. A gateway wallet submits its own signed
+payments directly. If submission is unavailable after signing, it keeps the
+same transaction for retry rather than asking you to create another payment.
+
+Credits found without a mesh envelope appear as **Scanned · gateway-reported**.
+The wallet does not know their sender or payment time and does not invent a
+payee receipt or ten-confirmation result. Later mesh history replaces that
+entry; self-change and preparation outputs do not appear as new received funds.
 
 `submitted` is not inclusion. `included` is 1 confirmation and `mined` is 10.
 **Both are reported by the gateway, not proved**, and a reorg can downgrade them.
@@ -220,12 +235,13 @@ There is no gateway faucet on testnet.
    [Valar](https://faucet.testnet.valargroup.dev). Faucet claims have failed in our
    tests ([details](components/offline-builder.md#v070-testnet-note-plan)).
 2. Funds appear automatically. While a gateway is reachable the wallet prepares
-   smaller notes itself; **Offline readiness** shows progress. No Prepare click
+   smaller notes itself; the wallet shows when funds are being prepared, and
+   **Debug → Offline readiness** shows details. No Prepare click
    or refresh is needed. Small balances avoid uneconomic split fees.
 3. Wait for `mined` (ten gateway-reported confirmations on testnet) and the
    automatic scan before disconnecting. A single-note wallet temporarily locks
    that note while the split mines; other spendable notes remain usable. Unmined
-   change is never spendable. **Advanced manual split** is optional.
+   change is never spendable. **Debug → Offline readiness → Advanced manual split** is optional.
 
 The gateway retries the same transaction every three blocks until expiry. A
 refused payment may still be mined until it expires.

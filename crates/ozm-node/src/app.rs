@@ -82,6 +82,18 @@ pub struct Refusal {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeferredPayment {
+    pub from: String,
+    pub tx_hex: String,
+    pub statement: Signed<Statement>,
+    pub view_height: u32,
+    pub target_height: u32,
+    /// A restart requires a new chain response before refusing an unknown anchor.
+    #[serde(skip)]
+    pub sync_generation: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GatewayEntry {
     pub txid: String,
     pub notify: Vec<String>,
@@ -105,6 +117,9 @@ pub struct Book {
     pub payments: BTreeMap<String, Payment>,
     pub refusals: Vec<Refusal>,
     pub gateway: BTreeMap<String, GatewayEntry>,
+    /// Authenticated payments waiting for our chain view, not accepted or spendable notes.
+    #[serde(default)]
+    pub deferred_payments: BTreeMap<String, DeferredPayment>,
     #[serde(default)]
     pub request_nonces: BTreeMap<String, String>,
     pub seq_out: u64,
@@ -171,11 +186,14 @@ pub struct App {
     pub(crate) peers: Mutex<BTreeMap<String, crate::discovery::Seen>>,
     pub(crate) trust: Mutex<crate::discovery::TrustPins>,
     pub(crate) reported_tip: std::sync::atomic::AtomicU32,
+    sync_generation: std::sync::atomic::AtomicU64,
     /// Serializes proving so two pays never pick the same note.
     pay_lock: tokio::sync::Mutex<()>,
     /// Gateway: blocks already read from the node, by height (checked against the node's hash).
     block_cache: Mutex<BTreeMap<u32, BlockData>>,
-    /// Device: when the last mesh sync request went out (ms), to avoid flooding the gateway.
+    /// Gateway: one response per requester; changing tips give overlapping batches different IDs.
+    compact_serving: Mutex<std::collections::BTreeSet<String>>,
+    /// Device: last mesh sync request or incoming fragment (ms), to avoid flooding the gateway.
     last_sync_req: std::sync::atomic::AtomicU64,
     sync_backoff: std::sync::atomic::AtomicU64,
     /// Serializes scan jobs, not payments; network downloads never hold sync_apply.
@@ -251,9 +269,11 @@ impl App {
             peers: Default::default(),
             trust: Mutex::new(trust),
             reported_tip: Default::default(),
+            sync_generation: Default::default(),
             ble: Default::default(),
             pay_lock: Default::default(),
             block_cache: Default::default(),
+            compact_serving: Default::default(),
             last_sync_req: Default::default(),
             sync_backoff: std::sync::atomic::AtomicU64::new(1),
             sync_run: Default::default(),
@@ -445,6 +465,7 @@ impl App {
         if durable || now_ms().saturating_sub(self.last_wallet_persist.load(std::sync::atomic::Ordering::Relaxed)) >= 5_000 {
             self.persist(&st.0, &st.1)?;
         }
+        self.sync_generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (spendable, locked) = st.0.balance();
         Ok((spendable, locked, st.0.tip_height))
     }
@@ -560,6 +581,7 @@ impl App {
             let st = self.state.lock().unwrap();
             let chain = self.chain_view.lock().unwrap();
             st.0.tip_height == 0 || st.0.tip_height < self.reported_tip.load(Relaxed)
+                || !st.1.deferred_payments.is_empty()
                 || (chain.0 == st.0.tip_height && chain.1 != st.0.tip_hash)
         };
         let delay = if behind { 5_000 } else { seconds.max(900).saturating_mul(self.sync_backoff.load(Relaxed)).min(3600) * 1000 };
@@ -589,47 +611,53 @@ impl App {
     async fn on_compact_req(self: &Arc<Self>, from: &str, have: u32, hash: String, checkpoints: Vec<(u32, String)>, birthday: u32) -> Result<()> {
         let url = self.gateway_options().0.ok_or_else(|| anyhow!("not an online gateway"))?;
         anyhow::ensure!(checkpoints.len() <= 200, "too many sync checkpoints");
-        let batch = if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
-            let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
-            if have > 0 && checkpoints.is_empty() && (have > source.tip || source.block_hash(have).await? != hash) {
-                None
+        if !self.compact_serving.lock().unwrap().insert(from.to_string()) { return Ok(()); }
+        let result = async {
+            let batch = if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
+                let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+                if have > 0 && checkpoints.is_empty() && (have > source.tip || source.block_hash(have).await? != hash) {
+                    None
+                } else {
+                    let mut batch = source.batch(have, &hash, &checkpoints, birthday, MESH_SYNC_BLOCKS).await?;
+                    if let Some(last) = batch.blocks.last() { source.seed(last.height).await?; }
+                    batch.sources = source.sources;
+                    Some(batch)
+                }
             } else {
-                let mut batch = source.batch(have, &hash, &checkpoints, birthday, MESH_SYNC_BLOCKS).await?;
-                if let Some(last) = batch.blocks.last() { source.seed(last.height).await?; }
-                batch.sources = source.sources;
-                Some(batch)
+                let hash = hash.clone();
+                tokio::task::spawn_blocking(move || Rpc::new(&url).batch(have, hash, &checkpoints, birthday, MESH_SYNC_BLOCKS)).await??
+            };
+            let Some(batch) = batch else {
+                return self.send_to(from, Body::CheckpointReq { have_height: have, have_hash: hash }).await;
+            };
+            *self.sync_sources.lock().unwrap() = batch.sources.clone();
+            if batch.seed.is_none() && batch.blocks.is_empty() && batch.prev_height == have && batch.prev_hash == hash {
+                return self.send_to(from, Body::Tip { height: have, hash }).await;
             }
-        } else {
-            let hash = hash.clone();
-            tokio::task::spawn_blocking(move || Rpc::new(&url).batch(have, hash, &checkpoints, birthday, MESH_SYNC_BLOCKS)).await??
-        };
-        let Some(batch) = batch else {
-            return self.send_to(from, Body::CheckpointReq { have_height: have, have_hash: hash }).await;
-        };
-        *self.sync_sources.lock().unwrap() = batch.sources.clone();
-        if batch.seed.is_none() && batch.blocks.is_empty() && batch.prev_height == have && batch.prev_hash == hash {
-            return self.send_to(from, Body::Tip { height: have, hash }).await;
-        }
-        let parts = batch.chunks()?;
-        self.event("sync-served", json!({"to": from, "from_height": batch.prev_height + 1, "tip": batch.chain_tip,
-            "payload_bytes": bincode::serialized_size(&batch)?, "chunks": parts.len()}));
-        for part in parts {
-            // A batch can hold more chunks than our store quota (512 packets); wait up to 30 s
-            // per chunk for the requester's acks to free room instead of abandoning the batch.
-            for wait in 0.. {
-                match self.send_to(from, Body::CompactPart(part.clone())).await {
-                    Err(e) if e.is::<ozm_mesh::StoreFull>() && wait < 300 => tokio::time::sleep(Duration::from_millis(100)).await,
-                    r => { r?; break; }
+            let parts = batch.chunks()?;
+            self.event("sync-served", json!({"to": from, "from_height": batch.prev_height + 1, "tip": batch.chain_tip,
+                "payload_bytes": bincode::serialized_size(&batch)?, "chunks": parts.len()}));
+            for part in parts {
+                // A batch can hold more chunks than our store quota (512 packets); wait up to 30 s
+                // per chunk for the requester's acks to free room instead of abandoning the batch.
+                for wait in 0.. {
+                    match self.send_to(from, Body::CompactPart(part.clone())).await {
+                        Err(e) if e.is::<ozm_mesh::StoreFull>() && wait < 300 => tokio::time::sleep(Duration::from_millis(100)).await,
+                        r => { r?; break; }
+                    }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        }.await;
+        self.compact_serving.lock().unwrap().remove(from);
+        result
     }
 
     async fn on_compact_part(self: &Arc<Self>, from: &str, part: zcash_offline_core::sync::Part) -> Result<()> {
         self.require_gateway(from)?;
         let _guard = self.sync_apply.lock().await;
         let batch = self.compact_assembly.lock().unwrap().insert(part)?;
+        self.last_sync_req.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
         let Some(batch) = batch else { return Ok(()); };
         self.reported_tip.store(batch.chain_tip, std::sync::atomic::Ordering::Relaxed);
         let wallet = self.state.lock().unwrap().0.clone();
@@ -662,7 +690,9 @@ impl App {
         };
         let needs_sync = {
             let st = self.state.lock().unwrap();
-            (height, hash) != (st.0.tip_height, st.0.tip_hash.clone())
+            let differs = (height, hash) != (st.0.tip_height, st.0.tip_hash.clone());
+            if !differs { self.sync_generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+            differs
         };
         if changed && needs_sync {
             self.sync_backoff.store(1, std::sync::atomic::Ordering::Relaxed);
@@ -896,13 +926,7 @@ impl App {
         }
         drop(_sync);
         drop(pay);
-        if self.gateway_options().0.is_some() {
-            self.on_sub(self.name(), built.raw, built.txid, vec![]).await?;
-        } else {
-            for gateway in self.gateways() {
-                self.send_to(&gateway, self.submission(&built.txid, built.raw.clone())?).await?;
-            }
-        }
+        self.submit_payment(&built.txid, built.raw).await?;
         Ok(self.payment(&payment.txid).unwrap())
     }
 
@@ -1004,9 +1028,7 @@ impl App {
                 self.send_to(to, Body::Pay { tx: tx.clone(), statement: st }).await?;
             }
         }
-        for g in self.gateways() {
-            self.send_to(&g, self.submission(&p.txid, tx.clone())?).await?;
-        }
+        self.submit_payment(&p.txid, tx).await?;
         Ok(())
     }
 
@@ -1015,7 +1037,8 @@ impl App {
         let p = self.payment(txid).ok_or_else(|| anyhow!("unknown payment"))?;
         let tx = hex::decode(&p.tx_hex)?;
         let statement = p.statement.clone().ok_or_else(|| anyhow!("no statement"))?;
-        if p.receipt.is_none() {
+        // Older recipients could refuse after one sync batch; retry the same signed envelope.
+        if p.receipt.as_ref().is_none_or(|r| matches!(&r.body.state, ReceiptState::Refused(r) if r.code == code::ANCHOR)) {
             if let Some(to) = &p.receipt_peer {
                 // A payee disappearing must not prevent submitting the already-built transaction.
                 if let Err(e) = self.send_to(to, Body::Pay { tx: tx.clone(), statement }).await {
@@ -1023,20 +1046,41 @@ impl App {
                 }
             }
         }
-        for g in self.gateways().into_iter().filter(|_| p.test_tamper.is_none()) {
-            self.send_to(&g, self.submission(&p.txid, tx.clone())?).await?;
-        }
+        let submitted = if p.test_tamper.is_none() {
+            match self.submit_payment(&p.txid, tx).await {
+                Ok(submitted) => submitted,
+                Err(e) => {
+                    // The signed payment is already durable; report it as queued, not "not sent".
+                    self.event("submission-deferred", json!({"txid": txid, "error": format!("{e:#}")}));
+                    self.update(txid, |p| p.note(format!("gateway unavailable; saved for retry: {e:#}")))?;
+                    false
+                }
+            }
+        } else { false };
         self.update(txid, |p| {
-            if p.state == "built" {
-                p.state = if p.receipt_peer.is_some() { "sent" } else { "submitted, no payee receipt" }.into();
+            if matches!(p.state.as_str(), "built" | "waiting-gateway") {
+                p.state = if p.receipt_peer.is_some() { "sent" }
+                    else if submitted { "submitted, no payee receipt" } else { "waiting-gateway" }.into();
             }
             p.attempts += 1;
             p.last_send_ms = now_ms();
-            p.note(format!("sent over mesh (attempt {})", p.attempts));
+            p.note(format!("{} (attempt {})", if submitted { "submitted to gateway" } else { "queued for gateway" }, p.attempts));
         })
     }
 
     // ---------- shared ----------
+
+    async fn submit_payment(self: &Arc<Self>, txid: &str, tx: Vec<u8>) -> Result<bool> {
+        if self.gateway_options().0.is_some() {
+            self.on_sub(self.name(), tx, txid.into(), vec![]).await?;
+            return Ok(true);
+        }
+        let gateways = self.gateways();
+        for g in &gateways {
+            self.send_to(g, self.submission(txid, tx.clone())?).await?;
+        }
+        Ok(!gateways.is_empty())
+    }
 
     fn submission(&self, txid: &str, tx: Vec<u8>) -> Result<Body> {
         let mut st = self.state.lock().unwrap();
@@ -1210,6 +1254,8 @@ impl App {
         }
         let t = std::time::Instant::now();
         let payer = self.device(from)?;
+        statement.verify_key(&payer)?;
+        anyhow::ensure!(s.payee == self.name() || s.payee == self.mesh.peer_id().to_string(), "statement names another payee");
         let pending = !self.cfg.fleet.open && self.cfg.fleet.by_peer(&payer.peer_id).is_some();
         let exposure = if pending {
             let st = self.state.lock().unwrap();
@@ -1220,29 +1266,40 @@ impl App {
                 || outstanding.iter().map(|p| p.amount as u128).sum::<u128>() + s.amount as u128 > 300_000_000)
                 .then(|| Reject { code: code::EXPOSURE, reason: "pending exposure cap (3 payments / 1 ZEC per payer; 3 ZEC total); wait for mined".into() })
         } else { None };
-        let mut checked = match exposure { Some(r) => Err(r), None => self.verify_offline(&tx, pending).await? };
-        // The payer may have synced past this payee's view. An offline payee refreshes its
-        // chain view from a gateway over the mesh and checks once more before refusing.
-        if self.gateway_options().0.is_none() && matches!(&checked, Err(r) if r.code == code::ANCHOR) {
-            let before = self.state.lock().unwrap().0.tip_height;
-            self.event("anchor-unknown-syncing", json!({"txid": s.txid, "view_height": before}));
-            if self.request_mesh_sync(true).await.is_ok() {
-                for _ in 0..60 {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    if self.state.lock().unwrap().0.tip_height > before {
-                        break;
-                    }
-                }
-                checked = self.verify_offline(&tx, pending).await?;
+        let (view, generation) = {
+            let st = self.state.lock().unwrap();
+            ((st.0.tip_height, st.0.tip_hash.clone()), self.sync_generation.load(std::sync::atomic::Ordering::Relaxed))
+        };
+        let checked = match exposure { Some(r) => Err(r), None => self.verify_offline(&tx, pending).await? };
+        if matches!(&checked, Err(r) if r.code == code::ANCHOR) {
+            if self.gateway_options().0.is_some() { self.start_sync(); }
+            else { let _ = self.request_mesh_sync(false).await; }
+            let mut st = self.state.lock().unwrap();
+            let height = st.0.tip_height;
+            let target_height = self.reported_tip.load(std::sync::atomic::Ordering::Relaxed)
+                .max(st.1.deferred_payments.get(&s.txid).map_or(0, |p| p.target_height));
+            // Coalesced tips can be stale: wait for a fresh response, then finish catch-up.
+            let refreshed = st.1.deferred_payments.get(&s.txid).is_some_and(|p| generation > p.sync_generation);
+            if !refreshed || height < target_height || (height, st.0.tip_hash.clone()) != view {
+                let (_, checked) = verify::check_tx(&tx, &self.cfg.fleet.policy)?;
+                anyhow::ensure!(s.txid == checked.txid && s.auth_digest == checked.auth_digest && s.expiry_height == checked.expiry_height,
+                    "statement does not match transaction");
+                anyhow::ensure!(st.1.deferred_payments.contains_key(&s.txid) || (st.1.deferred_payments.len() < 32
+                    && st.1.deferred_payments.values().map(|p| p.tx_hex.len() / 2).sum::<usize>() + tx.len() <= 4 * 1024 * 1024),
+                    "incoming verification queue full; retry after sync");
+                st.1.deferred_payments.insert(s.txid.clone(), DeferredPayment {
+                    from: from.into(), tx_hex: hex::encode(&tx), statement: statement.clone(), view_height: view.0,
+                    target_height, sync_generation: generation,
+                });
+                self.persist(&st.0, &st.1)?;
+                drop(st);
+                self.event("anchor-unknown-syncing", json!({"txid": s.txid, "view_height": height}));
+                return Ok(());
             }
         }
         let verify_ms = t.elapsed().as_millis();
         let result = checked.and_then(|v| {
             let st_err = |r: &str| Reject { code: code::STATEMENT, reason: r.to_string() };
-            self.device(from).and_then(|d| statement.verify_key(&d)).map_err(|e| st_err(&format!("statement: {e}")))?;
-            if s.payee != self.name() && s.payee != self.mesh.peer_id().to_string() {
-                return Err(st_err("statement names another payee"));
-            }
             if s.txid != v.tx.txid || s.auth_digest != v.tx.auth_digest {
                 return Err(st_err("statement txid or auth_digest does not match the transaction"));
             }
@@ -1281,6 +1338,7 @@ impl App {
                 )).transpose()?;
                 {
                     let mut st = self.state.lock().unwrap();
+                    st.1.deferred_payments.remove(&s.txid);
                     st.0.record_incoming(v.notes)?;
                     st.1.last_seq_in.insert(from.to_string(), s.seq);
                     let mut p = Payment {
@@ -1312,17 +1370,16 @@ impl App {
                 }
                 self.event(if pending { "accepted" } else { "awaiting-inclusion" }, json!({"txid": v.tx.txid, "amount": v.amount, "from": from, "verify_ms": verify_ms}));
                 if let Some(receipt) = receipt { self.send_to(from, Body::Rcpt(receipt)).await?; }
-                for g in self.gateways() {
-                    self.send_to(&g, self.submission(&v.tx.txid, tx.clone())?).await?;
-                }
+                self.submit_payment(&v.tx.txid, tx).await?;
                 self.update(&v.tx.txid, |p| {
-                    if pending && !p.is_final() { p.state = "submitted".into(); }
+                    if pending && p.result.is_none() { p.state = "submitted".into(); }
                     p.note("forwarded to gateway");
                 })?;
             }
             Err(reject) => {
                 {
                     let mut st = self.state.lock().unwrap();
+                    st.1.deferred_payments.remove(&s.txid);
                     st.1.refusals.push(Refusal { ms: now_ms(), from: from.into(), txid: s.txid.clone(), reject: reject.clone() });
                     self.persist(&st.0, &st.1)?;
                 }
@@ -1700,6 +1757,18 @@ impl App {
     /// until it has a receipt, B re-submits until mined. Backoff doubles per attempt
     /// from `retry` up to 32×.
     pub async fn retry_tick(self: &Arc<Self>) {
+        let mut deferred: Vec<_> = {
+            let st = self.state.lock().unwrap();
+            st.1.deferred_payments.values().filter(|p| p.view_height != st.0.tip_height
+                || self.sync_generation.load(std::sync::atomic::Ordering::Relaxed) > p.sync_generation).cloned().collect()
+        };
+        // Preserve each payer's sequence order when several anchors become known in one batch.
+        deferred.sort_by_key(|p| p.statement.body.seq);
+        for p in deferred {
+            if let Err(e) = self.on_pay(&p.from, hex::decode(&p.tx_hex).unwrap_or_default(), p.statement).await {
+                self.event("deferred-payment-error", json!({"error": format!("{e:#}")}));
+            }
+        }
         let now = now_ms();
         let base = self.cfg.retry.as_millis() as u64;
         let due: Vec<Payment> = {
@@ -1716,13 +1785,7 @@ impl App {
                 self.send_payment(&p.txid).await
             } else {
                 let tx = hex::decode(&p.tx_hex).unwrap_or_default();
-                let mut r = Ok(());
-                for g in self.gateways() {
-                    r = match self.submission(&p.txid, tx.clone()) {
-                        Ok(body) => r.and(self.send_to(&g, body).await),
-                        Err(e) => Err(e),
-                    };
-                }
+                let r = self.submit_payment(&p.txid, tx).await.map(|_| ());
                 let _ = self.update(&p.txid, |p| {
                     p.attempts += 1;
                     p.last_send_ms = now_ms();
@@ -1746,7 +1809,8 @@ impl App {
         let chain = self.chain_view.lock().unwrap();
         let ready = st.0.tip_height > 0 && st.0.tip_height >= self.reported_tip.load(std::sync::atomic::Ordering::Relaxed)
             && (chain.0 != st.0.tip_height || chain.1 == st.0.tip_hash);
-        let preparation = st.1.auto_prepare_txid.as_ref().and_then(|id| st.1.payments.get(id)).map(|payment| {
+        let preparation_payment = st.1.auto_prepare_txid.as_ref().and_then(|id| st.1.payments.get(id));
+        let preparation = preparation_payment.map(|payment| {
             if matches!(payment.state.as_str(), "expired" | "conflict" | "gateway-rejected") {
                 format!("Automatic preparation stopped: {}. No new split will be attempted for these funds.", payment.state)
             } else if st.0.notes.iter().any(|n| n.txid == payment.txid) {
@@ -1757,6 +1821,13 @@ impl App {
         }).unwrap_or_else(|| if st.1.auto_prepare_status.is_empty() {
             "Offline preparation is automatic when mined funds and a gateway are available. Small balances avoid uneconomic split fees.".into()
         } else { st.1.auto_prepare_status.clone() });
+        // Credits without a mesh envelope still belong in history, including spent funding.
+        let mut chain_received: BTreeMap<String, (u64, u32)> = BTreeMap::new();
+        for note in st.0.notes.iter().filter(|n| !st.1.payments.contains_key(&n.txid)) {
+            let credit = chain_received.entry(note.txid.clone()).or_insert((0, note.height));
+            credit.0 += note.value;
+            credit.1 = credit.1.min(note.height);
+        }
         json!({
             "name": self.name(),
             "role": if me.is_some_and(|d| d.is_gateway()) { "gateway" } else { "" },
@@ -1766,6 +1837,8 @@ impl App {
             "sync_error": self.sync_error.lock().unwrap().clone(),
             "ready": ready,
             "preparation": preparation,
+            "preparing": preparation_payment.is_some_and(|p| !p.is_final() && p.state != "gateway-rejected"
+                && !st.0.notes.iter().any(|n| n.txid == p.txid)),
             "birthday": st.0.birthday,
             "chain_sources": sources,
             "single_source": sources.len() < 2,
@@ -1773,6 +1846,7 @@ impl App {
             "address": me.map(|d| d.address.clone()),
             "online": rpc.is_some(),
             "chain_tip": self.reported_tip.load(std::sync::atomic::Ordering::Relaxed),
+            "pending_checks": st.1.deferred_payments.len(),
             "open_network": self.cfg.fleet.open,
             "selected_gateway": self.gateway_status(),
             "gateway_warning": self.gateway_warning(),
@@ -1787,6 +1861,10 @@ impl App {
             "wallet": {"tip": st.0.tip_height, "spendable": spendable, "locked": locked,
                         "pending_incoming": st.0.pending_incoming.iter().map(|n| n.value).sum::<u64>(),
                         "notes": st.0.notes.iter().filter(|n| n.spent_in.is_none()).count()},
+            "chain_received": chain_received.into_iter().map(|(txid, (amount, height))| json!({
+                "txid": txid, "direction": "received", "amount": amount, "chain_height": height,
+                "state": "scanned", "created_ms": 0, "counterparty": "sender unknown (chain scan)", "history": [],
+            })).collect::<Vec<_>>(),
             "payments": st.1.payments.len(),
             "refusals": st.1.refusals.len(),
             "gateway_submissions": st.1.gateway.len(),

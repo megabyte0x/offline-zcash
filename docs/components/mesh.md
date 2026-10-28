@@ -146,6 +146,23 @@ inventory on the next 10-second sweep. A 710-chunk batch also exceeded the gatew
 own 512-packet quota of unacknowledged messages; the gateway now waits for acks
 (`StoreFull`, up to 30 s per chunk) instead of abandoning the batch.
 
+### v0.7.5 overlapping responses and relay custody
+
+The funded Linux run on 28 October found another stall at height 4,533,025.
+Fallback requests every five seconds overlapped a 272-chunk, 832,578-byte
+response. New gateway tips changed the batch digest; interleaved responses kept
+replacing the receiver's single assembly. The gateway now serves one response
+per requester at a time, and authenticated incoming fragments postpone fallback
+requests. The same wallet passed that range without clearing any mesh store.
+Different requesters can still sync concurrently. A held-download regression
+fails without coalescing and passes with it.
+
+A relay's full sender quota could also reject fresh replies or gateway presence
+before local delivery. Local addressed messages and broadcasts now reach the
+application even if relay custody is full. The relay still refuses new custody
+and never evicts held messages to make room; application authentication, bounded
+queues and resource limits remain in force.
+
 ## BLE link (Android first)
 
 ### Decided (27 October)

@@ -43,9 +43,22 @@ async fn automatic_preparation_keeps_change_unspendable_and_does_not_loop_after_
             assert_eq!(scanned.balance(), (value - payment.fee, 0));
             assert_eq!(scanned.notes.iter().filter(|n| n.spendable()).count(), if value == 750_000 { 3 } else { 9 });
             assert!(scanned.notes.iter().any(|n| n.spendable() && n.value >= (value - payment.fee) / 2));
+            app.state.lock().unwrap().0 = scanned;
         }
         app.auto_prepare_tick().await.unwrap();
         assert_eq!(app.status()["payments"], expected);
+        // Group external outputs, retain spent credits, and exclude our change/splits and unmined notes.
+        {
+            let mut state = app.state.lock().unwrap();
+            let note = state.0.notes[0].clone();
+            state.0.notes.push(StoredNote { value: 3_007, ..note.clone() });
+            state.0.pending_incoming.push(StoredNote { txid: "not-scanned".into(), value: 90_013, ..note });
+        }
+        let credits = app.status()["chain_received"].as_array().unwrap().clone();
+        assert_eq!(credits.len(), 1);
+        assert_eq!(credits[0]["txid"], "external-funding");
+        assert_eq!(credits[0]["amount"], value + 3_007);
+        assert_eq!(credits[0]["state"], "scanned");
         app.stop().await;
         // The failed witness does not become a retry loop after restarting the wallet either.
         let (mesh, _events) = ozm_mesh::Mesh::start(Default::default()).await.unwrap();
@@ -92,6 +105,8 @@ async fn payment_during_sync_download_keeps_its_reservation_after_install() {
             let result = match request["method"].as_str().unwrap() {
                 "getblockcount" => json!(2),
                 "getblockhash" => json!(format!("block{}", request["params"][0])),
+                "sendrawtransaction" => json!("accepted"),
+                "getrawtransaction" => json!({}),
                 "getblock" => {
                     entered.notify_one();
                     while !*released.borrow_and_update() { released.changed().await.unwrap(); }
@@ -107,15 +122,42 @@ async fn payment_during_sync_download_keeps_its_reservation_after_install() {
         peer_id: me.public().unwrap().peer_id.parse().unwrap(), ack_signer: Some(me.signing_key().unwrap()),
         ..Default::default()
     }).await.unwrap();
-    let app = ozm_node::App::new(ozm_node::app::Config { data: dir.path().into(), fleet, me, rpc: Some(url),
+    let app = ozm_node::App::new(ozm_node::app::Config { data: dir.path().into(), fleet, me, rpc: Some(url.clone()),
         mine: false, retry: Duration::from_secs(30), faucet_max_zat: 0 }, mesh).unwrap();
     app.start_sync();
     tokio::time::timeout(Duration::from_secs(5), downloading.notified()).await.unwrap();
     assert_eq!(app.status()["syncing"], true);
-    let paid = tokio::time::timeout(Duration::from_secs(10), app.pay("B", 20_003)).await;
+    // A fallback request must not overlap the same recipient's unfinished response.
+    let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+    let sender = &secrets[1];
+    let inner = zcash_offline_core::envelope::authenticate(zcash_offline_core::envelope::Inner {
+        from: sender.name.clone(), from_key: sender.public().unwrap().ed25519,
+        body: zcash_offline_core::messages::Body::CompactReq {
+            have_height: 1, have_hash: "block1".into(), checkpoints: vec![], birthday: 1,
+        },
+    }, sender, &recipient).unwrap();
+    let request = ozm_mesh::MeshEvent::Message { from: sender.public().unwrap().peer_id.parse().unwrap(),
+        msg_id: ozm_mesh::MsgId::random(), payload: zcash_offline_core::envelope::seal(&inner, &recipient).unwrap(),
+        hops: 1, broadcast: false };
+    let serving = tokio::spawn({ let app = app.clone(); let request = request.clone(); async move { app.handle_mesh_event(request).await } });
+    tokio::time::timeout(Duration::from_secs(5), downloading.notified()).await.unwrap();
+    let mut duplicate = tokio::spawn({ let app = app.clone(); async move { app.handle_mesh_event(request).await } });
+    let coalesced = tokio::time::timeout(Duration::from_secs(5), &mut duplicate).await.is_ok();
+    app.configure_gateway("http://127.0.0.1:0".into(), false).unwrap();
+    let absent = zcash_offline_core::DeviceSecret::generate("Absent", "").public().unwrap().address;
+    let paid = tokio::time::timeout(Duration::from_secs(10), app.pay(&absent, 20_003)).await;
     // Let the download finish even when the pre-fix lock causes the payment to time out.
     release.send(true).unwrap();
+    serving.await.unwrap();
+    if !coalesced { duplicate.await.unwrap(); }
+    assert!(coalesced, "duplicate sync request started another unfinished response");
+    let served = std::fs::read_to_string(dir.path().join("events.jsonl")).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()).filter(|e| e["event"] == "sync-served").count();
+    assert_eq!(served, 1);
     let payment = paid.expect("payment waited for the sync download").unwrap();
+    // A transport failure after signing returns the saved payment, not a false "not sent" error.
+    assert_eq!(payment.state, "waiting-gateway");
+    assert!(payment.result.is_none());
     tokio::time::timeout(Duration::from_secs(5), async {
         while app.status()["wallet"]["tip"] != 2 { tokio::time::sleep(Duration::from_millis(10)).await; }
     }).await.unwrap();
@@ -123,8 +165,121 @@ async fn payment_during_sync_download_keeps_its_reservation_after_install() {
     assert_eq!(durable.balance(), (0, 1_000_000));
     assert_eq!(durable.notes[0].locked_by.as_deref(), Some(payment.txid.as_str()));
     assert_eq!(durable.reservations[&durable.notes[0].nullifier].0, payment.txid);
+    // Upgrade recovery: retry the held original bytes even after an old payee refusal.
+    {
+        let mut st = app.state.lock().unwrap();
+        st.1.gateway.clear();
+        let p = st.1.payments.get_mut(&payment.txid).unwrap();
+        p.state = "refused, may still mine until expiry".into();
+        p.result = None;
+        p.last_send_ms = 0;
+    }
+    app.configure_gateway(url, false).unwrap();
+    app.retry_tick().await;
+    let recovered = app.payment(&payment.txid).unwrap();
+    assert_eq!(recovered.tx_hex, payment.tx_hex);
+    // The gateway wallet submits directly, without any payee online to forward it.
+    assert_eq!(recovered.state, "in-mempool");
+    assert!(matches!(recovered.result.as_ref().unwrap().body.status, zcash_offline_core::messages::TxStatus::Mempool));
     app.stop().await;
     server.abort();
+}
+
+#[tokio::test]
+async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender() {
+    use ozm_mesh::{MeshEvent, MsgId};
+    use zcash_offline_core::{builder::build_payment, envelope::{self, Inner}, messages::{Body, Signed, Statement},
+        sync::{Batch, CompactBlock}, wallet::{StoredNote, WalletState}, DeviceSecret, Policy};
+    async fn deliver(app: &std::sync::Arc<ozm_node::App>, sender: &DeviceSecret, body: Body) {
+        let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+        let inner = envelope::authenticate(Inner { from: sender.name.clone(),
+            from_key: sender.public().unwrap().ed25519, body }, sender, &recipient).unwrap();
+        app.handle_mesh_event(MeshEvent::Message { from: sender.public().unwrap().peer_id.parse().unwrap(),
+            msg_id: MsgId::random(), payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "catchup".into(),
+        network: zcash_offline_core::fleet::Network::Regtest, birthday: 1,
+        devices: vec!["G:gateway".into(), "B".into()] }).unwrap();
+    let g: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let home = dir.path().join("B");
+    let invite = std::fs::read_to_string(&fleet.devices[1].invite_path).unwrap();
+    join_invite(&invite, &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    let app = start(&opts).await.unwrap();
+    app.request_mesh_sync(true).await.unwrap(); // Pin the fleet's authorised gateway before its reply.
+    let note = StoredNote { position: 0, height: 1, txid: "controlled funding".into(), value: 1_000_000,
+        recipient: hex::encode(g.address().unwrap().to_raw_address_bytes()), rho: hex::encode([0;32]),
+        rseed: hex::encode([7;32]), nullifier: String::new(), spent_in: None, locked_by: None };
+    let cm = orchard::note::ExtractedNoteCommitment::from(note.note().unwrap().commitment());
+    let mut early = WalletState { birthday: 1, tip_height: 1, tip_hash: "block1".into(),
+        commitments: vec![hex::encode(cm.to_bytes())], ..Default::default() };
+    early.roots.insert(1, hex::encode(early.witness(0).unwrap().1));
+    app.state.lock().unwrap().0 = early.clone();
+    let mut payer = early.clone();
+    payer.tip_height = 401; payer.tip_hash = "block401".into();
+    let other_note = StoredNote { position: 1, rseed: hex::encode([8;32]), ..note.clone() };
+    payer.commitments.push(hex::encode(other_note.commitment().unwrap()));
+    payer.notes.extend([note, other_note]);
+    payer.roots.insert(401, hex::encode(payer.witness(0).unwrap().1));
+    let mut caught_up = payer.clone(); caught_up.notes.clear();
+    let mut payments = [20_003, 20_007].map(|amount|
+        build_payment(&mut payer, &g, app.cfg.me.address().unwrap(), amount, &Policy::default()).unwrap());
+    // Deliberately oppose txid order: retrying the later sequence first would refuse a valid payment.
+    payments.sort_by(|a, b| b.txid.cmp(&a.txid));
+    let [p, second] = payments;
+    let statement = Signed::sign(Statement { txid: p.txid.clone(), auth_digest: p.auth_digest,
+        amount: p.amount, fee: p.fee, expiry_height: p.expiry_height, payer: "G".into(), payee: "B".into(),
+        seq: 1, created_ms: 1 }, &g).unwrap();
+    let second_statement = Signed::sign(Statement { txid: second.txid.clone(), auth_digest: second.auth_digest,
+        amount: second.amount, fee: second.fee, expiry_height: second.expiry_height, payer: "G".into(), payee: "B".into(),
+        seq: 2, created_ms: 2 }, &g).unwrap();
+    // Coalesced announcements can still say "caught up" when the payer used a newer root.
+    deliver(&app, &g, Body::Tip { height: 1, hash: "block1".into() }).await;
+    assert_eq!(app.status()["chain_tip"], 1);
+    deliver(&app, &g, Body::Pay { tx: p.raw.clone(), statement: statement.clone() }).await;
+    deliver(&app, &g, Body::Pay { tx: second.raw, statement: second_statement }).await;
+    assert_eq!(app.status()["pending_checks"], 2);
+    let first = Batch { prev_height: 1, prev_hash: "block1".into(), seed: None,
+        blocks: vec![CompactBlock { height: 201, hash: "block201".into(), txs: vec![] }],
+        chain_tip: 401, sources: vec!["controlled source".into()] };
+    for part in first.chunks().unwrap() { deliver(&app, &g, Body::CompactPart(part)).await; }
+    app.retry_tick().await;
+    assert_eq!(app.status()["pending_checks"], 2);
+    assert_eq!(app.status()["wallet"]["tip"], 201);
+    assert!(app.state.lock().unwrap().1.refusals.is_empty());
+    assert!(app.payment(&p.txid).is_none());
+    app.stop().await;
+    let app = start(&opts).await.unwrap();
+    app.retry_tick().await;
+    assert_eq!(app.status()["pending_checks"], 2);
+    app.state.lock().unwrap().0 = caught_up;
+    app.retry_tick().await; // No second Pay message and no sender needed.
+    assert_eq!(app.status()["pending_checks"], 0);
+    assert!(app.state.lock().unwrap().1.refusals.is_empty());
+    assert_eq!(app.payment(&p.txid).unwrap().amount, p.amount);
+    assert_eq!(app.payment(&second.txid).unwrap().amount, second.amount);
+    assert_eq!(app.status()["wallet"]["spendable"], 0);
+    assert_eq!(app.status()["wallet"]["pending_incoming"], 40_010);
+    app.stop().await;
+
+    // A caught-up wallet still refuses an unknown/fabricated root instead of deferring forever.
+    let other = dir.path().join("caught-up");
+    join_invite(&invite, &other).unwrap(); opts.data = other.join("data"); opts.fleet = other.join("fleet.json"); opts.secret = other.join("secret.json");
+    let app = start(&opts).await.unwrap();
+    early.tip_height = 401; early.tip_hash = "block401".into();
+    app.state.lock().unwrap().0 = early;
+    deliver(&app, &g, Body::Pay { tx: p.raw, statement }).await;
+    assert_eq!(app.status()["pending_checks"], 1);
+    app.retry_tick().await; // A timer is not a fresh chain response.
+    assert!(app.state.lock().unwrap().1.refusals.is_empty());
+    deliver(&app, &g, Body::Tip { height: 401, hash: "block401".into() }).await;
+    app.retry_tick().await;
+    assert_eq!(app.status()["pending_checks"], 0);
+    assert_eq!(app.state.lock().unwrap().1.refusals.last().unwrap().reject.code, 6);
+    assert!(app.payment(&p.txid).is_none());
+    app.stop().await;
 }
 
 #[test]

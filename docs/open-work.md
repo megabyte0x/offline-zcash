@@ -4,9 +4,41 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 ## Built
 
-v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.4. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
+v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; v0.7.5 was exercised with owner-funded TAZ in Linux Basecamp. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
 
-**v0.7.5 candidate, item 1:** automatic per-device scan starts and background sync
+**Funded Linux verification, 28 October:** Basecamp 0.3.2, Ubuntu 24.04/Xvfb,
+one invited gateway and three invite-free wallets with separate keys/state.
+The 0.7.4 control mined 100,000 zat; paying lagging Bob 130,000 zat automatically
+refused after one 200-block batch. Its original transaction
+`efc4aba879d2a20623cf784b01f2bf7a4ce350cb6534f2006c92ea09dd8af36a`
+never left the gateway. The fix submitted the unchanged bytes with both payees
+stopped; it mined at 4,551,323 and Bob scanned the credit after restart.
+Gateway sends now submit locally. Catching-up recipients durably defer checking,
+and exact already-scanned transactions reconcile after root pruning.
+
+Alice's 20,007-zat offline payment survived restart and gateway reconnect;
+Bob returned Max (140,007 zat, exactly 10,000 fee). Alice's automatic eight-note
+split `1fefac6b137d62fae181e996525d9dbf05bce8208d55fc9e814296c091228e9c`
+cost 45,000 zat, while older funds stayed usable. After it mined, a selected
+split note funded 100,003 zat to Bob with the gateway stopped. Both wallets
+later reported ten confirmations for
+`04b18100e9b792ae57eb11337d64090bdfd5e47ab4c18e1d67a86d256a800266`.
+The lagging Carol wallet passed the formerly stalled 272-chunk range without
+clearing its mesh store, then caught up to 4,551,449 with both incoming payments
+Mined, 90,010 zat spendable and no refusal. Across all four wallets, nine unique
+transactions cost 125,000 zat: 9,875,000 of the funded 10,000,000 zat remained,
+with zero locks or pending checks. The original refused transaction's SHA-256
+still matched the 0.7.4 bytes. All devices ran the same tested portable engine.
+The simple wallet, Debug toggle, copied address and 800px stacked layout were
+rendered and inspected; scanned-only credits appear without a fabricated receipt.
+Strict Clippy and all 57 workspace tests pass; real Regtest mesh/LAN/open benches
+also passed. The [testnet skill](../.agents/skills/testing-basecamp-testnet/SKILL.md)
+records setup, capture and sanitized snapshots for repeat runs.
+These are shared-orb TCP links, not physical Wi-Fi/radio or OS-isolated internet.
+One public TLS source was reachable; inclusion and confirmations remain
+gateway-reported. macOS/phone/radio and independent chain proofs remain open.
+
+**v0.7.5, item 1:** automatic per-device scan starts and background sync
 replace birthday setup and a required manual sync. On 28 October, the real
 Basecamp 0.3.2 AppImage in Ubuntu 24.04/Xvfb reached testnet height 4,550,718
 1.072 seconds after the gateway link came up; the capture 4.2 seconds after
@@ -79,7 +111,7 @@ failed witness suppression and restart. No public-testnet funds/faucet were used
 The LAN/open benches account for actual mined preparation fees rather than
 assuming the funded balance stays fee-free.
 
-**Final integration:** rebased on v0.7.4, with package versions 0.7.5 and Android
+**Earlier candidate integration:** rebased on v0.7.4, with package versions 0.7.5 and Android
 code 14. Strict workspace Clippy and all 55 tests pass, including `ozm-ffi`.
 The real Regtest mesh, LAN and invite-free benches pass (23, 11 and 25 checks).
 All four portable LGX packages build sequentially; installing them in the real
@@ -131,8 +163,9 @@ lossless serialization/framing results, not physical-radio measurements.
 See [chain evidence](components/chain.md#dated-service-checks),
 [testnet installation](install.md#public-testnet-v070) and
 [funding failures](components/offline-builder.md#v070-testnet-note-plan).
-**Still open:** funded public split → offline mesh payment → ten confirmations
-on payer/payee, independent public confirmation and radio/phone/macOS checks.
+**Still open:** independent public confirmation and radio/phone/macOS checks.
+The funded split → offline mesh payment → ten gateway-reported confirmations
+ran on Linux in the 28 October verification above.
 The approximate 1.2 MB/day target must be compared with full framed wire bytes,
 not only compact payload. PoW/MMR/inclusion proofs remain tasks 7–9.
 

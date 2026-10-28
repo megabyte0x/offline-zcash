@@ -88,7 +88,7 @@ test_all() {
   tx=$(node A pay --to "$absent" --amount 0.0073 | jq -er .txid)
   wait_for 120 mined A "$tx"
   chain_mined "$tx"
-  node A payments | jq -e --arg t "$tx" '.payments[] | select(.txid == $t and .receipt == null and .receipt_peer == null and any(.history[]; .event | contains("sent over mesh")))' >/dev/null
+  node A payments | jq -e --arg t "$tx" '.payments[] | select(.txid == $t and .receipt == null and .receipt_peer == null and .result.body.status.Mined.height > 0)' >/dev/null
   echo 'PASS unknown address mined without payee receipt'
   # F has three or more spendable inputs: catches a guessed two-action fee.
   node F sync >/dev/null; sleep 8

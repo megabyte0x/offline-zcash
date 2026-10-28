@@ -35,6 +35,7 @@ Rectangle {
     property string lastEvent: ""
     property var openHistory: ({})   // txid -> true; kept here so a refresh does not collapse rows
     property bool refreshing: false
+    property bool debug: false
     readonly property bool joined: st !== null && st.joined === true
     readonly property bool running: st !== null && st.running === true
     readonly property bool showSetup: st !== null && (!joined || !running)
@@ -69,6 +70,7 @@ Rectangle {
     // [label, tone, explanation]; same table as the web UI. Chain results stay gateway-reported.
     readonly property var states: ({
         "built": ["Built", "pending", "Proof built on this device; not sent yet."],
+        "waiting-gateway": ["Waiting for gateway", "pending", "Saved on this device; will submit when a gateway is reachable."],
         "sent": ["Sent over the mesh", "pending", "Waiting for the payee device to receive it."],
         "delivered": ["Delivered", "pending", "The payee device received it; waiting for its receipt."],
         "accepted-pending": ["Accepted, pending", "pending", "An invited payee accepted it before inclusion. It is not on chain yet."],
@@ -79,6 +81,7 @@ Rectangle {
         "retrying": ["Retrying", "warn", "The gateway hit a retryable error and will resubmit."],
         "included": ["Included · gateway-reported", "included", "The gateway reports fewer than 10 confirmations. Not independently proved."],
         "mined": ["Mined · gateway-reported", "ok", "The gateway reports it mined. Not independently proved."],
+        "scanned": ["Scanned · gateway-reported", "included", "Found by the wallet's chain scan, without a mesh receipt. Sender and payment time are unknown. Not independently proved."],
         "expired": ["Expired", "bad", "The gateway reports it expired. Locked notes return after your sync passes the expiry height."],
         "conflict": ["Conflict", "bad", "The gateway reports another transaction spending the same note."],
         "gateway-rejected": ["Rejected by gateway", "bad", "The gateway refused to submit it. See history for the reason."],
@@ -105,7 +108,11 @@ Rectangle {
                 refreshing = false
                 if (p.error) return
                 paysLoaded = true
-                pays = { payments: (p.payments || []).slice().sort(function (a, b) { return b.created_ms - a.created_ms }),
+                var payments = p.payments || []
+                var known = {}
+                payments.forEach(function (payment) { known[payment.txid] = true })
+                var credits = (s.chain_received || []).filter(function (credit) { return !known[credit.txid] })
+                pays = { payments: payments.concat(credits).sort(function (a, b) { return b.created_ms - a.created_ms || (b.chain_height || 0) - (a.chain_height || 0) }),
                          refusals: p.refusals || [], gateway: p.gateway || [] }
             })
         }, 10000)
@@ -284,7 +291,7 @@ Rectangle {
                 }
                 Pill {
                     text: root.reachError !== "" ? "service not answering"
-                          : root.st ? (root.st.name || "not joined") + (root.st.role ? " · " + root.st.role : "") + " · " + root.network : "Connecting…"
+                          : root.st ? (root.debug ? (root.st.name || "not joined") + (root.st.role ? " · " + root.st.role : "") + " · " : "") + root.network : "Connecting…"
                     textColor: root.reachError !== "" ? root.bad : root.mut
                 }
                 Pill {
@@ -295,15 +302,21 @@ Rectangle {
                 }
                 Pill {
                     visible: root.st !== null
-                    text: !root.running ? "stopped" : root.st.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
+                    text: !root.running ? "stopped" : root.st.syncing ? (root.debug ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "Syncing…")
                           : root.st.ready ? "ready · " + (root.st.online ? "gateway / online" : "gateway via mesh") : root.st.online ? "gateway / online"
                           : root.st.selected_gateway ? "offline · gateway via mesh" : "offline · no gateway yet"
                     textColor: !root.running ? root.mut : (root.st.online || root.st.selected_gateway) ? root.ok : root.warn
                 }
                 Pill {
-                    visible: root.running
+                    visible: root.running && root.debug
                     text: "mesh neighbours: " + (root.st && root.st.neighbor_links && root.st.neighbor_links.length
                           ? root.st.neighbor_links.map(function (n) { return n.name + " (" + n.kind.toUpperCase() + ")" }).join(", ") : "none")
+                }
+                Btn {
+                    objectName: "debugButton"
+                    secondary: true; text: root.debug ? "Hide debug" : "Debug"
+                    Layout.fillWidth: false; Layout.topMargin: 0
+                    onClicked: root.debug = !root.debug
                 }
             }
         }
@@ -484,16 +497,21 @@ Rectangle {
                             Accessible.name: "Spendable balance " + text
                         }
                         Muted {
-                            text: root.st && root.st.wallet ? "spendable · " + root.zec(root.st.wallet.locked) + " locked in pending payments · "
-                                            + root.st.wallet.notes + " notes · balance as of height " + root.st.wallet.tip : ""
+                            text: root.debug && root.st && root.st.wallet ? root.st.wallet.notes + " notes · balance as of height " + root.st.wallet.tip : "Available to send"
+                        }
+                        Msg {
+                            text: root.st && root.st.wallet && root.st.wallet.locked > 0 ? root.zec(root.st.wallet.locked) + " reserved for pending payments" : ""
                         }
                         Msg {
                             visible: !!(root.st && root.st.wallet && root.st.wallet.pending_incoming > 0)
                             text: visible ? "Incoming " + root.zec(root.st.wallet.pending_incoming) + " · spendable after mined and scanned" : ""
                         }
-                        Msg { text: root.st && root.st.syncing ? "Syncing in the background" + (root.st.chain_tip ? ": height " + root.st.wallet.tip + " of " + root.st.chain_tip : "") + ". Available notes can still be paid or prepared." : root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : ""
+                        Msg { text: root.st && root.st.preparing ? "Preparing funds for offline payments. Waiting for confirmation." : "" }
+                        Msg { text: root.st && root.st.syncing ? "Syncing in the background. Your balance may change." : root.st && root.st.sync_error ? (root.debug ? "Last sync failed: " + root.st.sync_error : "Sync interrupted. Open Debug for details.") : ""
                               failed: !!(root.st && !root.st.syncing && root.st.sync_error) }
+                        Msg { text: root.st && root.st.pending_checks ? "Checking " + root.st.pending_checks + " incoming payment(s) as the wallet syncs…" : "" }
                         Rectangle {
+                            visible: root.debug
                             Layout.fillWidth: true; Layout.topMargin: 4
                             radius: 8; color: "transparent"; border.color: root.line
                             implicitHeight: cv.implicitHeight + 16
@@ -515,8 +533,13 @@ Rectangle {
                                 }
                             }
                         }
-                        Note { text: root.st ? root.st.gateway_warning || "" : "" }
+                        Note {
+                            visible: text !== "" && (root.debug || !root.st.selected_gateway)
+                            text: root.st ? root.st.gateway_warning || "" : ""
+                        }
+                        Muted { text: (root.network === "testnet" ? "Testnet only" : "Test coins only") + " · confirmations reported by gateway, not independently verified"; font.pixelSize: 12 }
                         Btn {
+                            visible: root.debug
                             secondary: true
                             text: wallet.busy ? "Refreshing…" : "Refresh balance (optional)"
                             Layout.alignment: Qt.AlignLeft
@@ -544,7 +567,7 @@ Rectangle {
                                 })
                             }
                         }
-                        Muted { visible: root.network === "testnet"; font.pixelSize: 12; text: "Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; the service may fail). Gateways do not hand out testnet funds." }
+                        Muted { visible: root.debug && root.network === "testnet"; font.pixelSize: 12; text: "Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; the service may fail). Gateways do not hand out testnet funds." }
                         Msg { text: wallet.msg; failed: wallet.failed }
                         Item { Layout.fillHeight: true }
                     }
@@ -552,7 +575,7 @@ Rectangle {
                     // Pay offline
                     Card {
                         id: pay
-                        title: "Pay offline"
+                        title: "Send"
                         Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 320
                         property string msg: ""
                         property bool failed: false
@@ -571,6 +594,7 @@ Rectangle {
                         }
                         Muted {
                             id: hint
+                            visible: root.debug || pay.wrongPrefix
                             font.pixelSize: 12
                             color: pay.wrongPrefix ? root.warn : root.mut
                             text: pay.wrongPrefix ? "This does not look like a " + root.network + " unified address (expected " + root.addrPrefix + "…)."
@@ -609,7 +633,8 @@ Rectangle {
                         }
                         Btn {
                             id: payBtn
-                            text: pay.busy ? "Proving on this device…" : "Build, prove and send over the mesh"
+                            objectName: "sendButton"
+                            text: pay.busy ? "Sending…" : "Send"
                             enabled: !pay.busy && to.text.trim() !== "" && pay.amountErr === ""
                             onClicked: {
                                 pay.busy = true; pay.failed = false; pay.msg = "Building and proving. This can take a few seconds."
@@ -622,7 +647,7 @@ Rectangle {
                             }
                         }
                         Msg { objectName: "payResult"; text: pay.msg; failed: pay.failed }
-                        Muted { font.pixelSize: 12; text: "A known mesh payee answers with a receipt. An unknown address is still submitted, but you get no payee receipt. Included and mined are reported by the gateway." }
+                        Muted { visible: root.debug; font.pixelSize: 12; text: "A known mesh payee answers with a receipt. An unknown address is still submitted, but you get no payee receipt. Included and mined are reported by the gateway." }
                         Item { Layout.fillHeight: true }
                     }
 
@@ -652,13 +677,15 @@ Rectangle {
                             onClicked: { addr.selectAll(); addr.copy(); addr.deselect(); copied = true; copyReset.restart() }
                             Timer { id: copyReset; interval: 1500; onTriggered: copyBtn.copied = false }
                         }
-                        Muted { font.pixelSize: 12; text: "Open or unknown payers are not accepted while pending. Wait for gateway-reported inclusion; it is not independent chain verification." }
+                        Muted { visible: !root.debug; font.pixelSize: 12; text: "Share this address to receive test coins." }
+                        Muted { visible: root.debug; font.pixelSize: 12; text: "Open or unknown payers are not accepted while pending. Wait for gateway-reported inclusion; it is not independent chain verification." }
                         Item { Layout.fillHeight: true }
                     }
 
                     // Prepare for offline
                     Card {
                         id: prep
+                        visible: root.debug
                         title: "Offline readiness"
                         Layout.fillWidth: true
                         Layout.columnSpan: grid.columns
@@ -720,7 +747,7 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.columnSpan: grid.columns
                         Repeater {
-                            model: root.pays.payments
+                            model: root.pays.payments.filter(function (p) { return root.debug || p.direction !== "prepare" })
                             ColumnLayout {
                                 id: prow
                                 required property var modelData
@@ -736,10 +763,11 @@ Rectangle {
                                     Text { text: root.direction(prow.modelData.direction) + " · " + root.zec(prow.modelData.amount); color: root.fg; font.pixelSize: 14 }
                                     Text { text: root.hms(prow.modelData.created_ms); color: root.mut; font.pixelSize: 13 }
                                 }
-                                Muted { visible: prow.info[2] !== ""; text: prow.info[2]; font.pixelSize: 12 }
-                                Muted { visible: prow.modelData.direction === "sent" && !prow.modelData.receipt_peer && prow.modelData.state !== "submitted, no payee receipt"; text: "No payee receipt"; font.pixelSize: 12 }
-                                Text { text: "With " + prow.modelData.counterparty; textFormat: Text.PlainText; color: root.mut; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                                Muted { visible: prow.info[2] !== "" && (root.debug || prow.info[1] === "bad"); text: prow.info[2]; font.pixelSize: 12 }
+                                Muted { visible: root.debug && prow.modelData.direction === "sent" && !prow.modelData.receipt_peer && prow.modelData.state !== "submitted, no payee receipt"; text: "No payee receipt"; font.pixelSize: 12 }
+                                Text { visible: root.debug; text: "With " + prow.modelData.counterparty; textFormat: Text.PlainText; color: root.mut; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
                                 TextEdit {
+                                    visible: root.debug
                                     text: prow.modelData.txid; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText
                                     color: root.fg; font.family: root.mono; font.pixelSize: 12
                                     wrapMode: TextEdit.WrapAnywhere
@@ -747,6 +775,7 @@ Rectangle {
                                     Accessible.name: "Transaction ID"
                                 }
                                 Toggle {
+                                    visible: root.debug && (prow.modelData.history || []).length > 0
                                     label: "history"
                                     open: prow.open
                                     font.pixelSize: 13; color: root.mut; Layout.topMargin: 0
@@ -757,7 +786,7 @@ Rectangle {
                                     }
                                 }
                                 Repeater {
-                                    model: prow.open ? (prow.modelData.history || []) : []
+                                    model: root.debug && prow.open ? (prow.modelData.history || []) : []
                                     Text {
                                         text: root.hms(modelData.ms) + "  " + modelData.event
                                         textFormat: Text.PlainText
@@ -768,11 +797,11 @@ Rectangle {
                             }
                         }
                         Muted {
-                            visible: root.pays.payments.length === 0
+                            visible: root.pays.payments.filter(function (p) { return root.debug || p.direction !== "prepare" }).length === 0
                             text: root.paysLoaded ? "No payments yet. Payments you send or receive appear here with their state." : "Loading…"
                         }
                         Repeater {
-                            model: root.pays.refusals
+                            model: root.debug ? root.pays.refusals : []
                             Note {
                                 tone: root.bad
                                 text: "Refused by " + modelData.from + ": " + (modelData.reject ? "code " + modelData.reject.code + ", " + modelData.reject.reason : "no reason")
@@ -780,6 +809,7 @@ Rectangle {
                             }
                         }
                         Flow {
+                            visible: root.debug
                             Layout.fillWidth: true; Layout.topMargin: 8
                             spacing: 14
                             Repeater {
@@ -791,6 +821,7 @@ Rectangle {
 
                     // Mesh
                     Card {
+                        visible: root.debug
                         title: "Mesh"
                         Layout.fillWidth: true
                         Layout.columnSpan: grid.columns
@@ -811,7 +842,7 @@ Rectangle {
                     }
                 }
                 Card {
-                    visible: root.joined
+                    visible: root.joined && root.debug
                     title: "Session"
                     Layout.fillWidth: true
                     Layout.maximumWidth: 720

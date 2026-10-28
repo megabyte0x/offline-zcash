@@ -372,7 +372,10 @@ impl Node {
     fn handle_packet(&self, st: &mut State, from: PeerId, p: Packet) {
         if p.created_ms > now_ms().saturating_add(persist::CLOCK_SKEW_MS)
             || p.payload.len() + HEADER_LEN >= persist::MAX_MESSAGE_BYTES
-            || (p.kind != Kind::Ack && !st.db.can_make_room(&p, false)) { return; }
+        { return; }
+        // Relay custody must not block local delivery of replies or gateway presence.
+        let can_relay = p.kind == Kind::Ack || st.db.can_make_room(&p, false);
+        if !can_relay && p.recipient != self.me && p.kind != Kind::Broadcast { return; }
         if (p.recipient == self.me || p.kind == Kind::Broadcast) && st.events.as_ref().is_none_or(|tx| tx.capacity() == 0) {
             if let Some(link) = st.links.get_mut(&from) { link.resync = true; }
             return;
@@ -442,7 +445,7 @@ impl Node {
                         broadcast: true,
                     },
                 );
-                self.relay(st, from, p);
+                if can_relay { self.relay(st, from, p); }
             }
             Kind::Ack => {
                 let verified = if self.cfg.ack_signer.is_some() {
@@ -618,5 +621,29 @@ mod tests {
         packet.created_ms = now_ms() + 299_000;
         node.on_link_msg(packet.sender, LinkMsg::Packet(packet));
         assert_eq!(node.stats().stored, 1);
+    }
+
+    #[test]
+    fn full_relay_custody_still_delivers_local_messages_and_presence() {
+        let (tx, mut rx) = mpsc::channel(64);
+        let node = Node::new(MeshConfig::default(), Db::default(), tx);
+        let sender = PeerId([2; 8]);
+        let held = Packet { kind: Kind::Message, ttl: 7, hops: 1, msg_id: MsgId::random(), sender,
+            recipient: PeerId([3; 8]), created_ms: now_ms(), payload: b"held for offline peer".to_vec() };
+        for _ in 0..persist::MAX_SENDER_PACKETS {
+            node.on_link_msg(sender, LinkMsg::Packet(Packet { msg_id: MsgId::random(), ..held.clone() }));
+        }
+        assert_eq!(node.stats().stored, persist::MAX_SENDER_PACKETS);
+        for kind in [Kind::Message, Kind::Broadcast] {
+            let packet = Packet { msg_id: MsgId::random(), kind, recipient: node.me, payload: b"local reply".to_vec(), ..held.clone() };
+            node.on_link_msg(sender, LinkMsg::Packet(packet.clone()));
+            assert!(matches!(rx.try_recv().unwrap(), MeshEvent::Message { msg_id, payload, .. }
+                if msg_id == packet.msg_id && payload == b"local reply"));
+        }
+        // No held packet was evicted and the sender still cannot add relay custody.
+        node.on_link_msg(sender, LinkMsg::Packet(Packet { msg_id: MsgId::random(), ..held }));
+        let state = lock(&node.state);
+        assert_eq!(state.db.store.values().filter(|s| s.packet.sender == sender).count(), persist::MAX_SENDER_PACKETS);
+        assert!(rx.try_recv().is_err());
     }
 }

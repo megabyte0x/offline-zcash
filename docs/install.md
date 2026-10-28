@@ -153,8 +153,10 @@ Use the UI/address from that running node. Request TAZ at
 then sync and wait for spendable funds. Our orb claim failed with
 `the wallet cannot pay this address`; zecpages timed out after 30001 ms.
 [Exact funding evidence and note policy](components/offline-builder.md#v070-testnet-note-plan).
-The funded public split/payment run remains unverified; this is experimental
-testnet software, not evidence of mainnet safety.
+Owner-funded Linux Basecamp tests subsequently exercised an automatic split,
+offline payment, reconnect and ten gateway-reported confirmations; see
+[the 28 October verification](open-work.md#built). This is experimental testnet
+software, not evidence of mainnet safety or independent chain verification.
 
 ```sh copy Copy Prepare And Pay
 ozm-node prepare --notes 10 --amount 0.0101

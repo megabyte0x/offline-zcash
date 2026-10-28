@@ -104,6 +104,7 @@ pub struct Verified {
     pub amount: u64,
     /// Height of the payee's own chain view the checks ran against.
     pub view_height: u32,
+    /// Zero when this exact transaction was scanned but its historical anchor was pruned.
     pub anchor_height: u32,
     /// Decrypted outputs, without a chain position or witness yet.
     pub notes: Vec<crate::wallet::StoredNote>,
@@ -120,21 +121,22 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
     if amount == 0 {
         return Err(rej(code::NOT_TO_ME, "no output decrypts to this payee"));
     }
+    // Reconcile an already scanned payment, rather than applying new-payment freshness to it.
+    let received_height = view.notes.iter().filter(|note| note.txid == checked.txid).map(|note| note.height).min();
+    let already_received = received_height.is_some();
     let anchor: [u8; 32] = hex::decode(&checked.anchor).unwrap().try_into().unwrap();
-    let anchor_height = view.anchor_height(&anchor).ok_or_else(|| {
+    let anchor_height = view.anchor_height(&anchor).or(already_received.then_some(0)).ok_or_else(|| {
         rej(code::ANCHOR, format!("anchor is not a tree root this payee has seen (payee view height {})", view.tip_height))
     })?;
-    if view.tip_height.saturating_sub(anchor_height) > policy.anchor_window {
+    if !already_received && view.tip_height.saturating_sub(anchor_height) > policy.anchor_window {
         return Err(rej(code::ANCHOR, format!("anchor at height {anchor_height} is older than {} blocks", policy.anchor_window)));
     }
-    if checked.expiry_height != 0 && checked.expiry_height < view.tip_height + policy.expiry_margin {
+    if !already_received && checked.expiry_height != 0 && checked.expiry_height < view.tip_height + policy.expiry_margin {
         return Err(rej(code::EXPIRY, format!("expiry {} is within {} blocks of the payee's view {}", checked.expiry_height, policy.expiry_margin, view.tip_height)));
     }
     if checked.expiry_height == 0 {
         return Err(rej(code::EXPIRY, "expiry 0 (never expires) is refused"));
     }
-    // A gateway can mine and sync this exact payment before its mesh envelope arrives.
-    let already_received = view.notes.iter().any(|note| note.txid == checked.txid);
     if let Some(nf) = checked.nullifiers.iter().find(|nf| !already_received && view.chain_nullifiers.contains(*nf)) {
         return Err(rej(code::CONFLICT, format!("note {nf} was already spent on chain")));
     }
@@ -142,7 +144,7 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
         return Err(rej(code::OVER_FLOOR, format!("{amount} zat is above the pending floor {}", policy.floor_zat)));
     }
     let notes = outputs.iter().map(|(_, _, note, _, _)| crate::wallet::StoredNote::from_note(
-        note, &fvk, checked.txid.clone(), anchor_height.saturating_add(1), 0)).collect();
+        note, &fvk, checked.txid.clone(), received_height.unwrap_or(anchor_height.saturating_add(1)), 0)).collect();
     Ok(Verified { tx: checked, amount, view_height: view.tip_height, anchor_height, notes })
 }
 
@@ -191,5 +193,14 @@ mod tests {
         assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
         let conflict = build_payment(&mut competing, &a, b.address().unwrap(), 20_007, &policy).unwrap();
         assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).err().unwrap().code, code::CONFLICT);
+        // A long catch-up can scan the payment and prune its anchor before retrying its envelope.
+        payee.tip_height = 402;
+        payee.roots.clear();
+        let reconciled = verify_payment(&payment.raw, &b, &payee, &policy).unwrap();
+        assert_eq!(reconciled.amount, 20_003);
+        payee.record_incoming(reconciled.notes).unwrap();
+        assert_eq!(payee.first_note_height, Some(2));
+        // Only an exact transaction already scanned gets this exception, never a new payment.
+        assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).unwrap_err().code, code::ANCHOR);
     }
 }
