@@ -19,12 +19,20 @@ fn generated_invites_join_and_never_overwrite_keys() {
         assert!(join_invite(&invite, &home).unwrap().contains(&device.name));
         let fleet = zcash_offline_core::Fleet::load(&home.join("fleet.json")).unwrap();
         assert_eq!(fleet.by_name(&device.name).unwrap().role, device.role);
+        // Fleets and invites from before the network field stay Regtest sessions.
+        let mut old: serde_json::Value = serde_json::from_str(&invite).unwrap();
+        old["fleet"].as_object_mut().unwrap().remove("network");
+        let old: ozm_node::Invite = serde_json::from_value(old).unwrap();
+        assert_eq!(old.fleet.network, zcash_offline_core::fleet::Network::Regtest);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&device.invite_path).unwrap().permissions().mode() & 0o777, 0o600);
         }
     }
+    // A new session without a network choice (the Organiser and CLI default) is testnet.
+    let new: FleetInitOptions = serde_json::from_value(serde_json::json!({"out": "x", "name": "n", "devices": []})).unwrap();
+    assert_eq!(new.network, zcash_offline_core::fleet::Network::Testnet);
     let before = std::fs::read(&result.devices[0].secret_path).unwrap();
     assert!(fleet_init(&o).is_err());
     assert_eq!(std::fs::read(&result.devices[0].secret_path).unwrap(), before);
@@ -440,4 +448,24 @@ fn leave_keeps_a_backup_and_session_exports() {
     assert!(ozm_node::leave_home(&home).is_err());
     ozm_node::join_open(&home).unwrap();
     assert!(home.join("secret.json").is_file());
+    // The invite-free wallet survives Leave and a later invited session; the session does not.
+    let own = std::fs::read(home.join("secret.json")).unwrap();
+    std::fs::create_dir_all(home.join("data")).unwrap();
+    for (file, body) in [("wallet.json", "notes"), ("payments.json", "history"), ("trust.json", "gateway pin")] {
+        std::fs::write(home.join("data").join(file), body).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // Backup names have 1 s resolution.
+    ozm_node::leave_home(&home).unwrap();
+    join_invite(&std::fs::read_to_string(dir.path().join("sessions/1/G.invite.json")).unwrap(), &home).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ozm_node::leave_home(&home).unwrap();
+    ozm_node::join_open(&home).unwrap();
+    assert_eq!(std::fs::read(home.join("secret.json")).unwrap(), own);
+    assert_eq!(std::fs::read_to_string(home.join("data/wallet.json")).unwrap(), "notes");
+    assert_eq!(std::fs::read_to_string(home.join("data/payments.json")).unwrap(), "history");
+    assert!(!home.join("data/trust.json").exists());
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ozm_node::leave_home(&home).unwrap();
+    ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 0).unwrap();
+    assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), own, "wallets are kept per network");
 }

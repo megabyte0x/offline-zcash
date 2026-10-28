@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/scripts/install.sh | sh
 #
 # Environment:
-#   OZM_VERSION      version to install, e.g. 0.2.0 (default: latest release)
+#   OZM_VERSION      version to install, e.g. 0.2.0 (default: 0.7.3, the newest CLI release)
 #   OZM_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
 #   OZM_DRY_RUN=1    print what would be downloaded and installed, then stop
 set -eu
@@ -65,13 +65,8 @@ api_get() {
 
 # --- version -----------------------------------------------------------------
 
-version="${OZM_VERSION:-}"
-if [ -z "$version" ]; then
-  json="$(api_get "$API/releases/latest" -H "Accept: application/vnd.github+json")" ||
-    err "could not look up the latest release. Check connectivity or set OZM_VERSION."
-  version="$(printf '%s' "$json" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-  [ -n "$version" ] || err "could not read tag_name from the latest release"
-fi
+# Releases from v0.7.4 ship only the Basecamp packages; 0.7.3 is the newest CLI build.
+version="${OZM_VERSION:-0.7.3}"
 version="${version#v}"
 tag="v$version"
 

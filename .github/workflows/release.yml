@@ -1,5 +1,7 @@
 name: Release
 
+# Releases currently ship only the macOS and Linux Basecamp packages; the CLI tarballs and the
+# Android APK are not built or published (their code and android.yml stay in the repository).
 on:
   push:
     tags: ['v*']
@@ -22,92 +24,15 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: python3 scripts/release-notes.py "$TAG" > release-notes.md
-
-  android:
-    uses: ./.github/workflows/android.yml
-
-  build:
-    name: build ${{ matrix.target }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-14 is retired on 2026-11-02 and macos-13 was retired on 2025-12-04.
-          - target: aarch64-apple-darwin
-            os: macos-15
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-          # ubuntu-22.04 has glibc 2.35, so the binary runs on Debian 12 and Ubuntu 22.04+.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
-    runs-on: ${{ matrix.os }}
-    env:
-      # Let the macOS binaries run on releases older than the runner's.
-      MACOSX_DEPLOYMENT_TARGET: '11.0'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Version
-        id: version
-        shell: bash
+      # The engine reports the crate version in status(); a mismatch would mislabel the packages.
+      - name: Require matching workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="dev-${GITHUB_SHA::7}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "name=ozm-node-$version-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
-
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      # The Zakura crates (zakura-orchard and friends) take a few minutes to compile.
-      - name: Build
-        run: cargo build --release --locked -p ozm-node --target ${{ matrix.target }}
-
-      - name: Smoke test
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          out="$(./target/${{ matrix.target }}/release/ozm-node --version)"
-          echo "$out"
-          # A tag must match the crate version, or testers get a mislabelled binary.
-          if [[ "$GITHUB_REF" == refs/tags/v* && "$out" != *" $VERSION" ]]; then
-            echo "::error::ozm-node --version printed '$out' but the tag is v$VERSION; bump the workspace version first"
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          if [[ "$version" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "::error::Cargo.toml is $version but the tag is $GITHUB_REF_NAME; bump the workspace version first"
             exit 1
           fi
-
-      - name: Package
-        shell: bash
-        env:
-          NAME: ${{ steps.version.outputs.name }}
-        run: |
-          mkdir -p "dist/$NAME/docs"
-          cp "target/${{ matrix.target }}/release/ozm-node" "dist/$NAME/"
-          cp README.md "dist/$NAME/"
-          cp docs/install.md "dist/$NAME/docs/"
-          cd dist
-          tar -czf "$NAME.tar.gz" "$NAME"
-          if command -v sha256sum >/dev/null; then
-            sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
-          else
-            shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
-          fi
-          cat "$NAME.tar.gz.sha256"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ steps.version.outputs.name }}
-          path: |
-            dist/${{ steps.version.outputs.name }}.tar.gz
-            dist/${{ steps.version.outputs.name }}.tar.gz.sha256
-          if-no-files-found: error
 
   lgx:
     name: lgx ${{ matrix.platform }}
@@ -167,7 +92,7 @@ jobs:
   publish:
     name: publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [notes, build, lgx, android]
+    needs: [notes, lgx]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,5 +150,5 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file release-notes.md
           fi
-          gh release upload "$TAG" dist/*.tar.gz dist/*.lgx dist/*.apk dist/*.sha256 dist/*.json dist/*.png --clobber
+          gh release upload "$TAG" dist/*.lgx dist/*.sha256 dist/*.json dist/*.png --clobber
           gh release edit "$TAG" --notes-file release-notes.md --draft=false --latest

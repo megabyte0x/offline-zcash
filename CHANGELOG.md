@@ -9,6 +9,21 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-10-28
+
+### Changed
+- **Testnet is the default network.** New Organiser sessions, new invite-free wallets in Basecamp, and `ozm-node fleet-init`, `start` and `run` default to public testnet. Before, the Organiser's network selector and the wallet's Get started selector started on Regtest, so a session created without changing it (for example the default "Three laptops") was Regtest and its gateway asked for a ths RPC URL. Regtest stays available under a collapsed **Advanced (local Regtest for developers)** section (`--network regtest` on the CLI). Fleet files and invites without a `network` field still load as Regtest, so existing Regtest sessions keep working. The benches pass `--network regtest`.
+- The header of every Basecamp app and the web UI shows **Regtest session (local ths chain)** with a pointer to Leave session (a new `--home` for the CLI) when the device is on Regtest. The Gateway shows the RPC URL, mining switch and `ths faucet` command, and the wallet the test-funds button, only on a Regtest session.
+- **Leave session keeps your wallet.** When the device next starts without an invite on the same network, it restores the keys, address, wallet and payment history from the newest backup holding an invite-free wallet on that network, instead of creating a new wallet. The gateway pin, mesh store, events and start options stay behind, so the device selects a gateway again. Leave still moves the whole folder to `ozm-backup-*` and deletes nothing; invited wallets stay in their backup. Wallets left with v0.7.3 are restored too.
+- Releases publish only the macOS and Linux Basecamp packages: four `.lgx` per platform (darwin-arm64, linux-amd64, linux-arm64), the four merged catalogue packages, the catalogue index and checksums. CLI tarballs and the Android APK are no longer built for releases (their code stays); `scripts/install.sh` installs the v0.7.3 CLI by default.
+- CI runs the Rust and macOS build jobs only when crates, Cargo files or the CI workflow change, and the Android APK only when `android/`, `crates/ozm-ffi` or the Android or CI workflow change. Docs-only changes run only the thread-link and release-notes checks.
+- Workspace, four Logos packages and Android version are 0.7.4; Android version code is 13.
+
+### Fixed
+- A device syncing over the mesh stopped with "Sync failed: mesh store quota exceeded", and later sends, payments included, failed the same way. Every received sync chunk (3 KiB) left one of the device's own delivery acks in the store-and-forward store for 24 hours, and nothing acknowledges an ack. After 512, the per-sender cap, the device could not store its next sync request; the gateway held the same acks and would also have dropped it. A testnet catch-up from 4,465,026 stopped at 4,467,225. A sender's new packet now evicts that sender's oldest stored acks first (and on the sending device, its own old broadcasts). Held messages and other senders' packets are never evicted, so the v0.7.2 limits still apply.
+- A large sync batch (for example 186 chunks for busy testnet blocks) never completed on a stable link, so the catch-up stalled. The gateway's link queue holds 128 packets; the other 58 chunks were stored but not sent until the link reconnected. Packets that do not fit a link's queue are now sent as it drains, and a device that had to drop packets because its app was busy asks that neighbour for them again on the next 10-second sweep. A batch with more chunks than the gateway's 512-packet store quota (710 chunks for one busy testnet range) failed on the gateway with "mesh store quota exceeded"; the gateway now waits up to 30 seconds per chunk for the device's acks to free room.
+- The Basecamp guide's new "Upgrade did not take effect" section (docs/basecamp-install.md) explains why Basecamp can keep showing an older version (for example "Offline Zcash v0.7.2" and a `uregtest1…` prefix warning on testnet after installing v0.7.3) and how to load the new service.
+
 ## [0.7.3] - 2026-10-28
 
 ### Added
@@ -202,7 +217,9 @@ User-interface release: no changes to the core, mesh, wire formats, module API o
 - Offline payee checks, signed pending receipts, idempotent gateway submission/mining and signed gateway-reported results.
 - Four-container benchmarks for multi-hop delivery, restart recovery and payment handling.
 
-[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.3...v0.7.4
+[0.7.3]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...v0.7.0

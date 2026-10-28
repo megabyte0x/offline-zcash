@@ -16,11 +16,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  android:
-    uses: ./.github/workflows/android.yml
+  # Decides which builds a change can affect. Docs- or CHANGELOG-only changes run only `checks`.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.diff.outputs.rust }}
+      android: ${{ steps.diff.outputs.android }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Unknown base (new branch, force push): run everything.
+          if [[ "$BASE" =~ ^0*$ ]] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            files=ALL
+          else
+            files=$(git diff --name-only "$BASE...$HEAD")
+          fi
+          printf '%s\n' "$files"
+          touched() { [[ "$files" == ALL ]] || grep -qE "$1" <<< "$files"; }
+          if touched '^(crates/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'; then rust=true; else rust=false; fi
+          if touched '^(android/|crates/ozm-ffi/|\.github/workflows/(ci|android)\.yml$)'; then android=true; else android=false; fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
 
-  linux:
-    name: clippy + test (ubuntu)
+  checks:
+    name: thread links + release notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -33,16 +58,29 @@ jobs:
           else
             test "$?" -eq 1
           fi
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Release notes contract
         run: |
           python3 scripts/test-release-notes.py
           version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
           python3 scripts/release-notes.py "v$version"
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    uses: ./.github/workflows/android.yml
+
+  linux:
+    name: clippy + test (ubuntu)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # The Zakura crates (zakura-orchard and friends) take a few minutes to compile.
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -51,6 +89,8 @@ jobs:
 
   macos:
     name: build ozm-node (macOS arm64)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     # macos-14 is retired on 2026-11-02; macos-15 is the arm64 replacement.
     runs-on: macos-15
     steps:

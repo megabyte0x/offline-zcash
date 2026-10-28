@@ -337,6 +337,23 @@ async fn store_bounds_reject_new_work_without_evicting_held_packets() {
 }
 
 #[tokio::test]
+async fn a_burst_larger_than_the_app_queue_is_delivered_on_a_stable_link() {
+    let a = start(pid(1), true, &[], None).await;
+    let mut b = start(pid(2), false, &[a.addr()], None).await;
+    a.wait_neighbors(1).await;
+    // A sync batch: more packets than the link queue (128) and the app's event queue (64) hold.
+    for i in 0..200u32 { a.mesh.send(b.id(), i.to_be_bytes().to_vec()).await.unwrap(); }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut got = std::collections::HashSet::new();
+    timeout(Duration::from_secs(30), async {
+        while got.len() < 200 {
+            if let Some(MeshEvent::Message { payload, .. }) = b.rx.recv().await { got.insert(payload); }
+        }
+    }).await.expect("dropped packets were never re-sent");
+    a.mesh.shutdown(); b.mesh.shutdown();
+}
+
+#[tokio::test]
 async fn store_inventory_larger_than_a_link_queue_finishes_without_reconnecting() {
     let a = start(pid(1), true, &[], None).await;
     for i in 0..400u32 { a.mesh.send(pid(9), i.to_be_bytes().to_vec()).await.unwrap(); }

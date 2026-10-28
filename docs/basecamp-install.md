@@ -2,7 +2,7 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. v0.7.3 runs in Basecamp on **macOS (Apple silicon)
+mesh nodes or listening ports. v0.7.4 runs in Basecamp on **macOS (Apple silicon)
 and Linux (x86_64, arm64)**, on NU7 public testnet (TAZ) or the local Regtest
 chain, with **test coins only**, never real ZEC.
 
@@ -104,7 +104,9 @@ To switch network or invite, use [Leave session](#leave-session).
 
 1. Open **Offline Zcash** and leave **I have an organiser invite** closed. The device creates and
    stores its own keys and address; nobody else receives them.
-2. Before the first start, choose the network (`regtest` or `testnet`). On testnet,
+2. New devices use **public testnet**; there is no network to choose. Only for
+   development with a local `ths` chain, open **Advanced (local Regtest for
+   developers)** and turn on **Use a local Regtest chain instead of testnet**. On testnet,
    set **Connection options → Wallet birthday height** to a recent block height:
    `0` selects NU7 activation (4,465,026), and the first sync then scans every block
    since. Pick the birthday before receiving funds: earlier payments are missed.
@@ -156,7 +158,9 @@ the `ths` chain (Regtest) stay outside Basecamp.
 
 ### Create the session in Organiser
 
-1. Open **Offline Zcash Organiser**. Choose the network (`regtest` or `testnet`).
+1. Open **Offline Zcash Organiser**. New sessions are **public testnet**. Only for
+   development with a local `ths` chain, open **Advanced (local Regtest for
+   developers)** and turn on **Create a local Regtest session instead of testnet**.
    On testnet the Organiser fills the birthday with the current tip from the
    testnet servers and refuses a birthday before 4,465,026; if the servers do not
    answer, enter the current height from a testnet explorer.
@@ -242,8 +246,22 @@ After you confirm, it:
 4. returns the device to the not-joined state.
 
 The device can then start without an invite or join a new invite, for example to
-switch from Regtest to testnet. To restore, quit Basecamp, move or rename any new
-`ozm` folder out of the way, and rename the backup folder back to `ozm`
+switch from Regtest to testnet.
+
+**Your own wallet comes back.** Since v0.7.4, when the device next starts
+**without an invite on the same network**, it restores the keys, address, wallet
+(notes and sync height) and payment history from the newest backup that holds an
+invite-free wallet on that network. The balance shows again after the next sync.
+The session stays behind: the pinned gateway, the mesh store, events and start
+options are not restored, so the device picks a gateway again. Regtest and testnet
+keep separate wallets. An invited session uses the organiser's keys from its
+invite; that wallet stays in its own backup and does not replace your invite-free
+wallet, which returns after you leave the invited session. A Regtest wallet only
+matches the chain it was synced on; after `ths` creates a new chain, leave and
+move its backup aside to start with a fresh wallet.
+
+To restore an invited wallet, quit Basecamp, move or rename any new `ozm` folder
+out of the way, and rename that backup folder back to `ozm`
 ([paths](#where-the-data-lives)). Leave exists only in these Basecamp apps, not in the `ozm-node` CLI;
 for the CLI, use a different `--home`.
 
@@ -275,6 +293,7 @@ Use a trusted local operator and test coins only. Full details:
 | AppImage does not start (`GLIBC_* not found`) | Use glibc 2.39+, for example Ubuntu 24.04 |
 | Package refused | Match platform and version; released Basecamp needs the portable packages, not `-dev` |
 | Missing app or module not reachable | Manage Packages must list the service and the app; reopen the app |
+| Title still shows the old version (for example "Offline Zcash v0.7.2") after installing a new one | The service is still the old one. See [Upgrade did not take effect](#upgrade-did-not-take-effect) |
 | "The Offline Zcash service did not answer" | The text after it is Basecamp's detail. "not connected/not reachable": install or load the service. Otherwise the service is busy; the page retries every 3 seconds |
 | No mesh neighbours | Same Wi-Fi without guest/client isolation; allow TCP 7777 and UDP 7778; set **Dial address** to `<operator-ip>:7777` |
 | macOS discovery fails | Basecamp's Local Network permission support is pending ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)); use **Dial address** = `<operator-ip>:7777` |
@@ -284,8 +303,46 @@ Use a trusted local operator and test coins only. Full details:
 | Wallet never synced | Wait for a gateway, then **Sync now**; check the Gateway app's chain status |
 | Test funds fail | Regtest only: enable mining, fund the gateway address, wait 60 seconds between requests |
 | Wrong network or wrong invite installed | [Leave session](#leave-session), then start again |
+| Header says "Regtest session (local ths chain)" but you wanted testnet | Before v0.7.4 the Organiser and the wallet started on Regtest unless you changed the network, so a session or invite made then (for example the default "Three laptops") is Regtest. [Leave session](#leave-session) on every device, create a new session in Organiser v0.7.4 (testnet by default) and join with its new invites |
 | Need to find keys, wallet or exported invites | See [Where the data lives](#where-the-data-lives) |
 | Several Basecamp instances on one Linux host | Use separate user directories and different mesh listen ports |
+
+### Upgrade did not take effect
+
+The wallet title shows the version of the **running service**
+(`Offline Zcash v<version>`). Basecamp 0.3.2 replaces installed packages in
+place, stops the old service before the swap and starts the new one when an
+app is opened again. Older Basecamp releases could keep the old service
+running after an install ([logos-basecamp#423](https://github.com/logos-co/logos-basecamp/issues/423),
+fixed in 0.3.1). Your wallet is in `module_data` and is not touched by any of
+these steps.
+
+1. Check Basecamp's version, shown at the bottom of its left sidebar (for example
+   `0.3.2 · Portable`), and update to
+   [0.3.2 or newer](https://github.com/logos-co/logos-basecamp/releases/latest) if it is older.
+2. Check which versions are on disk. On macOS:
+
+   ```sh copy Copy Version Check
+   cd ~/Library/Application\ Support/Logos/LogosBasecamp
+   grep -H '"version"' modules/zcash_offline_module/manifest.json plugins/zcash_offline_*/manifest.json
+   ```
+
+   On Linux, use `~/.local/share/Logos/LogosBasecamp` instead.
+3. If they show the new version, quit Basecamp completely (**Cmd+Q** on macOS,
+   not just closing the window), check that no old service is left
+   (`pgrep -fl logos_host`; quit it if one is), and open Basecamp again. Open
+   **Offline Zcash** to start the service; the title shows the new version.
+4. If they show the old version, open **Manage Packages**, click **Reload**, and
+   click **Upgrade** for **Offline Zcash service** and then each app, accepting
+   the unsigned-package prompt each time. Or use **Install Local Package** with
+   the new `darwin-arm64` (or Linux) `.lgx` files, service first. Then repeat step 3.
+5. If an upgrade still keeps the old version, uninstall the three apps and then
+   **Offline Zcash service** in Manage Packages, quit and reopen Basecamp, and
+   install the new service and apps. Uninstalling packages does not delete
+   `module_data`; never delete `module_data/zcash_offline_module` or its `ozm`
+   and `ozm-backup-*` folders.
+
+Upgrade every device in a session to the same version.
 
 ### Bluetooth on Linux
 

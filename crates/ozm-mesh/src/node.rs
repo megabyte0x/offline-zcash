@@ -53,6 +53,9 @@ struct LinkEntry {
     challenge: [u8; 32],
     authenticated: bool,
     pending_inventory: Vec<MsgId>,
+    /// A packet from this link was dropped because the app queue was full; the next sweep asks
+    /// the neighbour again for what we lack, so a burst (such as a sync batch) still completes.
+    resync: bool,
 }
 
 struct State {
@@ -210,10 +213,10 @@ impl Node {
                 return None;
             }
             info!(%peer, outbound, "link replaced");
-            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![] });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![], resync: false });
         } else {
             info!(%peer, outbound, "link up");
-            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![] });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![], resync: false });
             emit(&st, MeshEvent::NeighborUp(peer));
         }
         if authenticated { self.inventory(&st, peer); }
@@ -297,10 +300,11 @@ impl Node {
             payload,
         };
         let id = p.msg_id;
-        ensure!(st.db.can_store(&p), "mesh store quota exceeded");
+        // Our old acks and broadcasts give way; held messages and other senders' packets do not.
+        if !st.db.make_room(&p, true) { return Err(crate::StoreFull.into()); }
         info!(msg_id = %id, to = %recipient, kind = ?kind, bytes = p.payload.len(), "sending");
         self.mark_seen(&mut st, &p);
-        self.flood(&st, None, &p);
+        self.flood(&mut st, None, &p);
         self.store(&mut st, p);
         self.persist(&st);
         Ok(id)
@@ -312,7 +316,13 @@ impl Node {
             self.persist(&st);
         }
         let peers: Vec<_> = st.links.keys().copied().collect();
-        for peer in peers { self.flush_inventory(&mut st, peer); }
+        for peer in peers {
+            if let Some(link) = st.links.get_mut(&peer).filter(|l| l.resync && l.authenticated) {
+                link.resync = false;
+                self.inventory(&st, peer);
+            }
+            self.flush_inventory(&mut st, peer);
+        }
     }
 
     fn expiry(&self, p: &Packet) -> u64 {
@@ -325,16 +335,19 @@ impl Node {
     }
 
     fn store(&self, st: &mut State, p: Packet) {
-        if !st.db.can_store(&p) { return; }
+        if !st.db.make_room(&p, p.sender == self.me) { return; }
         let expires_ms = p.created_ms.saturating_add(self.store_ttl_ms());
         st.db.store.insert(p.msg_id, Stored { packet: p, expires_ms });
     }
 
-    fn flood(&self, st: &State, except: Option<PeerId>, p: &Packet) {
-        let Some(out) = self.outgoing(LinkMsg::Packet(p.clone()), p.msg_id.0) else { return };
-        for (peer, link) in &st.links {
-            if Some(*peer) != except {
-                let _ = link.tx.try_send(out.clone());
+    /// A link whose queue is full gets the packet later from its pending list, as the queue
+    /// drains, once the packet is stored. A burst such as a sync batch is then not cut short.
+    fn flood(&self, st: &mut State, except: Option<PeerId>, p: &Packet) {
+        let out = self.outgoing(LinkMsg::Packet(p.clone()), p.msg_id.0);
+        for (peer, link) in &mut st.links {
+            // Stored traffic goes only to links that proved their key (as with inventory).
+            if Some(*peer) != except && out.as_ref().is_none_or(|out| link.tx.try_send(out.clone()).is_err()) && link.authenticated {
+                link.pending_inventory.insert(0, p.msg_id);
             }
         }
     }
@@ -359,8 +372,11 @@ impl Node {
     fn handle_packet(&self, st: &mut State, from: PeerId, p: Packet) {
         if p.created_ms > now_ms().saturating_add(persist::CLOCK_SKEW_MS)
             || p.payload.len() + HEADER_LEN >= persist::MAX_MESSAGE_BYTES
-            || (p.kind != Kind::Ack && !st.db.can_store(&p)) { return; }
-        if (p.recipient == self.me || p.kind == Kind::Broadcast) && st.events.as_ref().is_none_or(|tx| tx.capacity() == 0) { return; }
+            || (p.kind != Kind::Ack && !st.db.can_make_room(&p, false)) { return; }
+        if (p.recipient == self.me || p.kind == Kind::Broadcast) && st.events.as_ref().is_none_or(|tx| tx.capacity() == 0) {
+            if let Some(link) = st.links.get_mut(&from) { link.resync = true; }
+            return;
+        }
         if p.created_ms.saturating_add(self.store_ttl_ms()) < now_ms() {
             debug!(msg_id = %p.msg_id, "expired packet dropped");
             return;
@@ -565,6 +581,30 @@ mod tests {
         ack.payload = body; ack.sign_ack(&b); ack.ttl = 3; ack.hops = 5;
         node.on_link_msg(peer_for(&thief.verifying_key()), LinkMsg::Packet(ack));
         assert_eq!(rx.try_recv().unwrap(), MeshEvent::Delivered { msg_id: id, by: peer_for(&b.verifying_key()) });
+    }
+
+    #[test]
+    fn own_acks_for_a_long_sync_never_block_new_sends() {
+        let (p, g) = (SigningKey::from_bytes(&[5; 32]), SigningKey::from_bytes(&[6; 32]));
+        let (pid, gid) = (peer_for(&p.verifying_key()), peer_for(&g.verifying_key()));
+        let (events, mut rx) = mpsc::channel(64);
+        let node = Node::new(MeshConfig { peer_id: pid, ack_signer: Some(p), ..Default::default() }, Db::default(), events);
+        // A catch-up over the mesh: every received chunk leaves one of our own acks in the store.
+        for i in 0..persist::MAX_SENDER_PACKETS + 10 {
+            let chunk = Packet { kind: Kind::Message, ttl: 7, hops: 1, msg_id: MsgId::random(), sender: gid,
+                recipient: pid, created_ms: now_ms(), payload: (i as u32).to_le_bytes().to_vec() };
+            node.on_link_msg(gid, LinkMsg::Packet(chunk));
+            while rx.try_recv().is_ok() {}
+        }
+        assert_eq!(node.stats().stored, persist::MAX_SENDER_PACKETS);
+        // The next sync request (or a payment) is still stored for store-and-forward.
+        let id = node.originate(Kind::Message, gid, b"sync request".to_vec()).unwrap();
+        assert!(lock(&node.state).db.store.contains_key(&id));
+        // A gateway or relay holding those acks also accepts the sender's next request.
+        let st = lock(&node.state);
+        let mut next = st.db.store[&id].packet.clone();
+        next.msg_id = MsgId::random();
+        assert!(!st.db.can_store(&next) && st.db.can_make_room(&next, false));
     }
 
     #[test]

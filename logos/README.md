@@ -67,7 +67,7 @@ uses the upstream schema-v2 index generator, full manifest and Merkle root
 bindings; it merges the three portable variants into one package per name.
 The stable identity card points to the latest release's `index.json`. Each
 release also includes four merged LGXs, twelve platform-specific LGXs, icon
-sidecars and `catalogue.sha256` alongside the existing CLI/APK assets.
+sidecars and `catalogue.sha256`. From v0.7.4 these Basecamp packages are the only release assets (macOS and Linux); CLI tarballs and the APK are not published for now.
 
 Manual `.lgx` installation remains a [fallback](../docs/basecamp-install.md#manual-lgx-fallback).
 The official-catalogue submission is [prepared separately](../docs/logos-catalogue-submission.md).
@@ -177,7 +177,7 @@ QML file URL. A second UI payment of 0.0137 ZEC mined at height 135 on both
 wallets after reinstalling those packages, with the same gateway identity.
 
 The owner tested **v0.5.1 successfully on three real Macs**. Later versions,
-including v0.7.3, need retesting on those machines. Local Network permission
+including v0.7.4, need retesting on those machines. Local Network permission
 support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527));
 the fallback is **Dial address** = `<operator-ip>:7777`. Linux verification does
 not establish macOS discovery, sandbox permissions or BLE support.

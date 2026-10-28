@@ -40,7 +40,7 @@ pub struct RunOpts {
     #[arg(long, env = "OZM_SECRET")]
     pub secret: PathBuf,
     /// Network for a newly created invite-free identity; existing fleet files remain authoritative.
-    #[arg(long, env = "OZM_NETWORK", default_value = "regtest")]
+    #[arg(long, env = "OZM_NETWORK", default_value = "testnet")]
     pub network: Network,
     /// First scan height; 0 selects 1 on Regtest and 4465026 on testnet.
     #[arg(long, env = "OZM_BIRTHDAY", default_value_t = 0)]
@@ -97,7 +97,7 @@ impl RunOpts {
             data: home.join("data"),
             fleet: home.join("fleet.json"),
             secret: home.join("secret.json"),
-            network: Network::Regtest,
+            network: Network::NEW_SESSION,
             birthday: 0,
             listen: "0.0.0.0:7777".parse().unwrap(),
             dial: vec![],
@@ -129,12 +129,16 @@ pub struct Invite {
 pub struct FleetInitOptions {
     pub out: PathBuf,
     pub name: String,
-    #[serde(default)]
+    #[serde(default = "new_session_network")]
     pub network: Network,
     #[serde(default)]
     pub birthday: u32,
     /// NAME, or NAME:gateway for a gateway. Legacy payer/payee/relay roles are accepted and ignored.
     pub devices: Vec<String>,
+}
+
+fn new_session_network() -> Network {
+    Network::NEW_SESSION
 }
 
 #[derive(Serialize)]
@@ -289,6 +293,20 @@ pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> 
     }
     anyhow::ensure!(!home.join("fleet.json").exists() && !home.join("data/wallet.json").exists(),
         "device files exist but secret.json is missing; restore the keys or choose a new home");
+    if let Some(kept) = kept_wallet(home, network) {
+        // Same keys, address, notes and payment history; the session (gateway pin, mesh store,
+        // events, start options) stays behind in the backup.
+        let fleet = Fleet::load(&kept.join("fleet.json"))?;
+        let secret: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(kept.join("secret.json"))?)?;
+        join_invite(&serde_json::to_string(&Invite { fleet, secret })?, home)?;
+        for file in ["wallet.json", "payments.json"] {
+            if let Ok(bytes) = std::fs::read(kept.join("data").join(file)) {
+                std::fs::create_dir_all(home.join("data"))?;
+                write_private(&home.join("data").join(file), &bytes)?;
+            }
+        }
+        return Ok(());
+    }
     let mut me = DeviceSecret::generate("", "");
     me.name = me.public()?.peer_id;
     let birthday = if birthday == 0 { match network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { birthday };
@@ -296,6 +314,18 @@ pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> 
     let fleet = Fleet { name: format!("Open {network} mesh"), network, birthday, servers: zcash_offline_core::fleet::default_servers(), policy: Policy::default(), devices: vec![me.public_on(network)?], open: true, address_proofs: Default::default() };
     join_invite(&serde_json::to_string(&Invite { fleet, secret: me })?, home)?;
     Ok(())
+}
+
+/// The newest `<home>-backup-*` folder that holds an invite-free wallet on `network`. Leave keeps
+/// whole device folders there, so the device's own wallet outlives sessions and invited joins.
+fn kept_wallet(home: &Path, network: Network) -> Option<PathBuf> {
+    let prefix = format!("{}-backup-", home.file_name()?.to_str()?);
+    let mut backups: Vec<PathBuf> = std::fs::read_dir(home.parent()?).ok()?.filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix)))
+        .map(|e| e.path()).collect();
+    backups.sort();
+    backups.into_iter().rev().find(|b| b.join("secret.json").is_file()
+        && Fleet::load(&b.join("fleet.json")).is_ok_and(|f| f.open && f.network == network))
 }
 
 /// Starts the mesh, the app and its background loops. Must run inside a tokio runtime.

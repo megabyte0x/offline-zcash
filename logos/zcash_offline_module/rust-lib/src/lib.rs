@@ -208,7 +208,7 @@ impl Node {
             return self.status_value();
         }
         let home = home()?;
-        ozm_node::join_open_on(&home, o.network.unwrap_or_default(), o.birthday.unwrap_or(0))?;
+        ozm_node::join_open_on(&home, o.network.unwrap_or(zcash_offline_core::fleet::Network::NEW_SESSION), o.birthday.unwrap_or(0))?;
         let mut opts = ozm_node::RunOpts::for_home(&home);
         if let Some(l) = &o.listen {
             opts.listen = l.parse().with_context(|| format!("listen {l}"))?;
@@ -427,9 +427,11 @@ impl ZcashOfflineModule for Node {
                 api.abort();
             }
             *self.sync.error.lock().unwrap() = None;
+            let open = Fleet::load(&home.join("fleet.json")).is_ok_and(|f| f.open);
             let backup = ozm_node::leave_home(&home)?;
+            let kept = if open { " Start again without an invite on the same network to use this wallet again." } else { "" };
             Ok(json!({"ok": true, "backup": backup, "sessions": home.with_file_name("sessions"),
-                "message": format!("Left the session. Keys, wallet and history are kept in {}; nothing was deleted.", backup.display())}))
+                "message": format!("Left the session. Keys, wallet and history are kept in {}; nothing was deleted.{kept}", backup.display())}))
         })())
     }
 

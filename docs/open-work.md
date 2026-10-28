@@ -4,7 +4,7 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 ## Built
 
-v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.3. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its APK keeps building and its version tracks releases, but no Android work is planned for now. Releases are on GitHub.
+v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.4. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
 
 | Version | What it proves | Doc |
 |---|---|---|
@@ -20,6 +20,7 @@ v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet
 | v0.7.1 | UI-only release: the same payment-state labels and explanations in web, Basecamp and Android; clearer setup, pay, Prepare for offline, Organiser and Gateway screens; accessibility. Android 0.7.1/code 10 | [changelog](../CHANGELOG.md) |
 | v0.7.2 | Contained hardening: Unix 0600 files, bounded mesh and gateway resources, key-possession proof before inventory, nonce-addressed gateway results (P12), invited pending caps, multi-server submission. Older v0.7.x peers only live-forward. Android 0.7.2/code 11 | [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [gateway](components/gateway.md#v072-contained-hardening) |
 | v0.7.3 | Scope: Basecamp apps on macOS and Linux. Gateway is the only role: every device pays, receives and relays; Organiser has one gateway checkbox per device and requires at least one; invited devices trust the fleet's named gateway; legacy roles in old invites are accepted and ignored. LAN/BLE fleet tag and hint are zero (v0.7.2 peers still connect); Android `fleetHint()` removed. Leave session in all three Basecamp apps moves `ozm` to a timestamped backup (not available on Android or in the `ozm-node` CLI; use another `--home`). Regtest Gateway accepts only `http://` JSON-RPC; testnet Gateway shows the fleet's lightwalletd servers. Android 0.7.3/code 12 | [basecamp-install](basecamp-install.md#leave-session), [mesh](components/mesh.md), [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [changelog](../CHANGELOG.md) |
+| v0.7.4 | Patch: a device's own delivery acks for received sync chunks no longer fill its mesh-store quota, so long catch-ups over the mesh and later payments keep working; Leave session keeps the invite-free wallet (the next invite-free start on the same network restores it); Basecamp upgrade troubleshooting. Releases ship only the macOS and Linux Basecamp packages. Android 0.7.4/code 13 (not released) | [mesh](components/mesh.md), [basecamp-install](basecamp-install.md#leave-session), [changelog](../CHANGELOG.md) |
 
 **v0.7.0:** configurable TLS lightwalletd gateway (no full node/viewing-key scanning),
 fleet network/birthday, Common 4.0, compact Ironwood chunks and empty runs,
@@ -51,7 +52,7 @@ packages built on Linux x86_64. Android release Kotlin compilation and lint
 passed; no arm64 APK/device or macOS run is implied. Web screenshots use the live
 testnet wallet; QML screenshots/interaction use a fixture bridge, not Basecamp.
 
-The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (now v0.7.3)
+The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (now v0.7.4)
 still needs real-Mac retesting. Basecamp Local Network
 permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
 fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs do not verify macOS or radios.

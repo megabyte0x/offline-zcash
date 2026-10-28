@@ -5,7 +5,7 @@ use std::{collections::HashMap, fs, io::{Read, Write}, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{packet::Packet, MsgId};
+use crate::{packet::{Kind, Packet}, MsgId};
 
 pub(crate) const MAX_PACKETS: usize = 4096;
 pub(crate) const MAX_STORE_BYTES: usize = 64 * 1024 * 1024;
@@ -34,18 +34,49 @@ pub(crate) struct Stored {
 
 impl Db {
     pub fn can_store(&self, p: &Packet) -> bool {
+        self.fits(p, false, false)
+    }
+
+    /// Whether `p` fits if `make_room` evicts what it may: the sender's old acks and, for this
+    /// device's own packets, also its old broadcasts.
+    pub fn can_make_room(&self, p: &Packet, own: bool) -> bool {
+        self.fits(p, true, own)
+    }
+
+    fn fits(&self, p: &Packet, evict: bool, own: bool) -> bool {
         if self.store.contains_key(&p.msg_id) { return false; }
         let bytes = p.payload.len() + crate::packet::HEADER_LEN;
-        let mut total = bytes;
+        let (mut total, mut count) = (bytes, 1);
         let mut sender_bytes = bytes;
         let mut sender_count = 1;
-        for s in self.store.values() {
+        for s in self.store.values().filter(|s| !(evict && Self::evictable(s, p, own))) {
             let len = s.packet.payload.len() + crate::packet::HEADER_LEN;
             total += len;
+            count += 1;
             if s.packet.sender == p.sender { sender_count += 1; sender_bytes += len; }
         }
-        bytes < MAX_MESSAGE_BYTES && self.store.len() < MAX_PACKETS && total <= MAX_STORE_BYTES
+        bytes < MAX_MESSAGE_BYTES && count <= MAX_PACKETS && total <= MAX_STORE_BYTES
             && sender_count <= MAX_SENDER_PACKETS && sender_bytes <= MAX_SENDER_BYTES
+    }
+
+    /// A sender's new packet may displace only that sender's entries, so other senders keep
+    /// their quota, and never a held message. Every received sync chunk leaves an ack, and
+    /// nothing acks an ack, so a long catch-up would otherwise fill the sender's quota.
+    fn evictable(s: &Stored, p: &Packet, own: bool) -> bool {
+        s.packet.sender == p.sender && (s.packet.kind == Kind::Ack || (own && s.packet.kind == Kind::Broadcast))
+    }
+
+    /// Evicts the sender's oldest evictable entries, acks first, until `p` fits. Returns false,
+    /// evicting nothing, if it cannot fit.
+    pub fn make_room(&mut self, p: &Packet, own: bool) -> bool {
+        if !self.can_make_room(p, own) { return false; }
+        while !self.can_store(p) {
+            let Some(id) = self.store.iter().filter(|(_, s)| Self::evictable(s, p, own))
+                .min_by_key(|(_, s)| (s.packet.kind != Kind::Ack, s.packet.created_ms))
+                .map(|(id, _)| *id) else { return false };
+            self.store.remove(&id);
+        }
+        true
     }
 
     pub fn remember(map: &mut HashMap<MsgId, u64>, id: MsgId, expiry: u64) {

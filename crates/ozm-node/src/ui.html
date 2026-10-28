@@ -59,6 +59,7 @@
 <header>
   <h1><span class="z" aria-hidden="true">ⓩ</span> Offline Zcash <span class="mut" id="ver"></span></h1>
   <span class="pill" id="who">Connecting…</span>
+  <span class="pill warn" id="regtest" hidden>Regtest session (local ths chain) · use a new --home with --network testnet to switch</span>
   <span class="pill" id="online">…</span>
   <span class="pill" id="nbrs">mesh neighbours: …</span>
 </header>
@@ -151,7 +152,7 @@ const STATES = {
 const stateInfo = (s) => STATES[s] || [s, 'pending', ''];
 const DIRECTIONS = { sent: 'Sent', received: 'Received', prepare: 'Prepare (split to self)' };
 const PREFIX = { regtest: 'uregtest1', testnet: 'utest1', mainnet: 'u1' };
-let network = 'regtest';
+let network = '';
 async function api(path, body) {
   const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-ozm-token': document.querySelector('meta[name="ozm-api-token"]').content }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const j = await r.json();
@@ -169,7 +170,8 @@ async function refresh() {
   try {
     const s = await api('/api/status');
     $('reach').textContent = '';
-    network = s.network || 'regtest';
+    network = s.network || '';
+    $('regtest').hidden = network !== 'regtest';
     $('to').placeholder = (PREFIX[network] || 'u') + '…';
     $('ver').textContent = 'v' + s.version;
     $('who').textContent = [s.name, s.role, network].filter(Boolean).join(' · ');
@@ -186,7 +188,7 @@ async function refresh() {
     $('gwwarn').textContent = s.gateway_warning || '';
     $('addr').textContent = s.address || 'No address yet.';
     $('syncb').textContent = s.online ? 'Sync now (from the chain service)' : 'Sync now (from a gateway over the mesh)';
-    $('fundb').hidden = s.online || network === 'testnet';
+    $('fundb').hidden = s.online || network !== 'regtest';
     $('faucet').hidden = network !== 'testnet';
     $('to').placeholder = (PREFIX[network] || 'u1') + '…';
     checkTo();

@@ -87,7 +87,7 @@ class MainActivity : Activity() {
         }
         val decimal = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
 
-        label("Offline Zcash · 0.7.3", 24f).setTypeface(null, Typeface.BOLD)
+        label("Offline Zcash · 0.7.4", 24f).setTypeface(null, Typeface.BOLD)
         label("Test coins only · Regtest or public testnet. Included and mined come from the gateway; this app does not verify them independently.", 14f, muted = true)
         result = label("").apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE; textSize = 15f }
 

@@ -20,7 +20,7 @@ A Logos Basecamp core module and QML UI over the same code were added on 27 Octo
 
 The organiser, on one laptop with internet:
 1. Starts the local chain: `ths start --no-open`.
-2. Creates the fleet: `ozm-node fleet-init --out invites --name my-session --device D:gateway --device Alice:payer+payee --device Bob:payer+payee …`.
+2. Creates the fleet: `ozm-node fleet-init --out invites --name my-session --network regtest --device D:gateway --device Alice:payer+payee --device Bob:payer+payee …`.
 3. Starts the gateway: `ozm-node join invites/D.invite.json`, then `ozm-node start --rpc http://127.0.0.1:18232 --mine`. To run another device on the same laptop, give it its own `--home`, `--listen` port and `--api` port.
 4. Funds the gateway's address (shown by `fleet-init`) with `ths faucet <address> --amount 2`.
 5. Sends each person their own invite file. It contains their private keys (disposable Regtest keys).

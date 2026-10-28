@@ -22,6 +22,19 @@ pub use ids::{MsgId, PeerId};
 use node::Node;
 use packet::Kind;
 
+/// `send`/`broadcast` error: this device's own held, unacknowledged packets fill its store
+/// quota. It clears as recipients acknowledge, so a sender may wait and retry.
+#[derive(Debug)]
+pub struct StoreFull;
+
+impl std::fmt::Display for StoreFull {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("mesh store quota exceeded")
+    }
+}
+
+impl std::error::Error for StoreFull {}
+
 /// Keepalive policy and neighbour visibility; the wire format is identical for both kinds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

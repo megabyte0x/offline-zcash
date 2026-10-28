@@ -56,7 +56,7 @@ up() {
   docker build -q -t "$IMG" -f "$ROOT/bench/Dockerfile" "$STATE/ctx" >/dev/null
 
   log "Fleet and invites (A payer, B payee, C payee, D gateway)"
-  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/invites" --name lan-bench \
+  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/invites" --name lan-bench --network regtest \
     --device A --device B --device C --device D:gateway
   chmod 644 "$STATE"/invites/*.json  # disposable Regtest keys; containers read them as root
 

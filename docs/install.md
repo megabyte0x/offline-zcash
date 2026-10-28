@@ -10,13 +10,13 @@ Run:
 curl -fsSL https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/scripts/install.sh | sh
 ```
 
-The script picks the right build for your machine. It downloads the latest public release, checks its SHA-256 checksum and installs `ozm-node` to `~/.local/bin`. No GitHub account or token is needed.
+The script picks the right build for your machine. It downloads v0.7.3, the newest release with CLI builds, checks its SHA-256 checksum and installs `ozm-node` to `~/.local/bin`. No GitHub account or token is needed.
 
 You can set these options:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `OZM_VERSION` | Version to install, for example `0.7.3` | latest release |
+| `OZM_VERSION` | Version to install, for example `0.7.3` | `0.7.3`, the newest release with CLI builds (v0.7.4 ships only Basecamp packages) |
 | `OZM_INSTALL_DIR` | Folder for the binary | `~/.local/bin` |
 | `OZM_DRY_RUN=1` | Show what would be downloaded, then stop | off |
 
@@ -66,8 +66,13 @@ The install script does this for you.
 With a funded Regtest gateway on your LAN, start without an invite:
 
 ```sh
-ozm-node start
+ozm-node start --network regtest
 ```
+
+New invite-free identities and `fleet-init` sessions default to testnet from
+v0.7.4 (built from source); the released v0.7.3 CLI defaults to Regtest. Pass
+`--network` explicitly to get the same result on both. Existing homes and fleet
+files keep their saved network.
 
 This creates persistent keys locally and syncs from a signed gateway, initially
 selected by fewest hops then highest advertised tip and pinned on first use.
@@ -105,7 +110,7 @@ pinning the first one it hears. Existing fleet scripts may still pass names to `
 
 Every device can pay, receive and relay; `gateway` is the only role. Create a fleet
 with `NAME` or `NAME:gateway` per device and at least one gateway, for example
-`ozm-node fleet-init --out invites --name my-session --device Operator:gateway --device Alice --device Bob`.
+`ozm-node fleet-init --out invites --name my-session --network regtest --device Operator:gateway --device Alice --device Bob`.
 Older invites, fleet files and inputs such as `Alice:payer+payee` still work; every
 role except `gateway` is ignored.
 

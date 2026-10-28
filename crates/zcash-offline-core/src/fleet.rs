@@ -16,6 +16,8 @@ use zcash_protocol::consensus::{BlockHeight, NetworkType, NetworkUpgrade, Parame
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Network {
+    /// Fleet files and invites without a `network` field are Regtest sessions; keep that default
+    /// for loading. New sessions and invite-free joins default to testnet (`Network::NEW_SESSION`).
     #[default]
     Regtest,
     Testnet,
@@ -44,6 +46,9 @@ impl Parameters for Network {
 }
 
 impl Network {
+    /// The network a new session or invite-free identity uses unless the user picks Regtest.
+    pub const NEW_SESSION: Network = Network::Testnet;
+
     pub fn decode_address(self, address: &str) -> Result<orchard::Address> {
         let Some(zcash_keys::address::Address::Unified(ua)) = zcash_keys::address::Address::decode(&self, address) else {
             bail!("expected a {self} unified Zcash address with an Ironwood receiver")

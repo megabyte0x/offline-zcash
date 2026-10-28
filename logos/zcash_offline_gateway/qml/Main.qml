@@ -31,13 +31,15 @@ Rectangle {
     readonly property bool joined: st !== null && st.joined === true
     readonly property bool allowed: joined && st.role === "gateway"
     readonly property bool testnet: st !== null && st.network === "testnet"
+    // Regtest-only controls (RPC URL, mining, ths faucet) exist only on a joined Regtest session.
+    readonly property bool regtest: joined && st.network === "regtest"
     readonly property bool online: st !== null && reachError === "" && st.running === true && st.online === true
     readonly property bool syncing: st !== null && st.syncing === true
     readonly property bool narrow: width < 640
     property string servers: ""   // testnet: the fleet's TLS lightwalletd servers
     // Regtest gateways need the plain http:// Zakura JSON-RPC; the engine gives the full reason on check.
-    readonly property bool rpcInvalid: !testnet && !/^http:\/\//i.test(rpc.text.trim())
-    readonly property string chainUrl: testnet ? servers : rpc.text.trim()
+    readonly property bool rpcInvalid: regtest && !/^http:\/\//i.test(rpc.text.trim())
+    readonly property string chainUrl: testnet ? servers : regtest ? rpc.text.trim() : ""
 
     function unwrap(payload) {
         var v = payload
@@ -91,7 +93,7 @@ Rectangle {
             if (info.error) { root.busy = false; root.failed = true; root.message = "Chain service check failed: " + info.error + (root.testnet ? ". Check your internet connection." : "."); return }
             root.message = "Chain service answers · " + info.chain + " · height " + info.blocks
             if (!startAfter) { root.busy = false; return }
-            var opts = { rpc: root.chainUrl, mine: mine.checked && !root.testnet }
+            var opts = { rpc: root.chainUrl, mine: mine.checked && root.regtest }
             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
             if (peers.length) opts.dial = peers
@@ -130,7 +132,7 @@ Rectangle {
         contentItem: ColumnLayout {
             spacing: 10
             Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
-            Label2 { text: "The gateway and node stop. This device's keys, wallet and submission history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards you can join another invite, for example a testnet session." }
+            Label2 { text: "The gateway and node stop. This device's keys, wallet and submission history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards you can join another invite, for example a testnet session. Starting again without an invite on the same network restores this device's own wallet: same address and balance. An invite's wallet stays in the backup." }
             RowLayout { Layout.fillWidth: true; spacing: 10
                 Btn { secondary: true; text: "Cancel"; Layout.fillWidth: true; onClicked: leaveConfirm.close() }
                 Btn { objectName: "confirmLeaveButton"; text: "Leave and keep a backup"; Layout.fillWidth: true; onClicked: { leaveConfirm.close(); root.leave() } } }
@@ -206,7 +208,8 @@ Rectangle {
                 Rectangle { width: 24; height: 24; radius: 12; color: root.acc; Accessible.ignored: true
                     Text { anchors.centerIn: parent; text: "Z"; color: "#111"; font.pixelSize: 15; font.bold: true } }
                 Text { text: "Offline Zcash Gateway"; color: root.fg; font.pixelSize: 22; font.bold: true }
-                Pill { visible: root.joined; text: root.joined ? [root.st.name, root.st.role, root.st.network || "regtest"].filter(function (x) { return !!x }).join(" · ") : "" }
+                Pill { visible: root.joined; text: root.joined ? [root.st.name, root.st.role, root.st.network].filter(function (x) { return !!x }).join(" · ") : "" }
+                Pill { objectName: "regtestBadge"; visible: root.regtest; text: "Regtest session (local ths chain) · Leave session to switch to testnet"; textColor: root.warn }
                 Pill {
                     visible: root.st !== null || root.reachError !== ""
                     text: root.reachError !== "" ? "service not answering" : root.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
@@ -256,22 +259,22 @@ Rectangle {
             Card {
                 title: root.joined ? "Chain service" : "2 · Chain service"
                 visible: root.st !== null
-                Label2 { text: root.testnet ? "Testnet TLS lightwalletd servers (from the session)" : "Chain RPC URL (Regtest, from ths endpoints)" }
+                Label2 { text: root.testnet ? "Testnet TLS lightwalletd servers (from the session)" : root.regtest ? "Chain RPC URL (Regtest, from ths endpoints)" : "Join a session first: it chooses the network and chain service." }
                 Repeater {
                     model: root.testnet ? root.servers.split(",").filter(function (s) { return s !== "" }) : []
                     Text { text: modelData; color: root.fg; font.family: "monospace"; font.pixelSize: 13; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                 }
-                Field { id: rpc; objectName: "rpcUrl"; visible: !root.testnet; invalid: root.rpcInvalid; text: "http://127.0.0.1:18232"; Accessible.name: "Chain RPC URL" }
+                Field { id: rpc; objectName: "rpcUrl"; visible: root.regtest; invalid: root.rpcInvalid; text: "http://127.0.0.1:18232"; Accessible.name: "Chain RPC URL" }
                 Note {
                     tone: root.bad
                     text: root.rpcInvalid ? "This device is on a Regtest session, so the gateway needs the plain http:// Zakura JSON-RPC URL from ths endpoints (usually http://127.0.0.1:18232). https:// servers such as testnet.zec.rocks are testnet lightwalletd; to use testnet, leave this session and join a testnet invite." : ""
                 }
                 Switch {
-                    id: mine; objectName: "mineBlocks"; visible: !root.testnet
+                    id: mine; objectName: "mineBlocks"; visible: root.regtest
                     text: "Mine blocks after each submission (Regtest)"
                     palette.windowText: root.fg; palette.text: root.fg; Accessible.name: text
                 }
-                Label2 { font.pixelSize: 12; text: root.testnet ? "Testnet has no gateway faucet and no mining. The session's organiser chose these servers." : "Mining also lets wallets request test funds. Use only the local ths Regtest chain, never real ZEC." }
+                Label2 { font.pixelSize: 12; visible: root.joined; text: root.testnet ? "Testnet has no gateway faucet and no mining. The session's organiser chose these servers." : "Mining also lets wallets request test funds. Use only the local ths Regtest chain, never real ZEC." }
                 GridLayout {
                     Layout.fillWidth: true
                     columns: root.narrow ? 1 : 2; columnSpacing: 10; rowSpacing: 4
@@ -309,7 +312,7 @@ Rectangle {
                 title: "Gateway wallet"
                 Text { text: root.st && root.st.wallet ? root.zec(root.st.wallet.spendable) : "Not started"; color: root.fg; font.pixelSize: 24; font.weight: Font.DemiBold }
                 Label2 { text: root.st && root.st.wallet ? (root.syncing ? "syncing in the background · height " + root.st.wallet.tip + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "synced to height " + root.st.wallet.tip)
-                                                         + (root.testnet ? "" : " · used to serve test funds") : "Start the gateway to sync its wallet." }
+                                                         + (root.regtest ? " · used to serve test funds" : "") : "Start the gateway to sync its wallet." }
                 Label2 { visible: !!(root.st && !root.syncing && root.st.sync_error); color: root.bad; text: root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : "" }
                 Label2 { text: "Funding address" }
                 TextEdit {
@@ -317,9 +320,9 @@ Rectangle {
                     color: root.fg; font.family: "monospace"; font.pixelSize: 12; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true
                     textFormat: TextEdit.PlainText; Accessible.name: "Gateway funding address"
                 }
-                Label2 { text: root.testnet ? "Testnet faucet: faucet.testnet.valargroup.dev · 0.125 TAZ / 24 h (the service may fail). There is no gateway faucet on testnet." : "Fund it from the operator's terminal (test coins):" }
+                Label2 { text: root.regtest ? "Fund it from the operator's terminal (test coins):" : "Testnet faucet: faucet.testnet.valargroup.dev · 0.125 TAZ / 24 h (the service may fail). There is no gateway faucet on testnet." }
                 Rectangle {
-                    visible: !root.testnet
+                    visible: root.regtest
                     Layout.fillWidth: true; radius: 6; color: root.field; border.color: root.line
                     implicitHeight: cmd.implicitHeight + 16
                     TextEdit {

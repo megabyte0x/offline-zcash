@@ -1,7 +1,7 @@
 {
   "name": "zcash_offline_gateway",
   "display_name": "Offline Zcash Gateway",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "ui_qml",
   "category": "wallet",
   "description": "Connect the shared Offline Zcash device to chain RPC, mine Regtest blocks and inspect submissions. Requires a gateway invite.",

@@ -94,6 +94,31 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 - 9,166-byte transaction → 12,353-byte `pay` envelope. With 20 ms per 512-byte frame, the full A→R→B→D→chain→A and B loop takes about 3.6 s ([../mvp-v0.1.0.md](../mvp-v0.1.0.md)).
 - An internal Docker network, like an offline Wi-Fi, has no default route. Discovery beacons must therefore go out per interface, not to the default route; this was found and fixed in v0.2.0.
 
+### v0.7.4 store quota during long syncs
+
+On v0.7.3 a non-gateway device catching up over the mesh stopped with "mesh store
+quota exceeded" (public testnet, birthday 4,465,026: stuck at 4,467,225 after about
+1,800 blocks). Its store held 510 of its own acks, one per received 3 KiB sync
+chunk, plus two broadcasts: 512, the per-sender cap. Acks are kept for the 24-hour
+store TTL so an offline sender can still learn of delivery, and nothing acks an
+ack, so they never left the store. Its sync requests were not the cause: they are
+removed when acked. The gateway held the same 510 acks, so it would also have
+dropped the device's next request. Since v0.7.4 a sender's new packet evicts that
+sender's oldest stored acks first, and the sending device may also evict its own
+old broadcasts. Held messages and other senders' packets are never evicted, so the
+v0.7.2 per-sender and global limits are unchanged.
+
+The same catch-up then stalled on busy testnet ranges for two more reasons. A
+200-block batch can be hundreds of 3 KiB chunks (186, 352 and 710 were seen). The
+link queue holds 128 packets, and `flood` dropped the rest; they were stored but only
+re-sent after a reconnect, so the device received exactly 128 of 186 chunks and never
+completed the batch. Since v0.7.4 a packet that does not fit an authenticated link's
+queue joins that link's pending list and is sent as the queue drains, and a device
+that dropped packets because its app queue was full sends that neighbour its
+inventory on the next 10-second sweep. A 710-chunk batch also exceeded the gateway's
+own 512-packet quota of unacknowledged messages; the gateway now waits for acks
+(`StoreFull`, up to 30 s per chunk) instead of abandoning the batch.
+
 ## BLE link (Android first)
 
 ### Decided (27 October)

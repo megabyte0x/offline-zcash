@@ -33,7 +33,8 @@ enum Cmd {
         devices: Vec<String>,
         #[arg(long, default_value = "ozm-fleet")]
         name: String,
-        #[arg(long, default_value = "regtest")]
+        /// testnet, or regtest for a local ths chain (developers).
+        #[arg(long, default_value = "testnet")]
         network: zcash_offline_core::fleet::Network,
         #[arg(long, default_value_t = 0)]
         birthday: u32,
@@ -54,7 +55,8 @@ enum Cmd {
         /// Zakura JSON-RPC URL (gateway only).
         #[arg(long, env = "OZM_RPC")]
         rpc: Option<String>,
-        #[arg(long, env = "OZM_NETWORK", default_value = "regtest")]
+        /// Network for a new invite-free identity: testnet, or regtest for a local ths chain.
+        #[arg(long, env = "OZM_NETWORK", default_value = "testnet")]
         network: zcash_offline_core::fleet::Network,
         #[arg(long, env = "OZM_BIRTHDAY", default_value_t = 0)]
         birthday: u32,

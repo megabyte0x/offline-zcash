@@ -36,7 +36,7 @@ up() {
   mkdir -p "$STATE/ctx"
   cp "$ROOT/target/release/ozm-node" "$STATE/ctx/"
   docker build -q -t "$IMG" -f "$ROOT/bench/Dockerfile" "$STATE/ctx" >/dev/null
-  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/operator" --name open-bench --device G:gateway >/dev/null
+  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/operator" --name open-bench --network regtest --device G:gateway >/dev/null
   local addr; addr=$(jq -r '.devices[0].address' "$STATE/operator/fleet.json")
   ths faucet "$addr" --amount 4 --json >/dev/null
   docker network create --internal ozm-open >/dev/null
@@ -46,7 +46,7 @@ up() {
   docker network connect ths-default open-G
   for n in A B C D E F; do
     docker run -d --name "open-$n" --hostname "$n" --network ozm-open -p "127.0.0.1:$((7810 + $(printf '%d' "'$n") - 65)):7780" \
-      "$IMG" run --data /home/ozm/data --fleet /home/ozm/fleet.json --secret /home/ozm/secret.json --discover --discovery-port 7788 --api 0.0.0.0:7780 >/dev/null
+      "$IMG" run --network regtest --data /home/ozm/data --fleet /home/ozm/fleet.json --secret /home/ozm/secret.json --discover --discovery-port 7788 --api 0.0.0.0:7780 >/dev/null
   done
 }
 test_all() {
@@ -75,7 +75,7 @@ test_all() {
     echo "PASS $from → $to by address, included receipt and mined on both; no pending acceptance"
   done
   # A locally generated destination never starts a mesh, so no binding can be discovered.
-  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/absent" --name absent --device Absent:gateway >/dev/null
+  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/absent" --name absent --network regtest --device Absent:gateway >/dev/null
   local absent; absent=$(jq -r '.devices[0].address' "$STATE/absent/fleet.json")
   node A sync >/dev/null; sleep 5
   tx=$(node A pay --to "$absent" --amount 0.0073 | jq -er .txid)

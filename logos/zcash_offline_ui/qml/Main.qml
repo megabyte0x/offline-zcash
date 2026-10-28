@@ -39,7 +39,6 @@ Rectangle {
     readonly property bool running: st !== null && st.running === true
     readonly property bool showSetup: st !== null && (!joined || !running)
     readonly property string network: st && st.network ? st.network : ""
-    // Qualify: the setup ComboBox's id is also `network`, and a bare name resolves to the id.
     readonly property string addrPrefix: root.network === "testnet" ? "utest1" : root.network === "mainnet" ? "u1" : root.network === "regtest" ? "uregtest1" : ""
     readonly property bool narrow: width < 640
 
@@ -137,7 +136,7 @@ Rectangle {
         contentItem: ColumnLayout {
             spacing: 10
             Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
-            Muted { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Afterwards this device can start without an invite or join a new one, on either network." }
+            Muted { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Afterwards this device can start without an invite or join a new one, on either network. Starting again without an invite on the same network restores this device's own wallet: same address and balance. An invite's wallet stays in the backup." }
             RowLayout { Layout.fillWidth: true; spacing: 10
                 Btn { secondary: true; text: "Cancel"; onClicked: leaveConfirm.close() }
                 Btn {
@@ -289,6 +288,12 @@ Rectangle {
                     textColor: root.reachError !== "" ? root.bad : root.mut
                 }
                 Pill {
+                    objectName: "regtestBadge"
+                    visible: root.network === "regtest"
+                    text: "Regtest session (local ths chain) · Leave session to switch to testnet"
+                    textColor: root.warn
+                }
+                Pill {
                     visible: root.st !== null
                     text: !root.running ? "stopped" : root.st.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
                           : root.st.online ? "gateway / online"
@@ -352,22 +357,28 @@ Rectangle {
                     Text { visible: !root.joined; text: "No invite needed"; color: root.fg; font.pixelSize: 16; font.bold: true }
                     Muted {
                         visible: !root.joined
-                        text: "1. Start creates your keys on this device.\n2. It finds a gateway on the local network and syncs through it.\n3. Share your address to get paid; ask the gateway for test funds on Regtest."
-                    }
-                    Label2 { visible: !root.joined; text: "Network" }
-                    ComboBox {
-                        id: network
-                        visible: !root.joined
-                        model: ["regtest", "testnet"]
-                        Accessible.name: "Network for new identity"
-                        Layout.preferredWidth: 220; Layout.preferredHeight: 40
-                        palette.button: root.field; palette.buttonText: root.fg; palette.window: root.card; palette.text: root.fg
-                        palette.base: root.field; palette.highlight: root.acc; palette.highlightedText: "#111"
+                        text: "1. Start creates your keys on this device.\n2. It finds a gateway on the local network and syncs through it.\n3. Share your address to get paid in TAZ (public testnet test coins)."
                     }
                     Muted {
                         visible: !root.joined
                         font.pixelSize: 12
-                        text: network.currentText === "testnet" ? "Public testnet (TAZ test coins). Needs a testnet gateway on the mesh." : "Local Regtest chain run by the session operator (ths)."
+                        text: useRegtest.checked ? "Network: local Regtest (developers). Needs the operator's ths chain and a Regtest gateway on the mesh." : "Network: public testnet (TAZ test coins). Needs a testnet gateway on the mesh."
+                    }
+                    Toggle { id: regtestToggle; visible: !root.joined; label: "Advanced (local Regtest for developers)" }
+                    ColumnLayout {
+                        visible: !root.joined && regtestToggle.open
+                        Layout.fillWidth: true
+                        spacing: 4
+                        Switch {
+                            id: useRegtest
+                            objectName: "useRegtest"
+                            text: "Use a local Regtest chain instead of testnet"
+                            palette.windowText: root.fg
+                            palette.text: root.fg
+                            checked: false
+                            Accessible.name: text
+                        }
+                        Muted { font.pixelSize: 12; text: "Only for development: needs a local ths chain run by the session operator. Leave this off for testnet." }
                     }
 
                     Toggle { id: inviteToggle; visible: !root.joined; label: "I have an organiser invite (optional)" }
@@ -393,7 +404,7 @@ Rectangle {
                             }
                         }
                     }
-                    Muted { visible: !root.joined && inviteToggle.open; font.pixelSize: 12; text: "An invite sets your name, network and trusted gateway; the network choice above is then ignored." }
+                    Muted { visible: !root.joined && inviteToggle.open; font.pixelSize: 12; text: "An invite sets your name, network and trusted gateway; the Regtest option is then ignored." }
 
                     Toggle { id: advToggle; label: "Connection options" }
                     ColumnLayout {
@@ -426,7 +437,7 @@ Rectangle {
                             setup.busy = true; setup.failed = false
                             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
                             var opts = peers.length ? { dial: peers } : {}
-                            opts.network = network.currentText
+                            opts.network = useRegtest.checked ? "regtest" : "testnet"
                             opts.birthday = Number(birthday.text) || 0
                             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
                             opts.ble = bluetooth.checked
@@ -519,7 +530,7 @@ Rectangle {
                         }
                         Btn {
                             secondary: true
-                            visible: root.st !== null && !root.st.online && root.network !== "testnet"
+                            visible: root.st !== null && !root.st.online && root.network === "regtest"
                             text: "Get test funds (5 × 0.1 ZEC)"
                             enabled: !wallet.busy
                             onClicked: {
@@ -799,7 +810,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.maximumWidth: 720
                     Layout.leftMargin: root.narrow ? 12 : 20; Layout.rightMargin: root.narrow ? 12 : 20
-                    Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept." }
+                    Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept, and its own (invite-free) wallet comes back on the same network." }
                     Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !setup.busy; onClicked: leaveConfirm.open() }
                     Muted { visible: !!(root.st && root.st.syncing); font.pixelSize: 12; text: "Leaving now stops the wallet sync; nothing is lost." }
                 }

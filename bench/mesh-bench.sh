@@ -75,7 +75,7 @@ up() {
   [[ "$(jq -r .consensus.chaintip <<<"$info")" == "77190ad9" ]] || { echo "chain is not NU7"; exit 1; }
 
   log "Creating fleet keys (A payer, R relay, B payee, D gateway)"
-  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/fleet" --name bench \
+  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/fleet" --name bench --network regtest \
     --device A --device R --device B --device D:gateway
   chmod 600 "$STATE"/fleet/*.json  # read-only mounts retain private modes; containers run as root
 

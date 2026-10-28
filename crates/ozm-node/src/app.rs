@@ -508,7 +508,16 @@ impl App {
         let parts = batch.chunks()?;
         self.event("sync-served", json!({"to": from, "from_height": batch.prev_height + 1, "tip": batch.chain_tip,
             "payload_bytes": bincode::serialized_size(&batch)?, "chunks": parts.len()}));
-        for part in parts { self.send_to(from, Body::CompactPart(part)).await?; }
+        for part in parts {
+            // A batch can hold more chunks than our store quota (512 packets); wait up to 30 s
+            // per chunk for the requester's acks to free room instead of abandoning the batch.
+            for wait in 0.. {
+                match self.send_to(from, Body::CompactPart(part.clone())).await {
+                    Err(e) if e.is::<ozm_mesh::StoreFull>() && wait < 300 => tokio::time::sleep(Duration::from_millis(100)).await,
+                    r => { r?; break; }
+                }
+            }
+        }
         Ok(())
     }
 
