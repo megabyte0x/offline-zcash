@@ -65,7 +65,24 @@ hash changed from `39e1ab…` to `9e18b4…`, and orphaned incoming value disapp
 (3.024 → 3.0137 ZEC), with `rescanned: true` and no Refresh click. The first-note
 height stayed 107 and the device birthday stayed 5. A sparse match is a conservative
 fork bound; old wallets without historical samples can only fall back to their
-stored birthday. Automatic Prepare remains next.
+stored birthday.
+
+**Item 6:** automatic preparation tries 8/4/2 smaller outputs at a ≤2% fee, with
+half reserved for change. Real Basecamp started an eight-note split 1.102 seconds
+after opening, without a Prepare click: 3 ZEC locked, a different 0.0137 ZEC note
+stayed spendable. Mining was deliberately paused to inspect progress. After one
+Regtest block (713), automatic scanning showed ten spendable notes totaling
+3.01325 ZEC (45,000-zat fee), including 149,977,504-zat change. Advanced manual
+controls expand/collapse normally. The contract test covers both sides of the
+750,000-zat economic boundary, smaller/larger splits, no unmined selection,
+failed witness suppression and restart. No public-testnet funds/faucet were used.
+The LAN/open benches account for actual mined preparation fees rather than
+assuming the funded balance stays fee-free.
+
+**Security after readiness:** [G3/G6/L3 and remaining work](privacy-and-threats.md#v075-readiness-unresolved-security-work)
+cover history-leaf/frontier proofs, the single reachable testnet operator,
+birthday/range privacy and the automatic split fingerprint. None is implemented
+or represented as solved by these UX changes.
 
 **Next witness work:** immediate mesh receipt does not yet mean immediate spending.
 The pending note has no canonical position/witness. A contained implementation

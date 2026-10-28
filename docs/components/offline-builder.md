@@ -50,7 +50,20 @@ transparent-balance query. A's keys and wallet remain in the orb. The owner
 approved release with the funded split → offline payment → ten-confirmation
 public run and independent public confirmation **unverified**.
 
-**Prepare for offline** builds a self-payment from one mined note into N equal
+**v0.7.5 automatic preparation:** with fewer than four spendable notes and a
+reachable gateway, try 8, then 4, then 2 smaller notes, choosing the largest
+count whose action-count fee is at most 2% of the funding note. About half its
+value becomes equal notes; the remainder is change. Other mined notes remain
+usable while this input is locked. A wallet funded by one note cannot retain an
+immediately spendable remainder while spending that same note: its change must
+mine and be scanned first. This is explicit in the UI, never unmined spending.
+Each external funding transaction is attempted only once, durably before
+proving. Self-split outputs and our own change never trigger another split;
+failure/restart cannot create a new-transaction fee loop. Existing submitted
+bytes still use the normal retry policy. Small balances stay untouched. The
+wallet/web show progress; manual preparation is an advanced option.
+
+**Advanced Prepare for offline** builds a self-payment from one mined note into N equal
 notes and optional change (for example 10 × 0.0101 TAZ). Its fee is the larger of
 the fleet floor (10,000 zat) and ZIP 317's fee for the padded action count;
 change can add an action. Builder and verifier apply the same policy. Wait for

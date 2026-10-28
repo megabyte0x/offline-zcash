@@ -1,6 +1,62 @@
 use ozm_node::{fleet_init, join_invite, start, FleetInitOptions, RunOpts};
 
 #[tokio::test]
+async fn automatic_preparation_keeps_change_unspendable_and_does_not_loop_after_failure() {
+    use std::time::Duration;
+    use zcash_offline_core::{fleet::generate_fleet, wallet::{StoredNote, WalletState, BlockData, ChunkSource}, Policy};
+    for (value, witness, expected) in [(749_999, true, 0), (750_000, false, 0), (750_000, true, 1), (8_000_000, true, 1)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (fleet, secrets) = generate_fleet("auto", &[("G".into(), "gateway".into())], Policy::default()).unwrap();
+        let me = secrets[0].clone();
+        let mut note = StoredNote { position: 0, height: 1, txid: "external-funding".into(), value,
+            recipient: hex::encode(me.address().unwrap().to_raw_address_bytes()), rho: hex::encode([0; 32]),
+            rseed: hex::encode([7; 32]), nullifier: String::new(), spent_in: None, locked_by: None };
+        let owned = note.note().unwrap();
+        note.nullifier = hex::encode(owned.nullifier(&me.fvk().unwrap()).to_bytes());
+        let cm = orchard::note::ExtractedNoteCommitment::from(owned.commitment());
+        let mut wallet = WalletState { birthday: 1, tip_height: 1, tip_hash: "block1".into(),
+            commitments: if witness { vec![hex::encode(cm.to_bytes())] } else { vec![] }, notes: vec![note], ..Default::default() };
+        if witness { wallet.roots.insert(1, hex::encode(wallet.witness(0).unwrap().1)); }
+        wallet.save(&dir.path().join("wallet.json")).unwrap();
+        let (mesh, _events) = ozm_mesh::Mesh::start(ozm_mesh::MeshConfig {
+            peer_id: me.public().unwrap().peer_id.parse().unwrap(), ack_signer: Some(me.signing_key().unwrap()), ..Default::default()
+        }).await.unwrap();
+        let cfg = || ozm_node::app::Config { data: dir.path().into(), fleet: fleet.clone(), me: me.clone(), rpc: Some("http://127.0.0.1:0".into()),
+            mine: false, retry: Duration::from_secs(30), faucet_max_zat: 0 };
+        let app = ozm_node::App::new(cfg(), mesh).unwrap();
+        let result = app.auto_prepare_tick().await;
+        if !witness { assert!(result.is_err()); }
+        let path = dir.path().join("payments.json");
+        let book: ozm_node::app::Book = if path.exists() { serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap() }
+            else { assert_eq!(value, 749_999); Default::default() };
+        let payments: Vec<_> = book.payments.into_values().collect();
+        assert_eq!(payments.len(), expected);
+        if let Some(payment) = payments.first() {
+            assert_eq!(payment.direction, "prepare");
+            assert!(payment.fee <= value / 50);
+            assert_eq!(WalletState::load(&dir.path().join("wallet.json")).unwrap().balance(), (0, value));
+            // The canonical scan, not a gateway notice, makes the split and its remainder spendable.
+            let mut scanned = WalletState::load(&dir.path().join("wallet.json")).unwrap();
+            scanned.sync_from(&ChunkSource { prev: (1, "block1".into()), blocks: vec![BlockData {
+                height: 2, hash: "block2".into(), txs: vec![hex::decode(&payment.tx_hex).unwrap()],
+            }] }, &me.fvk().unwrap()).unwrap();
+            assert_eq!(scanned.balance(), (value - payment.fee, 0));
+            assert_eq!(scanned.notes.iter().filter(|n| n.spendable()).count(), if value == 750_000 { 3 } else { 9 });
+            assert!(scanned.notes.iter().any(|n| n.spendable() && n.value >= (value - payment.fee) / 2));
+        }
+        app.auto_prepare_tick().await.unwrap();
+        assert_eq!(app.status()["payments"], expected);
+        app.stop().await;
+        // The failed witness does not become a retry loop after restarting the wallet either.
+        let (mesh, _events) = ozm_mesh::Mesh::start(Default::default()).await.unwrap();
+        let restarted = ozm_node::App::new(cfg(), mesh).unwrap();
+        restarted.auto_prepare_tick().await.unwrap();
+        assert_eq!(restarted.status()["payments"], expected);
+        restarted.stop().await;
+    }
+}
+
+#[tokio::test]
 async fn payment_during_sync_download_keeps_its_reservation_after_install() {
     use std::{sync::Arc, time::Duration};
     use axum::{routing::post, Json, Router};

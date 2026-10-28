@@ -163,12 +163,33 @@ acks and keepalives. Reconnects/reorgs/retransmits and radio/IP headers are excl
 
 Chain state remains explicitly trusted TLS-lightwalletd/gateway reporting, not
 PoW/MMR/inclusion proof verification. Reachable configured servers are compared
-for common-height hashes, frontier, compact content and transaction inclusion;
+for common-height hashes, frontier roots and transaction inclusion;
 disagreements withhold the affected answer. Unreachable/lagging sources reduce
 the source count and display a single-source warning. Zaino returned 503 on
 27 October; a single source is accepted for this testnet release. Tasks 7–9 are
 still mainnet gates. Refusal is not cancellation, and expiry unlock uses the
 locally scanned tip (itself gateway-reported), not a standalone status message.
+
+### v0.7.5 readiness: unresolved security work
+
+- **Frontier truth (G3/B1):** matching the frontier size to block metadata is not
+  proof. Bind the frontier/root to an authenticated history leaf, then complete
+  PoW/MMR/inclusion verification (tasks 7–9). Not implemented here.
+- **One public testnet operator (G3/L1):** only testnet.zec.rocks was reachable.
+  Compact ranges now download once from the primary; locally applied batch-end
+  roots are compared with reachable secondary GetTreeState roots. Compact
+  ciphertexts/nullifiers are no longer compared byte-for-byte: a matching
+  commitment root cannot prove they are genuine or complete. A single operator
+  or colluding operators remain trusted, including for the chain clock used by
+  offline-created wallets. Independent reachable operators and proofs remain work.
+- **Birthday/interest leak (G6/L3):** removing a height input does not hide first
+  requested heights, creation-day estimates or recovery ranges from gateways or
+  lightwalletd. Creation metadata is private local data, not a privacy protocol.
+  Tor/isolation, cover traffic, less identifying start buckets and block-based
+  rather than per-txid status discovery remain work.
+- **Automatic split fingerprint (G6/L3):** equal small outputs and correlated
+  funding/split timing and fees may fingerprint the wallet. Defaults prioritize
+  readiness, not unlinkability. Mainnet remains unsupported and unapproved.
 
 **v0.6.0 implementation update:** the review below is preserved at its stated
 v0.5.1 source revision. v0.6.0 signs every inner envelope and mesh ack (R1/R4/S1),
@@ -189,7 +210,7 @@ Status (v0.7.2): **Enforced** (the stated control is in code), **Partial** (name
 ### Code facts behind most rows
 
 - **F1. Identities authenticate, outer metadata does not.** v0.6.0 signs every inner envelope and payload-bound destination ack. v0.7.2 adds a fresh key/peer-ID proof before inventory. The outer sender/recipient and hello remain cleartext; live forwarding permits strangers and Sybils.
-- **F2. Offline chain views are unverified.** Signed, role/pin-checked sync authenticates the source, not the chain. Common-height hashes, compact contents, frontiers and inclusion answers are compared across reachable configured lightwalletd sources; collusion and a single source remain trusted.
+- **F2. Offline chain views are unverified.** Signed, role/pin-checked sync authenticates the source, not the chain. Common-height hashes, frontier roots and inclusion answers are compared across reachable configured lightwalletd sources; v0.7.5 downloads compact contents only once. Collusion and a single source remain trusted.
 - **F3. Results are rollback-aware, but gateway-reported.** v0.7.0 accepts newer signed downgrades and exactly classifies submission errors. v0.7.2 also removes the cached-mined fallback when the testnet source no longer finds the transaction. No chain proof or finality claim follows.
 - **F4. Explicit party-pair disclosure is reduced.** v0.7.2 sends only `notify: ["nonce:<128-bit random>"]` and broadcasts a signed nonce/result binding. Legacy requests still work. The gateway sees each authenticated submitter, can correlate identical txids, and enrolled gateways hold the public fleet directory. P12 exposes nonce/txid/status to mesh observers.
 - **F5. Refusal cannot cancel a submitted transaction.** Since v0.7.0 the warning says it may still mine until expiry, refusal is not final, and gateway results can supersede it.
@@ -258,7 +279,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.2 | Fix and when |
 |---|---|---|---|---|---|---|---|
-| L1 | It returns the true chain | S | Fabricates compact actions, tree state, nullifiers and confirmations; compact headers are empty | Low–Medium / High | Compare reachable configured servers' hashes, compact ranges, frontiers and transaction answers; withhold disagreement | **Partial** (comparison implemented; only primary reachable in public check) | Tasks 7–9 before mainnet; agreement is not proof |
+| L1 | It returns the true chain | S | Fabricates compact actions, tree state, nullifiers and confirmations; compact headers are empty | Low–Medium / High | Compare reachable configured servers' hashes, frontier roots and transaction answers; withhold disagreement. v0.7.5 compact ranges come from the primary only | **Partial** (comparison implemented; only primary reachable in public check) | Tasks 7–9 before mainnet; agreement is not proof |
 | L2 | It forwards `SendTransaction` | S | One or all servers censor while replying OK | Low–Medium / Medium | v0.7.2 submits unchanged bytes concurrently to every connected configured server, even if the first fails; accepting any means only submitted | **Partial** (multi-submit fixed) | Independent reachable operators and chain proofs still required |
 | L3 | It doesn't deanonymize the fleet | P | Sees the gateway IP, every fleet tx with timing, birthdays, sync ranges, txid queries (inferred) | High / Medium | TLS on the path | **Not** | Tor per tx; status from blocks, not per-txid queries |
 | L4 | It is available | S | All configured servers can fail; Zaino backup returns 503 | Medium / High | Configurable TLS list and connection failover; UI reports one source | **Partial** (fallback implemented; second public endpoint unavailable) | Add independent reachable endpoints when available |

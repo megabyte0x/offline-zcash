@@ -427,6 +427,9 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
                 if let Err(e) = a.gateway_tick().await { a.event("gateway-watch-error", json!({"error": format!("{e:#}")})); }
             }
             a.retry_tick().await;
+            if auto_sync > 0 {
+                if let Err(e) = a.auto_prepare_tick().await { a.event("auto-prepare-error", json!({"error": format!("{e:#}")})); }
+            }
             if auto_sync > 0 && ticks % 5 == 3 && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
                 a.fallback_sync(auto_sync).await;
             }

@@ -219,10 +219,13 @@ There is no gateway faucet on testnet.
    `utest1` address to a public TAZ faucet such as
    [Valar](https://faucet.testnet.valargroup.dev). Faucet claims have failed in our
    tests ([details](components/offline-builder.md#v070-testnet-note-plan)).
-2. After funding and sync, use **Prepare for offline**, for example 10 notes of
-   0.0101 TAZ. Larger splits pay a higher ZIP 317 fee.
-3. Wait for `mined` and a sync until the notes are spendable, then go offline and
-   pay over the mesh. Unmined change is never spendable.
+2. Funds appear automatically. While a gateway is reachable the wallet prepares
+   smaller notes itself; **Offline readiness** shows progress. No Prepare click
+   or refresh is needed. Small balances avoid uneconomic split fees.
+3. Wait for `mined` (ten gateway-reported confirmations on testnet) and the
+   automatic scan before disconnecting. A single-note wallet temporarily locks
+   that note while the split mines; other spendable notes remain usable. Unmined
+   change is never spendable. **Advanced manual split** is optional.
 
 The gateway retries the same transaction every three blocks until expiry. A
 refused payment may still be mined until it expires.

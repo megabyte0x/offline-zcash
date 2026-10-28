@@ -30,7 +30,11 @@ wait_until() {
   while ((SECONDS < end)); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
   echo "  timeout after ${t}s waiting for: $d" >&2; return 1
 }
-spendable_at_least() { node "$1" status | jq -e --argjson z "$2" '.wallet.spendable >= $z'; }
+spendable_at_least() {
+  local fees
+  fees=$(node "$1" payments | jq '[.payments[] | select(.direction == "prepare" and .state == "mined") | .fee] | add // 0')
+  node "$1" status | jq -e --argjson z "$2" --argjson fees "$fees" '.wallet.spendable + $fees >= $z'
+}
 pay_state() { node "$1" payments | jq -e --arg t "$2" --arg s "$3" '.payments[] | select(.txid==$t and .state==$s)'; }
 
 down() {
@@ -102,6 +106,10 @@ test_all() {
   else fail "payment mined"; fi
   wait_until 90 "B balance" bash -c "$(declare -f node spendable_at_least); spendable_at_least B 5000000" \
     && ok "B's spendable balance shows 0.05 ZEC after syncing over the mesh" || fail "B balance after mesh sync"
+
+  log "B automatically prepares its single received note"
+  wait_until 90 "B split mined and scanned" bash -c "$(declare -f node); node B status | jq -e '.wallet.notes > 1 and .wallet.locked == 0'" \
+    && ok "B received smaller spendable notes automatically, without spending unmined change" || fail "B automatic preparation"
 
   log "B spends what it received (mined, synced over the mesh)"
   local tx2; tx2=$(node B pay --to C --amount 0.01 | jq -r .txid)

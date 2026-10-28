@@ -659,15 +659,18 @@ Rectangle {
                     // Prepare for offline
                     Card {
                         id: prep
-                        title: "Prepare for offline"
+                        title: "Offline readiness"
                         Layout.fillWidth: true
                         Layout.columnSpan: grid.columns
                         property string msg: ""
                         property bool failed: false
                         property bool busy: false
-                        Muted { text: "Split one mined note into equal notes so you can make several payments without a connection." }
-                        Muted { font.pixelSize: 13; text: "1. Prepare while a gateway is reachable.\n2. Wait until the split shows Mined (10 confirmations on testnet).\n3. Sync, then go offline. Never spend unmined change." }
+                        property bool advanced: false
+                        Msg { text: root.st ? root.st.preparation || "" : "" }
+                        Muted { font.pixelSize: 13; text: "Mined funds are split automatically while a gateway is reachable. A single-note wallet waits for the split to mine; other available notes remain usable." }
+                        Btn { secondary: true; text: prep.advanced ? "Hide advanced split" : "Advanced manual split"; onClicked: prep.advanced = !prep.advanced }
                         GridLayout {
+                            visible: prep.advanced
                             Layout.fillWidth: true
                             columns: root.narrow ? 1 : 3
                             columnSpacing: 12; rowSpacing: 4
@@ -703,6 +706,7 @@ Rectangle {
                             }
                         }
                         Muted {
+                            visible: prep.advanced
                             font.pixelSize: 12
                             color: splitCount.invalid || splitValue.invalid ? root.bad : root.mut
                             text: splitCount.invalid ? "Choose between 2 and 100 notes." : splitValue.invalid ? root.amountError(splitValue.text) : "The split fee grows with the number of notes."

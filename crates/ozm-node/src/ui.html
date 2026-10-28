@@ -101,13 +101,10 @@
     <p class="mut small">Open or unknown payers are not accepted while pending. Wait for gateway-reported inclusion; it is not independent chain verification.</p>
   </section>
   <section class="wide" aria-labelledby="h-prep"><div style="max-width:720px">
-    <h2 id="h-prep">Prepare for offline</h2>
-    <p class="mut" style="margin:0">Split one mined note into equal notes so you can make several payments without a connection.</p>
-    <ol class="steps">
-      <li>Prepare while a gateway is reachable.</li>
-      <li>Wait until the split shows <b>mined</b> (10 confirmations on testnet).</li>
-      <li>Sync, then go offline. Never spend unmined change.</li>
-    </ol>
+    <h2 id="h-prep">Offline readiness</h2>
+    <p id="autoprep" role="status" aria-live="polite"></p>
+    <p class="mut small">Mined funds are split automatically while a gateway is reachable. A single-note wallet waits for the split to mine; other available notes remain usable.</p>
+    <details><summary>Advanced manual split</summary>
     <div class="row" style="margin-top:4px">
       <div style="flex:1"><label for="notes">Number of notes</label><input id="notes" type="number" min="2" max="100" value="10"></div>
       <div style="flex:1"><label for="notevalue">ZEC per note</label><input id="notevalue" value="0.0101" inputmode="decimal" autocomplete="off"></div>
@@ -115,6 +112,7 @@
     <div class="hint">The split fee grows with the number of notes.</div>
     <button id="prepareb" class="secondary">Prepare for offline</button>
     <div class="msg mut" id="prepmsg" role="status" aria-live="polite"></div>
+    </details>
   </div></section>
   <section class="wide" aria-labelledby="h-pays">
     <h2 id="h-pays">Payments</h2>
@@ -182,6 +180,7 @@ async function refresh() {
     $('bal').textContent = zec(s.wallet.spendable);
     $('wal').textContent = `spendable · ${zec(s.wallet.locked)} locked in pending payments · ${s.wallet.notes} notes · balance as of height ${s.wallet.tip}` + (s.syncing ? '. Syncing in the background; available notes remain usable.' : '');
     $('incoming').textContent = s.wallet.pending_incoming ? `Incoming ${zec(s.wallet.pending_incoming)} · spendable after mined and scanned` : '';
+    $('autoprep').textContent = s.preparation || '';
     const g = s.selected_gateway;
     $('gateway').textContent = g ? `Gateway ${g.name} · ${g.hops} hops · tip ${g.tip} · mesh ID ${g.peer_id}` : s.online ? 'This device is the gateway (chain service).' : 'Finding a gateway over the mesh…';
     const sources = s.chain_sources || [];

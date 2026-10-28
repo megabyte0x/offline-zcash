@@ -113,6 +113,12 @@ pub struct Book {
     pub gw_seq: u64,
     #[serde(default)]
     pub faucet_last: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub auto_prepare_attempted: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub auto_prepare_status: String,
+    #[serde(default)]
+    pub auto_prepare_txid: Option<String>,
 }
 
 const RESULT_MAGIC: &[u8] = b"ozm1-result:";
@@ -816,6 +822,54 @@ impl App {
     /// unavailable until compact sync discovers them in a canonical block.
     pub async fn prepare_offline(self: &Arc<Self>, count: u32, value: u64) -> Result<Payment> {
         let _guard = self.pay_lock.lock().await;
+        self.prepare_offline_inner(count, value, _guard).await
+    }
+
+    /// Background preparation yields to a payment/receipt already being handled, and only
+    /// attempts each external funding transaction once, including across failure/restart.
+    pub async fn auto_prepare_tick(self: &Arc<Self>) -> Result<()> {
+        if self.gateway_options().0.is_none() && (self.selected_gateway().is_none() || self.mesh.neighbors().is_empty()) { return Ok(()); }
+        let Ok(_guard) = self.pay_lock.try_lock() else { return Ok(()); };
+        let plan = {
+            let mut st = self.state.lock().unwrap();
+            if st.0.tip_height == 0 || st.0.tip_height < self.reported_tip.load(std::sync::atomic::Ordering::Relaxed)
+                || st.0.notes.iter().filter(|n| n.spendable()).count() >= 4
+                || st.1.payments.values().any(|p| p.direction == "prepare" && !p.is_final() && p.state != "gateway-rejected") {
+                return Ok(());
+            }
+            let candidate = st.0.notes.iter().filter(|n| n.spendable()
+                && !st.1.auto_prepare_attempted.contains(&n.txid)
+                && st.1.payments.get(&n.txid).is_none_or(|p| p.direction == "received"))
+                .max_by_key(|n| n.value);
+            let Some(note) = candidate else { return Ok(()); };
+            let mut plan = None;
+            for count in [8, 4, 2] {
+                let fee = builder::transaction_fee(count as usize + 1, &self.cfg.fleet.policy)?;
+                // At most 2% split fee; use half for small notes and leave half as change.
+                if note.value / 50 >= fee {
+                    plan = Some((note.txid.clone(), count, (note.value - fee) / (2 * count as u64), fee));
+                    break;
+                }
+            }
+            let Some((funding, count, value, fee)) = plan else { return Ok(()); };
+            st.1.auto_prepare_attempted.insert(funding);
+            st.1.auto_prepare_txid = None;
+            st.1.auto_prepare_status = format!("Preparing for offline: {count} smaller notes, fee {} ZEC. Waiting for mined outputs; unmined change is unavailable.", zcash_offline_core::fmt_zec(fee));
+            self.persist(&st.0, &st.1)?;
+            (count, value)
+        };
+        self.event("auto-prepare-start", json!({"count": plan.0, "value": plan.1}));
+        let result = self.prepare_offline_inner(plan.0, plan.1, _guard).await;
+        let mut st = self.state.lock().unwrap();
+        match &result {
+            Ok(payment) => st.1.auto_prepare_txid = Some(payment.txid.clone()),
+            Err(error) => st.1.auto_prepare_status = format!("Automatic preparation stopped: {error}. No new split will be attempted for these funds; advanced manual preparation remains available."),
+        }
+        self.persist(&st.0, &st.1)?;
+        result.map(|_| ())
+    }
+
+    async fn prepare_offline_inner(self: &Arc<Self>, count: u32, value: u64, pay: tokio::sync::MutexGuard<'_, ()>) -> Result<Payment> {
         let _sync = self.sync_apply.lock().await;
         let me = self.cfg.me.clone();
         let policy = self.cfg.fleet.policy.clone();
@@ -835,11 +889,13 @@ impl App {
         {
             let mut st = self.state.lock().unwrap();
             wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
+            wallet.first_note_height = wallet.first_note_height.into_iter().chain(st.0.first_note_height).min();
             st.0 = wallet;
             st.1.payments.insert(payment.txid.clone(), payment.clone());
             self.persist(&st.0, &st.1)?;
         }
         drop(_sync);
+        drop(pay);
         if self.gateway_options().0.is_some() {
             self.on_sub(self.name(), built.raw, built.txid, vec![]).await?;
         } else {
@@ -887,6 +943,7 @@ impl App {
         let payment = {
             let mut st = self.state.lock().unwrap();
             wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
+            wallet.first_note_height = wallet.first_note_height.into_iter().chain(st.0.first_note_height).min();
             st.0 = wallet;
             // Time-based so it keeps rising when the same device is reinstalled with an empty store.
             st.1.seq_out = (st.1.seq_out + 1).max(now_ms());
@@ -1689,6 +1746,17 @@ impl App {
         let chain = self.chain_view.lock().unwrap();
         let ready = st.0.tip_height > 0 && st.0.tip_height >= self.reported_tip.load(std::sync::atomic::Ordering::Relaxed)
             && (chain.0 != st.0.tip_height || chain.1 == st.0.tip_hash);
+        let preparation = st.1.auto_prepare_txid.as_ref().and_then(|id| st.1.payments.get(id)).map(|payment| {
+            if matches!(payment.state.as_str(), "expired" | "conflict" | "gateway-rejected") {
+                format!("Automatic preparation stopped: {}. No new split will be attempted for these funds.", payment.state)
+            } else if st.0.notes.iter().any(|n| n.txid == payment.txid) {
+                "Prepared for offline: smaller notes and the remainder are scanned. On testnet, wait for Mined before disconnecting.".to_string()
+            } else {
+                format!("Preparing for offline: {}. Waiting for mined outputs to be scanned; no unmined change is spendable.", payment.state)
+            }
+        }).unwrap_or_else(|| if st.1.auto_prepare_status.is_empty() {
+            "Offline preparation is automatic when mined funds and a gateway are available. Small balances avoid uneconomic split fees.".into()
+        } else { st.1.auto_prepare_status.clone() });
         json!({
             "name": self.name(),
             "role": if me.is_some_and(|d| d.is_gateway()) { "gateway" } else { "" },
@@ -1697,6 +1765,7 @@ impl App {
             "syncing": self.sync_running.load(std::sync::atomic::Ordering::SeqCst) || !ready && self.reported_tip.load(std::sync::atomic::Ordering::Relaxed) > 0,
             "sync_error": self.sync_error.lock().unwrap().clone(),
             "ready": ready,
+            "preparation": preparation,
             "birthday": st.0.birthday,
             "chain_sources": sources,
             "single_source": sources.len() < 2,

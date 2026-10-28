@@ -14,7 +14,11 @@ wait_for() {
   done
 }
 synced() { node "$1" status | jq -e '.open_network and .wallet.tip > 0 and .selected_gateway.hops == 1'; }
-funded() { node "$1" status | jq -e '.wallet.spendable >= 30000000'; }
+funded() {
+  local fees
+  fees=$(node "$1" payments | jq '[.payments[] | select(.direction == "prepare" and .state == "mined") | .fee] | add // 0')
+  node "$1" status | jq -e --argjson fees "$fees" '.wallet.spendable + $fees >= 30000000'
+}
 mined() { node "$1" payments | jq -e --arg t "$2" '.payments[] | select(.txid == $t and .state == "mined")'; }
 receipted() { node "$1" payments | jq -e --arg t "$2" '.payments[] | select(.txid == $t and .receipt.body.state == "Included")'; }
 empty_wallet() { node "$1" status | jq -e '.wallet.spendable == 0 and .wallet.locked == 0'; }
@@ -50,6 +54,9 @@ up() {
   done
 }
 test_all() {
+  # The single funding note is briefly reserved by automatic preparation at startup.
+  wait_for 120 bash -c "$(declare -f node); node G status | jq -e '.wallet.notes > 1 and .wallet.locked == 0'"
+  echo 'PASS gateway automatic preparation mined and scanned before faucet requests'
   for n in A B C D E F; do
     wait_for 120 synced "$n"
     if docker exec "open-$n" curl -s -m 2 http://zakura:18232 >/dev/null 2>&1; then echo "FAIL $n reached chain directly"; return 1; fi
