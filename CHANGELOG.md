@@ -9,6 +9,8 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-28
+
 ### Added
 - **Leave session** in the wallet, Organiser and Gateway apps (module method `leave`), behind a confirmation. It stops the node and moves the device folder `ozm` to `ozm-backup-YYYYMMDD-HHMMSS` (UTC) in the same persistence folder; nothing is deleted. The device can then start without an invite or join another one, for example to switch from Regtest to testnet. New Organiser exports go to `sessions/` beside `ozm`, and Leave moves older `ozm/sessions` exports there, so their invites stay reachable.
 
