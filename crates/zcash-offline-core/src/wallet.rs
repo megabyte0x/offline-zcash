@@ -255,6 +255,25 @@ impl WalletState {
         let mut tree = self.rebuild_tree(&[])?;
         let mut new_notes = 0;
         let mut position = tree.max_leaf_position(None).map_err(|e| anyhow!("position: {e:?}"))?.map_or(0, |p| u64::from(p) + 1);
+        // Only the last CHECKPOINTS heights survive this batch's pruning below. Checkpointing and
+        // computing a root for every earlier block cost milliseconds each and were discarded.
+        let kept = batch.blocks.last().map_or(0, |b| b.height).saturating_sub(CHECKPOINTS as u32 - 1);
+        // Trial decryption is ~0.1 ms per action and independent; testnet ranges hold ~10 actions per
+        // block. Decrypt on all cores first; the tree and notes below still apply in chain order.
+        let decrypted = {
+            use rayon::prelude::*;
+            let actions: Vec<_> = batch.blocks.iter().flat_map(|b| &b.txs).flat_map(|t| &t.actions).collect();
+            actions.par_iter().map(|a| {
+                let action = a.compact()?;
+                let domain = orchard::note_encryption::IronwoodDomain::for_compact_action(&action);
+                Ok(zcash_note_encryption::try_compact_note_decryption(&domain, &ivk, &action).map(|(note, _)| note))
+            }).collect::<Result<Vec<_>>>()?
+        };
+        let mut decrypted = decrypted.into_iter();
+        // Leaves wait here until a checkpoint needs them: one bulk insert instead of a per-leaf append,
+        // which costs ~0.1 ms each on busy testnet ranges.
+        let mut pending: Vec<(MerkleHashOrchard, Retention<u32>)> = Vec::new();
+        let mut pending_from = position;
         for block in &batch.blocks {
             ensure!(block.height > self.tip_height && block.height <= batch.chain_tip, "non-monotonic sync height");
             ensure!(block.txs.is_empty() || block.height == self.tip_height + 1, "nonempty block skips heights");
@@ -263,17 +282,15 @@ impl WalletState {
                 id.reverse();
                 let txid = hex::encode(id);
                 for a in &tx.actions {
-                    let action = a.compact()?;
                     let nf = hex::encode(a.nf);
                     self.nullifiers_by_height.entry(block.height).or_default().push(nf.clone());
                     for n in self.notes.iter_mut().filter(|n| n.nullifier == nf) {
                         n.spent_in = Some(txid.clone());
                         self.spent_heights.insert(nf.clone(), block.height);
                     }
-                    let domain = orchard::note_encryption::IronwoodDomain::for_compact_action(&action);
-                    let decrypted = zcash_note_encryption::try_compact_note_decryption(&domain, &ivk, &action);
-                    let marked = decrypted.is_some();
-                    if let Some((note, _)) = decrypted {
+                    let note = decrypted.next().expect("one decryption per action");
+                    let marked = note.is_some();
+                    if let Some(note) = note {
                         let nullifier = hex::encode(note.nullifier(fvk).to_bytes());
                         if !self.notes.iter().any(|n| n.nullifier == nullifier) {
                             self.notes.push(StoredNote {
@@ -295,22 +312,28 @@ impl WalletState {
                         }
                     }
                     let leaf = Option::from(MerkleHashOrchard::from_bytes(&a.cmx)).ok_or_else(|| anyhow!("cmx"))?;
-                    tree.append(leaf, if marked { Retention::Marked } else { Retention::Ephemeral }).map_err(|e| anyhow!("tree append: {e:?}"))?;
+                    pending.push((leaf, if marked { Retention::Marked } else { Retention::Ephemeral }));
                     position += 1;
                 }
             }
+            if block.height >= kept && !pending.is_empty() {
+                tree.batch_insert(Position::from(pending_from), pending.drain(..)).map_err(|e| anyhow!("tree insert: {e:?}"))?;
+                pending_from = position;
+            }
             // Empty runs advance checkpoints without transporting per-block ciphertexts or hashes.
-            for h in self.tip_height + 1..=block.height {
+            for h in (self.tip_height + 1).max(kept)..=block.height {
                 tree.checkpoint(h).map_err(|e| anyhow!("checkpoint: {e:?}"))?;
             }
-            let root = tree
-                .root_at_checkpoint_id(&block.height)
-                .map_err(|e| anyhow!("root: {e:?}"))?
-                .ok_or_else(|| anyhow!("no root"))?;
-            self.roots.insert(block.height, hex::encode(root.to_bytes()));
+            if block.height >= kept {
+                let root = tree
+                    .root_at_checkpoint_id(&block.height)
+                    .map_err(|e| anyhow!("root: {e:?}"))?
+                    .ok_or_else(|| anyhow!("no root"))?;
+                self.roots.insert(block.height, hex::encode(root.to_bytes()));
+                self.hashes.insert(block.height, block.hash.clone());
+            }
             self.tip_height = block.height;
             self.tip_hash = block.hash.clone();
-            self.hashes.insert(block.height, block.hash.clone());
         }
         let floor = self.tip_height.saturating_sub(CHECKPOINTS as u32 - 1);
         self.roots.retain(|h, _| *h >= floor);
@@ -458,5 +481,37 @@ mod tests {
         assert_eq!(wallet.balance(), (0, 70_001));
         wallet.apply_batch(&batch(3, "c3", vec![block(4, "c4", 7)], 4), &fvk).unwrap();
         assert_eq!(wallet.balance(), (70_001, 0));
+    }
+
+    /// One large batch skips checkpoints that pruning would discard; it must keep exactly the
+    /// window that block-by-block batches keep, so anchors and reorg rollback behave the same.
+    #[test]
+    fn large_batches_keep_the_same_checkpoint_window_as_small_ones() {
+        let fvk = crate::DeviceSecret::generate("A", "").fvk().unwrap();
+        // Every third height is empty and not transported, like a compact range with gaps.
+        let blocks: Vec<CompactBlock> = (1..=450u32).filter(|h| h % 3 != 0).map(|h| {
+            let mut cmx = [0; 32];
+            cmx[..4].copy_from_slice(&h.to_le_bytes());
+            CompactBlock { height: h, hash: format!("h{h}"), txs: if h % 3 == 1 { vec![] } else { vec![CompactTx {
+                txid: cmx, actions: vec![Action { nf: cmx, cmx, epk: [0; 32], ct: vec![0; 52] }] }] } }
+        }).collect();
+        let mut one = WalletState::default();
+        one.apply_batch(&Batch { prev_height: 0, prev_hash: String::new(), seed: None, blocks: blocks.clone(), chain_tip: 450, sources: vec![] }, &fvk).unwrap();
+        let mut small = WalletState::default();
+        for chunk in blocks.chunks(7) {
+            let batch = Batch { prev_height: small.tip_height, prev_hash: small.tip_hash.clone(), seed: None, blocks: chunk.to_vec(), chain_tip: 450, sources: vec![] };
+            small.apply_batch(&batch, &fvk).unwrap();
+        }
+        assert_eq!((one.tip_height, &one.roots, &one.hashes), (small.tip_height, &small.roots, &small.hashes));
+        assert_eq!(*one.roots.keys().next().unwrap(), one.tip_height - CHECKPOINTS as u32 + 1);
+        // The oldest retained height is still a rollback target; one below it is not.
+        for wallet in [&one, &small] {
+            let oldest = *wallet.roots.keys().next().unwrap();
+            let mut back = wallet.clone();
+            back.rollback(oldest).unwrap();
+            assert_eq!(back.rebuild_tree(&[]).unwrap().root_at_checkpoint_depth(Some(0)).unwrap().unwrap().to_bytes(),
+                <[u8; 32]>::try_from(hex::decode(&wallet.roots[&oldest]).unwrap()).unwrap());
+            assert!(wallet.clone().rollback(oldest - 1).is_err());
+        }
     }
 }

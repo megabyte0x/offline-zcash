@@ -117,6 +117,12 @@ pub struct Book {
 
 const RESULT_MAGIC: &[u8] = b"ozm1-result:";
 
+/// Compact blocks per reply to a wallet's mesh sync request (sized for slow links).
+pub const MESH_SYNC_BLOCKS: u32 = 200;
+/// Compact blocks per batch when an online device scans for itself. Larger batches skip work for
+/// checkpoints that pruning discards; 2,000 busy testnet blocks stay well under the 8 MiB limit.
+pub const SCAN_BLOCKS: u32 = 2_000;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct GatewayNotice {
     request_nonce: String,
@@ -125,6 +131,13 @@ struct GatewayNotice {
 
 impl zcash_offline_core::messages::Domain for GatewayNotice {
     const DOMAIN: &'static [u8] = b"ozm1-gateway-notice-v1";
+}
+
+/// The submission a gateway is processing, and targets of identical submissions that joined it.
+struct InFlightSub {
+    txid: String,
+    raw: Vec<u8>,
+    joined: Vec<String>,
 }
 
 pub struct Config {
@@ -166,8 +179,15 @@ pub struct App {
     last_tip_push: Mutex<(u64, u32, String)>,
     gateway_apply: tokio::sync::Mutex<()>,
     sub_rates: Mutex<BTreeMap<String, (f64, std::time::Instant)>>,
+    /// The submission `gateway_apply` is processing (txid, bytes) and the notification targets of
+    /// identical submissions that arrived meanwhile; they receive its result too.
+    sub_in_flight: Mutex<Option<InFlightSub>>,
     /// Optional observer of every app event (the Basecamp module turns them into Logos events).
     pub on_event: std::sync::OnceLock<EventHook>,
+    /// One writer at a time, so concurrent events never interleave inside a line of events.jsonl.
+    events_log: Mutex<()>,
+    /// Set by `stop`: no file in `cfg.data` is written afterwards, so the folder can move away.
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 fn wallet_path(cfg: &Config) -> PathBuf {
@@ -226,7 +246,10 @@ impl App {
             last_tip_push: Default::default(),
             gateway_apply: Default::default(),
             sub_rates: Default::default(),
+            sub_in_flight: Default::default(),
             on_event: Default::default(),
+            events_log: Default::default(),
+            stopped: Default::default(),
         }))
     }
 
@@ -249,13 +272,18 @@ impl App {
         Ok(())
     }
 
+    /// Callers hold `state`, which `stop` also takes, so no write can follow a stop.
     fn persist(&self, wallet: &WalletState, book: &Book) -> Result<()> {
+        anyhow::ensure!(!self.is_stopped(), "device stopped");
         wallet.save(&wallet_path(&self.cfg))?;
         write_atomic(&book_path(&self.cfg), &serde_json::to_vec_pretty(book)?)
     }
 
     /// Appends a structured event to `events.jsonl` and the log. The bench reads these for timings.
     pub fn event(&self, event: &str, detail: serde_json::Value) {
+        if self.is_stopped() {
+            return;
+        }
         if let Some(f) = self.on_event.get() {
             f(event, &detail);
         }
@@ -266,9 +294,29 @@ impl App {
         options.create(true).append(true);
         #[cfg(unix)]
         { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        // `writeln!` would issue several writes; build the line and append it in one call.
+        let line = format!("{line}\n");
+        let _log = self.events_log.lock().unwrap();
         if let Ok(mut f) = options.open(self.cfg.data.join("events.jsonl")) {
-            let _ = writeln!(f, "{line}");
+            let _ = f.write_all(line.as_bytes());
         }
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Stops the mesh, lets an in-flight payment or wallet update finish, then ends every write to
+    /// `cfg.data`. Afterwards the device folder can be moved: late background tasks fail instead of
+    /// recreating files there.
+    pub async fn stop(&self) {
+        self.mesh.shutdown();
+        let _pay = self.pay_lock.lock().await;
+        let _sync = self.sync_apply.lock().await;
+        let _state = self.state.lock().unwrap();
+        let _trust = self.trust.lock().unwrap();
+        let _log = self.events_log.lock().unwrap();
+        self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn send_to(&self, name: &str, body: Body) -> Result<()> {
@@ -354,12 +402,23 @@ impl App {
         let fvk = self.cfg.me.fvk()?;
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
             let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+            let birthday = self.cfg.fleet.birthday;
+            let checkpoints = |w: &WalletState| w.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>();
+            let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &checkpoints(&wallet), birthday, SCAN_BLOCKS).await?;
             loop {
-                let checkpoints = wallet.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>();
-                let batch = source.batch(wallet.tip_height, &wallet.tip_hash, &checkpoints, self.cfg.fleet.birthday).await?;
-                wallet.apply_batch(&batch, &fvk)?;
+                // Fetch the next range while this one applies off the async runtime.
+                let (height, hash) = next.blocks.last().map_or((wallet.tip_height, wallet.tip_hash.clone()), |b| (b.height, b.hash.clone()));
+                let known = checkpoints(&wallet);
+                let (batch, fvk) = (next, fvk.clone());
+                let apply = tokio::task::spawn_blocking(move || wallet.apply_batch(&batch, &fvk).map(|_| wallet));
+                let fetch = async {
+                    if height >= source.tip { return Ok(None); }
+                    source.batch(height, &hash, &known, birthday, SCAN_BLOCKS).await.map(Some)
+                };
+                let (applied, fetched) = tokio::join!(apply, fetch);
+                wallet = applied??;
                 self.install_wallet(wallet.clone())?;
-                if wallet.tip_height >= source.tip { break; }
+                match fetched? { Some(batch) => next = batch, None => break }
             }
             *self.sync_sources.lock().unwrap() = source.sources;
             let out = json!({"tip": wallet.tip_height, "spendable": wallet.balance().0, "locked": wallet.balance().1});
@@ -417,7 +476,7 @@ impl App {
             if have > 0 && checkpoints.is_empty() && (have > source.tip || source.block_hash(have).await? != hash) {
                 None
             } else {
-                Some(source.batch(have, &hash, &checkpoints, birthday).await?)
+                Some(source.batch(have, &hash, &checkpoints, birthday, MESH_SYNC_BLOCKS).await?)
             }
         } else {
             let hash = hash.clone();
@@ -738,7 +797,8 @@ impl App {
                 result: None,
                 history: vec![],
                 created_ms: now_ms(),
-                last_send_ms: 0,
+                // The first send follows at once; the retry tick must not race it with a second copy.
+                last_send_ms: now_ms(),
                 attempts: 0,
                 test_tamper: tamper.clone(),
                 receipt_peer: payee.as_ref().map(|p| self.route_name(p)),
@@ -1181,7 +1241,7 @@ impl App {
                 result: Signed::sign(GatewayResult { txid, status: status.clone(), tip_height: source.tip,
                     gateway: self.name().into(), seq: 0, created_ms: now_ms() }, &self.cfg.me)? },
         };
-        entry.notify.extend(notify_targets(from, notify).into_iter().filter(|n| n != self.name()));
+        entry.notify.extend(notify_targets(from, notify).into_iter().chain(self.joined_submitters()).filter(|n| n != self.name()));
         entry.notify.sort();
         entry.notify.dedup();
         self.publish_gateway(entry, status, source.tip, submitted).await
@@ -1279,8 +1339,27 @@ impl App {
     }
 
     async fn on_sub(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
-        let _guard = self.gateway_apply.try_lock().map_err(|_| anyhow!("gateway busy; retry submission"))?;
+        let Ok(_guard) = self.gateway_apply.try_lock() else {
+            // A payer and its payee submit the same transaction moments apart. The later one joins
+            // the running submission and gets its result, instead of waiting for its own retry.
+            let mut running = self.sub_in_flight.lock().unwrap();
+            if let Some(sub) = running.as_mut().filter(|s| s.txid == txid && s.raw == tx) {
+                self.admit_sub(from, &txid, &tx, &notify)?;
+                sub.joined.extend(notify_targets(from, notify));
+                return Ok(());
+            }
+            bail!("gateway busy; retry submission");
+        };
         self.admit_sub(from, &txid, &tx, &notify)?;
+        *self.sub_in_flight.lock().unwrap() = Some(InFlightSub { txid: txid.clone(), raw: tx.clone(), joined: vec![] });
+        let r = self.on_sub_locked(from, tx, txid, notify).await;
+        // A failed submission leaves no join window open; joined senders retry on their own.
+        self.sub_in_flight.lock().unwrap().take();
+        r
+    }
+
+    /// `on_sub` with `gateway_apply` held.
+    async fn on_sub_locked(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
             return self.on_testnet_sub(from, tx, txid, notify).await;
         }
@@ -1303,7 +1382,8 @@ impl App {
         })
         .await??;
         let elapsed = t.elapsed().as_millis();
-        let mut to: Vec<String> = notify_targets(from, notify).into_iter().filter(|n| n != self.name()).collect();
+        let mut to: Vec<String> = notify_targets(from, notify).into_iter().chain(self.joined_submitters())
+            .filter(|n| n != self.name()).collect();
         to.sort();
         to.dedup();
         let res = {
@@ -1338,6 +1418,11 @@ impl App {
     }
 
     // ---------- payer and payee: results ----------
+
+    /// Targets of identical submissions that joined the one being processed; ends the join window.
+    fn joined_submitters(&self) -> Vec<String> {
+        self.sub_in_flight.lock().unwrap().take().map(|s| s.joined).unwrap_or_default()
+    }
 
     async fn send_result(&self, target: &str, result: Signed<GatewayResult>) -> Result<()> {
         if let Some(nonce) = target.strip_prefix("nonce:") {

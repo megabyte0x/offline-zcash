@@ -87,7 +87,7 @@ Inside it:
 | Folder | Contents |
 |---|---|
 | `ozm` | This device: keys (`secret.json`), fleet, wallet, payment history, gateway pin |
-| `sessions/<timestamp>` | Organiser exports: `fleet.json`, invites and secrets |
+| `sessions/session-YYYYMMDD-HHMMSS` | Organiser exports: `fleet.json`, invites and secrets |
 | `ozm-backup-YYYYMMDD-HHMMSS` | A device folder moved aside by [Leave session](#leave-session) (UTC time) |
 
 You do not need to find these by hand: the Organiser shows the export folder before
@@ -163,7 +163,7 @@ the `ths` chain (Regtest) stay outside Basecamp.
 2. Add a device for each invite you need and tick **This device is the gateway**
    for at least one of them, for example `Operator`. Wallet devices can join
    without invites, so you may only need the gateway entry.
-3. Keep the suggested session folder, `<persistence path>/sessions/<timestamp>`
+3. Keep the suggested session folder, `<persistence path>/sessions/session-YYYYMMDD-HHMMSS`
    ([paths](#where-the-data-lives)), or choose another. Existing fleet or key files
    are never overwritten.
 4. To use this device as the gateway, set **Join this device as** to `Operator`.
@@ -209,7 +209,7 @@ VPS or `ths` is needed. Wallet devices do not need internet.
    reachable the app shows **single source**; that is a warning, not a failure.
 4. The gateway wallet then syncs in the background from the session birthday; the
    badge shows `syncing · height X of Y`. The other screens keep working, but
-   payments, Prepare for offline and Leave wait until the sync finishes.
+   payments and Prepare for offline wait until the sync finishes. Leave stops the sync.
 
 There is no gateway faucet on testnet.
 
@@ -230,9 +230,10 @@ refused payment may still be mined until it expires.
 ## Leave session
 
 **Leave session**, in all three apps, takes the device out of its current session.
-After you confirm, it (not while a wallet sync is running):
+After you confirm, it:
 
-1. stops the node;
+1. stops the node, cancelling a running wallet sync and letting a payment that is
+   being proved finish first;
 2. moves the whole `<persistence path>/ozm` folder to
    `<persistence path>/ozm-backup-YYYYMMDD-HHMMSS` (UTC time), shown on screen.
    Nothing is deleted: keys and funds stay in the backup;

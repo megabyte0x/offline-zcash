@@ -119,7 +119,8 @@ impl Lightwallet {
         Ok(blocks)
     }
 
-    pub async fn batch(&mut self, have: u32, hash: &str, checkpoints: &[(u32, String)], birthday: u32) -> Result<Batch> {
+    /// Up to `max_blocks` compact blocks after `have` (fewer if they exceed the sync memory limit).
+    pub async fn batch(&mut self, have: u32, hash: &str, checkpoints: &[(u32, String)], birthday: u32, max_blocks: u32) -> Result<Batch> {
         let (mut prev_height, mut prev_hash) = (have, hash.to_string());
         let seed = if have == 0 {
             ensure!(birthday >= 4_465_026 && birthday <= self.tip + 1, "testnet birthday must be between NU7 and the next block");
@@ -140,7 +141,7 @@ impl Lightwallet {
             }
             None
         };
-        let end = self.tip.min(prev_height + 200);
+        let end = self.tip.min(prev_height + max_blocks.max(1));
         let mut batch = Batch { prev_height, prev_hash, seed, blocks: vec![], chain_tip: self.tip, sources: self.sources.clone() };
         if end <= prev_height { return Ok(batch); }
         let blocks = Self::range(&mut self.clients[0].1, prev_height + 1, end, &batch.prev_hash).await?;

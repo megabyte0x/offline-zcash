@@ -27,6 +27,7 @@ gen="$(nix build --no-link --print-out-paths "$flake#lidl-gen")/bin/logos-lidl-g
 lidl="$(nix build --no-link --print-out-paths "$flake#lidl")"
 mkdir -p rust-lib/generated
 # Local checks only: the nix build passes the exact logos-protocol version.
-"$gen" "$lidl/zcash_offline_module.lidl" --provider --no-trait \
+concurrency=$(jq -r '.concurrency // "single"' metadata.json)
+"$gen" "$lidl/zcash_offline_module.lidl" --provider --no-trait --concurrency "$concurrency" \
   --protocol-version "${LOGOS_PROTOCOL_VERSION:-0.9.0}" -o rust-lib/generated/provider_gen.rs
 echo "staged; cargo now works in $here/rust-lib"

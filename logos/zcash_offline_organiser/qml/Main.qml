@@ -51,12 +51,19 @@ Rectangle {
     function call(method, args, cb) {
         logos.callModuleAsync(moduleName, method, args, function (v) { cb(unwrap(v)) }, 30000)
     }
+    // Readable and sortable, like the ozm-backup-* folders Leave creates (local time here).
+    function sessionFolderName() { return "session-" + Qt.formatDateTime(new Date(), "yyyyMMdd-HHmmss") }
+    // One status call in flight: node events arrive in bursts and must not queue a call each.
+    property bool refreshing: false
     function refresh() {
+        if (refreshing) return
+        refreshing = true
         call("status", [], function (s) {
+            root.refreshing = false
             if (s.error) { root.message = "Cannot reach zcash_offline_module: " + s.error; root.failed = true; return }
             if (root.st === null && root.failed && root.message.indexOf("Cannot reach") === 0) { root.message = ""; root.failed = false }
             root.st = s
-            if (folder.text === "") folder.text = s.sessions + "/" + Date.now()
+            if (folder.text === "") folder.text = s.sessions + "/" + sessionFolderName()
         })
     }
     // First problem that blocks fleet creation, or "".
@@ -180,7 +187,7 @@ Rectangle {
     FolderDialog {
         id: chooser
         title: "Choose the parent folder for a new session"
-        onAccepted: folder.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, "")) + "/offline-zcash-" + Date.now()
+        onAccepted: folder.text = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, "")) + "/" + root.sessionFolderName()
     }
     ScrollView {
         id: scroll
@@ -271,7 +278,7 @@ Rectangle {
                     onTextEdited: root.revision++
                 }
                 Label2 { visible: !joinName.enabled; font.pixelSize: 12; text: "This device already joined a session, so it exports only. To join one of these invites here, leave the current session first." }
-                Btn { visible: !joinName.enabled; secondary: true; text: "Leave session…"; objectName: "leaveSessionButton"; enabled: !root.busy && !(root.st && root.st.syncing); onClicked: leaveConfirm.open() }
+                Btn { visible: !joinName.enabled; secondary: true; text: "Leave session…"; objectName: "leaveSessionButton"; enabled: !root.busy; onClicked: leaveConfirm.open() }
                 Btn {
                     objectName: "createFleetButton"
                     Layout.fillWidth: true; Layout.topMargin: 6
@@ -290,7 +297,7 @@ Rectangle {
                             root.busy = false; root.failed = !!r.error
                             if (r.error) { root.message = "Session not created: " + r.error; return }
                             root.exported = r
-                            folder.text = root.st.sessions + "/" + Date.now()   // the next export needs a new folder
+                            folder.text = root.st.sessions + "/" + root.sessionFolderName()   // the next export needs a new folder
                             root.message = r.joined || "Session created; this device did not join."
                             root.refresh()
                         })

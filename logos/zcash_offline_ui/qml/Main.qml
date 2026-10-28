@@ -679,7 +679,8 @@ Rectangle {
                                 enabled: !prep.busy && !splitCount.invalid && !splitValue.invalid
                                 onClicked: {
                                     prep.busy = true; prep.failed = false; prep.msg = "Proving the split…"
-                                    root.call("prepare_offline", [Number(splitCount.text), splitValue.text.trim()], function (r) {
+                                    // The bridge refuses a JS double for the i64 note count; `| 0` passes an integer.
+                                    root.call("prepare_offline", [Number(splitCount.text) | 0, splitValue.text.trim()], function (r) {
                                         prep.busy = false; prep.failed = !!r.error
                                         prep.msg = r.error ? "Not prepared: " + r.error
                                             : "Split " + String(r.txid || "").slice(0, 16) + "… submitted. Wait for Mined (10 confirmations on testnet), then sync before going offline."
@@ -799,8 +800,8 @@ Rectangle {
                     Layout.maximumWidth: 720
                     Layout.leftMargin: root.narrow ? 12 : 20; Layout.rightMargin: root.narrow ? 12 : 20
                     Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept." }
-                    Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !setup.busy && !(root.st && root.st.syncing); onClicked: leaveConfirm.open() }
-                    Muted { visible: !!(root.st && root.st.syncing); font.pixelSize: 12; text: "Leave is available when the wallet sync finishes." }
+                    Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !setup.busy; onClicked: leaveConfirm.open() }
+                    Muted { visible: !!(root.st && root.st.syncing); font.pixelSize: 12; text: "Leaving now stops the wallet sync; nothing is lost." }
                 }
                 Item { implicitHeight: 12 }
             }

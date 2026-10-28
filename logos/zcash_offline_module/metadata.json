@@ -7,6 +7,7 @@
   "category": "wallet",
   "description": "Offline Zcash payments over a local mesh: the ozm-node device (wallet, mesh relay and optional gateway) as a Logos core module",
   "main": "zcash_offline_module_plugin",
+  "concurrency": "multi",
   "dependencies": [],
   "codegen": {
     "rust": {

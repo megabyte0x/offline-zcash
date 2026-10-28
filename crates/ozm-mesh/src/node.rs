@@ -126,7 +126,7 @@ impl Node {
             let mut st = lock(&self.state);
             st.links.clear();
             st.events = None;
-            self.persist(&st);
+            self.save_store(&st);
         }
         for h in lock(&self.tasks).drain(..) {
             h.abort();
@@ -339,7 +339,16 @@ impl Node {
         }
     }
 
+    /// Every caller holds the state lock, which `shutdown` takes after setting `closed`, so the
+    /// store is never written after shutdown's final save and its folder can be moved away.
     fn persist(&self, st: &State) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+        self.save_store(st);
+    }
+
+    fn save_store(&self, st: &State) {
         if let Some(path) = &self.cfg.store_path {
             if let Err(e) = persist::save(path, &st.db) {
                 warn!(path = %path.display(), error = %e, "persisting mesh store failed");

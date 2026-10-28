@@ -61,7 +61,9 @@ impl App {
         Some(d)
     }
 
+    /// Callers hold `trust`, which `stop` also takes, so no pin is written after a stop.
     fn save_trust(&self, pins: &TrustPins) -> Result<()> {
+        ensure!(!self.is_stopped(), "device stopped");
         zcash_offline_core::wallet::write_atomic(&self.cfg.data.join("trust.json"), &serde_json::to_vec_pretty(pins)?)
     }
 

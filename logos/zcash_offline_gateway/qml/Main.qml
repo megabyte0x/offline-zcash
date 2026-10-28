@@ -362,8 +362,8 @@ Rectangle {
                 visible: root.joined
                 title: "Session"
                 Label2 { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept." }
-                Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !root.busy && !root.syncing; onClicked: leaveConfirm.open() }
-                Label2 { visible: root.syncing; font.pixelSize: 12; text: "Leave is available when the wallet sync finishes." }
+                Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !root.busy; onClicked: leaveConfirm.open() }
+                Label2 { visible: root.syncing; font.pixelSize: 12; text: "Leaving now stops the wallet sync; nothing is lost." }
             }
             Item { implicitHeight: 16 }
         }
