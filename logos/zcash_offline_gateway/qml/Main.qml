@@ -311,7 +311,9 @@ Rectangle {
                 visible: root.allowed
                 title: "Gateway wallet"
                 Text { text: root.st && root.st.wallet ? root.zec(root.st.wallet.spendable) : "Not started"; color: root.fg; font.pixelSize: 24; font.weight: Font.DemiBold }
-                Label2 { text: root.st && root.st.wallet ? (root.syncing ? "syncing in the background · height " + root.st.wallet.tip + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "synced to height " + root.st.wallet.tip)
+                Label2 { visible: !!(root.st && root.st.wallet && root.st.wallet.pending_incoming > 0)
+                         text: visible ? "Incoming " + root.zec(root.st.wallet.pending_incoming) + " · spendable after mined and scanned" : "" }
+                Label2 { text: root.st && root.st.wallet ? (root.syncing ? "syncing in the background · balance as of height " + root.st.wallet.tip + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "synced to height " + root.st.wallet.tip)
                                                          + (root.regtest ? " · used to serve test funds" : "") : "Start the gateway to sync its wallet." }
                 Label2 { visible: !!(root.st && !root.syncing && root.st.sync_error); color: root.bad; text: root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : "" }
                 Label2 { text: "Funding address" }

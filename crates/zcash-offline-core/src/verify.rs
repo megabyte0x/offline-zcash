@@ -105,6 +105,8 @@ pub struct Verified {
     /// Height of the payee's own chain view the checks ran against.
     pub view_height: u32,
     pub anchor_height: u32,
+    /// Decrypted outputs, without a chain position or witness yet.
+    pub notes: Vec<crate::wallet::StoredNote>,
 }
 
 /// Full payee check against this device's keys and last synced chain view.
@@ -113,11 +115,8 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
     let bundle = tx.ironwood_bundle().expect("checked");
     let fvk = me.fvk().map_err(|e| rej(code::NOT_TO_ME, e.to_string()))?;
     let ivk = fvk.to_ivk(Scope::External);
-    let amount: u64 = bundle
-        .decrypt_outputs_with_keys(&[ivk])
-        .iter()
-        .map(|(_, _, note, _, _)| note.value().inner())
-        .sum();
+    let outputs = bundle.decrypt_outputs_with_keys(&[ivk]);
+    let amount: u64 = outputs.iter().map(|(_, _, note, _, _)| note.value().inner()).sum();
     if amount == 0 {
         return Err(rej(code::NOT_TO_ME, "no output decrypts to this payee"));
     }
@@ -142,7 +141,9 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
     if amount > policy.floor_zat {
         return Err(rej(code::OVER_FLOOR, format!("{amount} zat is above the pending floor {}", policy.floor_zat)));
     }
-    Ok(Verified { tx: checked, amount, view_height: view.tip_height, anchor_height })
+    let notes = outputs.iter().map(|(_, _, note, _, _)| crate::wallet::StoredNote::from_note(
+        note, &fvk, checked.txid.clone(), anchor_height.saturating_add(1), 0)).collect();
+    Ok(Verified { tx: checked, amount, view_height: view.tip_height, anchor_height, notes })
 }
 
 #[cfg(test)]
@@ -170,10 +171,21 @@ mod tests {
         let mut payee = payer.clone();
         payee.notes.clear();
         let payment = build_payment(&mut payer, &a, b.address().unwrap(), 20_003, &policy).unwrap();
-        assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
+        let verified = verify_payment(&payment.raw, &b, &payee, &policy).unwrap();
+        assert_eq!(verified.amount, 20_003);
+        payee.record_incoming(verified.notes.clone()).unwrap();
+        payee.record_incoming(verified.notes).unwrap();
+        assert_eq!(payee.pending_incoming.iter().map(|n| n.value).sum::<u64>(), 20_003);
+        assert_eq!(payee.pending_incoming.len(), 1);
+        assert_eq!(payee.balance(), (0, 0));
+        assert_eq!(crate::builder::max_payment(&payee, &policy).unwrap().0, 0);
+        let mut payee: WalletState = serde_json::from_slice(&serde_json::to_vec(&payee).unwrap()).unwrap();
         payee.sync_from(&ChunkSource { prev: (1, "block1".into()), blocks: vec![BlockData {
             height: 2, hash: "block2".into(), txs: vec![payment.raw.clone()],
         }] }, &b.fvk().unwrap()).unwrap();
+        assert!(payee.pending_incoming.is_empty());
+        assert_eq!(payee.notes.len(), 1);
+        assert_eq!(payee.balance(), (20_003, 0));
         assert_eq!(verify_payment(&payment.raw, &b, &payee, &policy).unwrap().amount, 20_003);
         let conflict = build_payment(&mut competing, &a, b.address().unwrap(), 20_007, &policy).unwrap();
         assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).err().unwrap().code, code::CONFLICT);

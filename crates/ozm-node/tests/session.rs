@@ -466,6 +466,13 @@ async fn submission_hides_counterparty_and_nonce_results_survive_restart_and_reo
     book.payments.insert(txid.into(), recorded_payment(&a, txid, 7, "submitted"));
     std::fs::write(opts.data.join("payments.json"), serde_json::to_vec(&book).unwrap()).unwrap();
     let app = start(&opts).await.unwrap();
+    let incoming = zcash_offline_core::wallet::StoredNote {
+        position: 0, height: 2, txid: txid.into(), value: 7,
+        recipient: hex::encode(app.cfg.me.address().unwrap().to_raw_address_bytes()),
+        rho: hex::encode([0; 32]), rseed: hex::encode([7; 32]), nullifier: String::new(),
+        spent_in: None, locked_by: None,
+    };
+    app.state.lock().unwrap().0.record_incoming(vec![incoming.clone()]).unwrap();
     let (gateway, mut events) = Mesh::start(MeshConfig { peer_id: g.public().unwrap().peer_id.parse().unwrap(),
         ack_signer: Some(g.signing_key().unwrap()), ..Default::default() }).await.unwrap();
     let (left, right) = tokio::io::duplex(65536);
@@ -487,12 +494,15 @@ async fn submission_hides_counterparty_and_nonce_results_survive_restart_and_reo
     }).await.unwrap();
     app.mesh.shutdown(); gateway.shutdown();
     let app = start(&opts).await.unwrap();
-    for (seq, request_nonce, signer, status, expected) in [
-        (1, "wrong".to_string(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted"),
-        (2, nonce.clone(), &a, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted"),
-        (3, nonce.clone(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "mined"),
-        (4, nonce, &g, TxStatus::Submitted, "submitted"),
+    for (seq, request_nonce, signer, status, expected, pending) in [
+        (1, "wrong".to_string(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted", 7),
+        (2, nonce.clone(), &a, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted", 7),
+        (3, nonce.clone(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "mined", 7),
+        (4, nonce.clone(), &g, TxStatus::Submitted, "submitted", 7),
+        (5, nonce.clone(), &g, TxStatus::Expired, "expired", 0),
+        (6, nonce, &g, TxStatus::Conflict { reason: "competing spend".into() }, "conflict", 0),
     ] {
+        app.state.lock().unwrap().0.record_incoming(vec![incoming.clone()]).unwrap();
         let result = Signed::sign(GatewayResult { txid: txid.into(), status, tip_height: 2,
             gateway: "G".into(), seq, created_ms: 1 }, &g).unwrap();
         let notice = Signed::sign(Notice { request_nonce, result }, signer).unwrap();
@@ -500,6 +510,8 @@ async fn submission_hides_counterparty_and_nonce_results_survive_restart_and_reo
         app.handle_mesh_event(MeshEvent::Message { from: g.public().unwrap().peer_id.parse().unwrap(),
             msg_id: MsgId::random(), payload, hops: 1, broadcast: true }).await;
         assert_eq!(app.payment(txid).unwrap().state, expected);
+        assert_eq!(app.status()["wallet"]["pending_incoming"], pending);
+        assert_eq!(app.status()["wallet"]["spendable"], 0);
     }
     app.mesh.shutdown();
 }

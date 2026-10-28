@@ -17,6 +17,11 @@ A fresh wallet seeds its Ironwood ShardTree from
 `GetTreeState(birthday - 1)`; compact sync discovers notes locally. No viewing key
 goes to the gateway. The frontier size must match that block's Ironwood tree-size
 metadata. This checks consistency, not a history-leaf proof.
+Verified mesh receipts persist decrypted outputs immediately as incoming notes,
+separate from the spendable inventory. The UI shows their pending incoming value.
+Scanning merges by commitment and supplies the chain position and witness; only
+then can the note be selected for spending. Included/mined gateway reports start
+sync immediately; expired/conflicting reports remove unmined incoming outputs.
 The wallet persists a pruned tree and 200 checkpoints/roots;
 reorgs rewind notes, spends and witnesses to a retained checkpoint. A deeper reorg
 stops with a resync error rather than silently trusting a replacement history.

@@ -69,6 +69,7 @@
     <h2 id="h-wallet">Wallet</h2>
     <div class="big" id="bal">Loading…</div>
     <div class="mut" id="wal"></div>
+    <div id="incoming" class="msg" role="status" aria-live="polite"></div>
     <div class="box">
       <div class="small mut">Chain view (gateway-reported, not independently proved)</div>
       <div id="gateway">Finding a gateway…</div>
@@ -180,6 +181,7 @@ async function refresh() {
     $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');
     $('bal').textContent = zec(s.wallet.spendable);
     $('wal').textContent = `spendable · ${zec(s.wallet.locked)} locked in pending payments · ${s.wallet.notes} notes · balance as of height ${s.wallet.tip}` + (s.syncing ? '. Syncing in the background; available notes remain usable.' : '');
+    $('incoming').textContent = s.wallet.pending_incoming ? `Incoming ${zec(s.wallet.pending_incoming)} · spendable after mined and scanned` : '';
     const g = s.selected_gateway;
     $('gateway').textContent = g ? `Gateway ${g.name} · ${g.hops} hops · tip ${g.tip} · mesh ID ${g.peer_id}` : s.online ? 'This device is the gateway (chain service).' : 'Finding a gateway over the mesh…';
     const sources = s.chain_sources || [];

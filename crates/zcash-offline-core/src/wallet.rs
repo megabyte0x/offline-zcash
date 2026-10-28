@@ -42,6 +42,17 @@ pub struct StoredNote {
 }
 
 impl StoredNote {
+    pub fn from_note(note: &Note, fvk: &FullViewingKey, txid: String, height: u32, position: u64) -> Self {
+        Self { position, height, txid, value: note.value().inner(),
+            recipient: hex::encode(note.recipient().to_raw_address_bytes()), rho: hex::encode(note.rho().to_bytes()),
+            rseed: hex::encode(note.rseed().as_bytes()), nullifier: hex::encode(note.nullifier(fvk).to_bytes()),
+            spent_in: None, locked_by: None }
+    }
+
+    pub fn commitment(&self) -> Result<[u8; 32]> {
+        Ok(orchard::note::ExtractedNoteCommitment::from(self.note()?.commitment()).to_bytes())
+    }
+
     pub fn note(&self) -> Result<Note> {
         let recipient: [u8; 43] = hex::decode(&self.recipient)?.try_into().map_err(|_| anyhow!("recipient"))?;
         let recipient = Option::from(orchard::Address::from_raw_address_bytes(&recipient)).ok_or_else(|| anyhow!("recipient"))?;
@@ -67,6 +78,9 @@ pub struct WalletState {
     /// Ironwood tree root after each scanned block (hex), by height.
     pub roots: BTreeMap<u32, String>,
     pub notes: Vec<StoredNote>,
+    /// Mesh-decrypted outputs, without a chain position or witness. Never selected for spending.
+    #[serde(default)]
+    pub pending_incoming: Vec<StoredNote>,
     /// Every Ironwood nullifier revealed on chain (hex), for conflict checks.
     #[serde(default)]
     pub chain_nullifiers: std::collections::BTreeSet<String>,
@@ -131,6 +145,16 @@ impl WalletState {
         (spendable, locked)
     }
 
+    pub fn record_incoming(&mut self, notes: Vec<StoredNote>) -> Result<()> {
+        for note in notes {
+            let commitment = note.commitment()?;
+            if !self.notes.iter().chain(&self.pending_incoming).any(|n| n.commitment().is_ok_and(|c| c == commitment)) {
+                self.pending_incoming.push(note);
+            }
+        }
+        Ok(())
+    }
+
     /// Height at which this anchor (tree root) was the tip root, if known.
     pub fn anchor_height(&self, anchor: &[u8; 32]) -> Option<u32> {
         let a = hex::encode(anchor);
@@ -168,9 +192,11 @@ impl WalletState {
     /// payments so a reorg never frees a note we already paid with.
     pub fn reset_keep_locks(&mut self) {
         let reservations = std::mem::take(&mut self.reservations);
+        let pending_incoming = std::mem::take(&mut self.pending_incoming);
         let (birthday, created_at) = (self.birthday, self.created_at);
         *self = WalletState::default();
         self.reservations = reservations;
+        self.pending_incoming = pending_incoming;
         self.birthday = birthday;
         self.created_at = created_at;
     }
@@ -317,20 +343,12 @@ impl WalletState {
                     let note = decrypted.next().expect("one decryption per action");
                     let marked = note.is_some();
                     if let Some(note) = note {
+                        self.pending_incoming.retain(|n| !n.commitment().is_ok_and(|c| c == a.cmx));
                         let nullifier = hex::encode(note.nullifier(fvk).to_bytes());
                         if !self.notes.iter().any(|n| n.nullifier == nullifier) {
-                            self.notes.push(StoredNote {
-                                position,
-                                height: block.height,
-                                txid: txid.clone(),
-                                value: note.value().inner(),
-                                recipient: hex::encode(note.recipient().to_raw_address_bytes()),
-                                rho: hex::encode(note.rho().to_bytes()),
-                                rseed: hex::encode(note.rseed().as_bytes()),
-                                locked_by: self.reservations.get(&nullifier).map(|r| r.0.clone()),
-                                nullifier,
-                                spent_in: None,
-                            });
+                            let mut stored = StoredNote::from_note(&note, fvk, txid.clone(), block.height, position);
+                            stored.locked_by = self.reservations.get(&nullifier).map(|r| r.0.clone());
+                            self.notes.push(stored);
                             new_notes += 1;
                         } else if let Some(n) = self.notes.iter_mut().find(|n| n.nullifier == nullifier) {
                             n.position = position;

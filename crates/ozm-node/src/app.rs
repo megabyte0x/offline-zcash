@@ -411,6 +411,9 @@ impl App {
     /// payments built while the sync ran, and persists it.
     fn install_wallet(&self, mut wallet: WalletState) -> Result<(u64, u64, u32)> {
         let mut st = self.state.lock().unwrap();
+        // Receipts and result removals can arrive while this copy was scanning.
+        wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
+        wallet.pending_incoming.retain(|n| !wallet.notes.iter().any(|mined| mined.commitment().ok() == n.commitment().ok()));
         for (nf, reservation) in &st.0.reservations {
             if reservation.1 == 0 || wallet.tip_height <= reservation.1 {
                 wallet.reservations.entry(nf.clone()).or_insert_with(|| reservation.clone());
@@ -783,7 +786,7 @@ impl App {
         let me = self.cfg.me.clone();
         let policy = self.cfg.fleet.policy.clone();
         let mut wallet = self.state.lock().unwrap().0.clone();
-        let (wallet, built) = tokio::task::spawn_blocking(move || {
+        let (mut wallet, built) = tokio::task::spawn_blocking(move || {
             builder::prepare_offline(&mut wallet, &me, count, value, &policy).map(|b| (wallet, b))
         }).await??;
         let (_, checked) = verify::check_tx(&built.raw, &self.cfg.fleet.policy)?;
@@ -797,6 +800,7 @@ impl App {
         payment.note(format!("Prepare for offline: {count} × {value} zat; fee {} zat; wait for mined before going offline", built.fee));
         {
             let mut st = self.state.lock().unwrap();
+            wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
             st.0 = wallet;
             st.1.payments.insert(payment.txid.clone(), payment.clone());
             self.persist(&st.0, &st.1)?;
@@ -834,7 +838,7 @@ impl App {
         let me = self.cfg.me.clone();
         let mut wallet = self.state.lock().unwrap().0.clone();
         let to_addr = if t == Some("payee") { DeviceSecret::generate("X", "payee").address()? } else { self.cfg.fleet.network.decode_address(&address)? };
-        let (wallet, mut built) = tokio::task::spawn_blocking(move || {
+        let (mut wallet, mut built) = tokio::task::spawn_blocking(move || {
             builder::build_payment(&mut wallet, &me, to_addr, amount, &policy).map(|b| (wallet, b))
         })
         .await??;
@@ -848,6 +852,7 @@ impl App {
         }
         let payment = {
             let mut st = self.state.lock().unwrap();
+            wallet.pending_incoming = std::mem::take(&mut st.0.pending_incoming);
             st.0 = wallet;
             // Time-based so it keeps rising when the same device is reinstalled with an empty store.
             st.1.seq_out = (st.1.seq_out + 1).max(now_ms());
@@ -1185,6 +1190,7 @@ impl App {
                 )).transpose()?;
                 {
                     let mut st = self.state.lock().unwrap();
+                    st.0.record_incoming(v.notes)?;
                     st.1.last_seq_in.insert(from.to_string(), s.seq);
                     let mut p = Payment {
                         txid: v.tx.txid.clone(),
@@ -1281,7 +1287,7 @@ impl App {
 
     // ---------- gateway ----------
 
-    async fn publish_gateway(&self, mut entry: GatewayEntry, status: TxStatus, tip: u32, submitted: bool) -> Result<()> {
+    async fn publish_gateway(self: &Arc<Self>, mut entry: GatewayEntry, status: TxStatus, tip: u32, submitted: bool) -> Result<()> {
         let txid = entry.txid.clone();
         let (result, notify) = {
             let mut st = self.state.lock().unwrap();
@@ -1555,12 +1561,11 @@ impl App {
                     let _ = self.send_to(&peer, Body::Rcpt(receipt)).await;
                 }
             }
-            if self.gateway_options().0.is_none() { let _ = self.request_mesh_sync(true).await; }
         }
         Ok(())
     }
 
-    fn on_result(&self, from: &str, r: Signed<GatewayResult>) -> Result<()> {
+    fn on_result(self: &Arc<Self>, from: &str, r: Signed<GatewayResult>) -> Result<()> {
         r.verify_key(&self.device(from)?)?;
         self.require_gateway(from)?;
         let txid = r.body.txid.clone();
@@ -1582,12 +1587,20 @@ impl App {
             TxStatus::Conflict { reason } => ("conflict", format!("conflict reported by {from}: {reason}")),
         };
         self.event("result", json!({"txid": txid, "from": from, "state": state}));
-        self.update(&txid, |p| {
+        {
+            let mut st = self.state.lock().unwrap();
+            if matches!(r.body.status, TxStatus::Expired | TxStatus::Conflict { .. }) {
+                st.0.pending_incoming.retain(|n| n.txid != txid);
+            }
+            let p = st.1.payments.get_mut(&txid).expect("checked payment");
             p.state = state.into();
             p.note(text);
             if included.is_some() { p.receipt = included; }
             p.result = Some(r);
-        })
+            self.persist(&st.0, &st.1)?;
+        }
+        if matches!(state, "included" | "mined") { self.start_sync(); }
+        Ok(())
     }
 
     // ---------- retry loop ----------
@@ -1669,6 +1682,7 @@ impl App {
             "neighbor_links": self.mesh.neighbor_links().into_iter().map(|(p, kind)| json!({"name": self.peer_name(p), "peer_id": p.to_string(), "kind": kind})).collect::<Vec<_>>(),
             "mesh": self.mesh.stats(),
             "wallet": {"tip": st.0.tip_height, "spendable": spendable, "locked": locked,
+                        "pending_incoming": st.0.pending_incoming.iter().map(|n| n.value).sum::<u64>(),
                         "notes": st.0.notes.iter().filter(|n| n.spent_in.is_none()).count()},
             "payments": st.1.payments.len(),
             "refusals": st.1.refusals.len(),

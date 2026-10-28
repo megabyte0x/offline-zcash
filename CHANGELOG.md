@@ -13,6 +13,7 @@ It is not security reviewed and does not support real funds.
 - Fresh wallets record their creation time and choose their own scan start automatically. Online creation starts 100 blocks behind the tip; offline creation uses a day of overlap estimated from the release checkpoint and first gateway contact. Existing wallet scan starts remain unchanged. Birthday inputs are removed from Basecamp; the CLI override remains for benches.
 - Wallets sync automatically at startup, on gateway discovery and on new chain tips. Refresh is optional. Frontier initialization checks the Ironwood tree size against compact-block metadata. Offline bootstrap uses an authenticated chain-clock exchange; upgrade gateways together with wallets.
 - Pay, Max and Prepare remain available during sync. Block downloads no longer hold the payment/apply lock, and installed batches preserve reservations made during downloads. Wallet balances state their scanned height while catching up.
+- Verified mesh payments immediately add durable incoming notes and a separate pending incoming balance. Scanning merges them by commitment, never counts them as spendable early, and included/mined reports trigger sync. Expired/conflicting reports remove the pending incoming notes.
 - Workspace, four Logos packages and Android version are 0.7.4; Android version code is 13.
 
 ## [0.7.4] - 2026-10-28

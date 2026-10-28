@@ -24,8 +24,24 @@ took 207 ms and the gateway reported mined 269 ms after the build event, while
 the wallet was still behind. RPC independently confirmed height 710. A 100 ms
 per-block latency proxy made the 600-block catch-up observable; it did not fake
 blocks or submission results. Screenshots/recording are in the run artifacts.
-Catch-up, immediate incoming notes, deep-reorg recovery and automatic Prepare
-remain the next items in this candidate. macOS has not been run here.
+**Item 3:** mesh-decrypted notes persist as pending incoming, separate from
+spendable notes. Real Basecamp received 0.0103 Regtest ZEC at height 710: the
+durable incoming event followed mesh arrival by 138 ms (133 ms verifying).
+Before mining the wallet showed 3.0137 spendable plus 0.0103 incoming; automatic
+scan of block 711 changed it to 3.024 spendable with no pending output or duplicate.
+The Gateway view showed the same pending value. The real web wallet separately
+received 0.0019, showed zero spendable before mining and 0.0019 after scanning 712.
+Core coverage checks serialization, commitment merge and exclusion from Max;
+signed-notice integration coverage checks expired/conflict removal and that a
+Mined report alone does not make an unscanned incoming note spendable.
+Catch-up, deep-reorg recovery and automatic Prepare remain next. macOS has not
+been run here.
+
+**Next witness work:** immediate mesh receipt does not yet mean immediate spending.
+The pending note has no canonical position/witness. A contained implementation
+needs an authenticated single-block/frontier or Ironwood subtree-root path before
+it can bypass catch-up; that is deferred rather than trusting a gateway's Mined
+report as a spend witness. Normal scanning remains the spendability gate.
 
 | Version | What it proves | Doc |
 |---|---|---|

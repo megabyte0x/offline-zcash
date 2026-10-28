@@ -487,6 +487,10 @@ Rectangle {
                             text: root.st && root.st.wallet ? "spendable · " + root.zec(root.st.wallet.locked) + " locked in pending payments · "
                                             + root.st.wallet.notes + " notes · balance as of height " + root.st.wallet.tip : ""
                         }
+                        Msg {
+                            visible: !!(root.st && root.st.wallet && root.st.wallet.pending_incoming > 0)
+                            text: visible ? "Incoming " + root.zec(root.st.wallet.pending_incoming) + " · spendable after mined and scanned" : ""
+                        }
                         Msg { text: root.st && root.st.syncing ? "Syncing in the background" + (root.st.chain_tip ? ": height " + root.st.wallet.tip + " of " + root.st.chain_tip : "") + ". Available notes can still be paid or prepared." : root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : ""
                               failed: !!(root.st && !root.st.syncing && root.st.sync_error) }
                         Rectangle {
