@@ -44,9 +44,6 @@ pub trait ZcashOfflineModule: Send + Sync + 'static {
     /// Asks the desktop to open a folder containing a fleet. UI apps cannot open local file URLs.
     fn open_fleet_folder(&self, folder: String) -> String;
 
-    /// Current public-testnet tip from the default TLS lightwalletd servers, for choosing a session birthday.
-    fn testnet_tip(&self) -> String;
-
     /// Largest spendable amount and the exact builder fee. Does not lock notes or make a payment.
     fn max_payment(&self) -> String;
 
@@ -74,10 +71,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc, OnceLock,
-    },
+    sync::{Arc, OnceLock},
 };
 use zcash_offline_core::{parse_zec, DeviceSecret, Fleet};
 // `Mutex` comes from the generated scaffold (`std::sync::Mutex`).
@@ -93,7 +87,9 @@ fn rt() -> &'static tokio::runtime::Runtime {
 #[serde(deny_unknown_fields)]
 struct StartOptions {
     network: Option<zcash_offline_core::fleet::Network>,
-    birthday: Option<u32>,
+    // Read old saved options, but never use a UI-supplied birthday for a new wallet.
+    #[serde(rename = "birthday", skip_serializing)]
+    _birthday: Option<u32>,
     listen: Option<String>,
     dial: Option<Vec<String>>,
     rpc: Option<String>,
@@ -123,15 +119,6 @@ struct Node {
     /// Serializes start, join and leave, so concurrent calls never start two meshes or move a
     /// running device's folder.
     lifecycle: Mutex<()>,
-    /// A first testnet scan can take minutes; it runs as a task and never holds a call.
-    sync: Arc<SyncState>,
-}
-
-#[derive(Default)]
-struct SyncState {
-    running: AtomicBool,
-    error: Mutex<Option<String>>,
-    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 fn home() -> Result<PathBuf> {
@@ -177,8 +164,6 @@ impl Node {
             }
             None => json!({}),
         };
-        v["syncing"] = json!(self.sync.running.load(SeqCst));
-        v["sync_error"] = json!(self.sync.error.lock().unwrap().clone());
         v["joined"] = json!(joined(&home));
         v["running"] = json!(app.is_some());
         v["home"] = json!(home.display().to_string());
@@ -208,8 +193,8 @@ impl Node {
             return self.status_value();
         }
         let home = home()?;
-        ozm_node::join_open_on(&home, o.network.unwrap_or(zcash_offline_core::fleet::Network::NEW_SESSION), o.birthday.unwrap_or(0))?;
         let mut opts = ozm_node::RunOpts::for_home(&home);
+        opts.network = o.network.unwrap_or(zcash_offline_core::fleet::Network::NEW_SESSION);
         if let Some(l) = &o.listen {
             opts.listen = l.parse().with_context(|| format!("listen {l}"))?;
         }
@@ -255,34 +240,15 @@ impl Node {
 
     fn start_sync(&self) -> Result<Value> {
         let app = self.app()?;
-        let mut task = self.sync.task.lock().unwrap();
-        if !self.sync.running.swap(true, SeqCst) {
-            *self.sync.error.lock().unwrap() = None;
-            let sync = self.sync.clone();
-            *task = Some(rt().spawn(async move {
-                if let Err(e) = app.sync().await {
-                    let error = format!("{e:#}");
-                    app.event("sync-error", json!({"error": error}));
-                    *sync.error.lock().unwrap() = Some(error);
-                }
-                sync.running.store(false, SeqCst);
-            }));
-        }
+        let _runtime = rt().enter();
+        app.start_sync();
         Ok(json!({"syncing": true}))
     }
 
     /// Payments wait for the wallet lock a sync holds; refuse instead of waiting minutes.
     fn not_syncing(&self) -> Result<()> {
-        anyhow::ensure!(!self.sync.running.load(SeqCst), "wallet sync in progress; try again when it finishes");
+        anyhow::ensure!(!self.app()?.status()["syncing"].as_bool().unwrap_or(false), "wallet sync in progress; try again when it finishes");
         Ok(())
-    }
-
-    /// Cancels a running sync. Batches apply atomically and the next sync resumes from the last one.
-    fn cancel_sync(&self) {
-        if let Some(task) = self.sync.task.lock().unwrap().take() {
-            task.abort();
-        }
-        self.sync.running.store(false, SeqCst);
     }
 }
 
@@ -377,11 +343,6 @@ impl ZcashOfflineModule for Node {
         out(self.start_sync())
     }
 
-    fn testnet_tip(&self) -> String {
-        out(within("the testnet lightwalletd servers", ozm_node::lightwallet::Lightwallet::connect(&zcash_offline_core::fleet::default_servers()))
-            .map(|s| json!({"blocks": s.tip, "sources": s.sources})))
-    }
-
     fn max_payment(&self) -> String {
         out(self.app().and_then(|a| a.max_payment()))
     }
@@ -418,7 +379,6 @@ impl ZcashOfflineModule for Node {
             let _lifecycle = self.lifecycle.lock().unwrap();
             let home = home()?;
             if let Some(app) = self.current() {
-                self.cancel_sync();
                 // Waits for an in-flight payment or wallet update; afterwards nothing writes to `home`.
                 rt().block_on(app.stop());
                 *self.app.lock().unwrap() = None;
@@ -426,7 +386,6 @@ impl ZcashOfflineModule for Node {
             if let Some(api) = self.api.lock().unwrap().take() {
                 api.abort();
             }
-            *self.sync.error.lock().unwrap() = None;
             let open = Fleet::load(&home.join("fleet.json")).is_ok_and(|f| f.open);
             let backup = ozm_node::leave_home(&home)?;
             let kept = if open { " Start again without an invite on the same network to use this wallet again." } else { "" };

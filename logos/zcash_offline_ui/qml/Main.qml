@@ -296,7 +296,7 @@ Rectangle {
                 Pill {
                     visible: root.st !== null
                     text: !root.running ? "stopped" : root.st.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
-                          : root.st.online ? "gateway / online"
+                          : root.st.ready ? "ready · " + (root.st.online ? "gateway / online" : "gateway via mesh") : root.st.online ? "gateway / online"
                           : root.st.selected_gateway ? "offline · gateway via mesh" : "offline · no gateway yet"
                     textColor: !root.running ? root.mut : (root.st.online || root.st.selected_gateway) ? root.ok : root.warn
                 }
@@ -411,8 +411,6 @@ Rectangle {
                         visible: advToggle.open
                         Layout.fillWidth: true
                         spacing: 4
-                        Label2 { visible: !root.joined; text: "Wallet birthday height (0 = network default)" }
-                        Field { id: birthday; visible: !root.joined; text: "0"; inputMethodHints: Qt.ImhDigitsOnly; Accessible.name: "Birthday height" }
                         Label2 { text: "Dial address (optional)" }
                         Field { id: dial; objectName: "dialInput"; placeholderText: "operator-ip:7777, comma-separated"; Accessible.name: "Dial address" }
                         Muted { font.pixelSize: 12; text: "Use when local discovery is blocked, for example macOS Local Network permission." }
@@ -438,7 +436,6 @@ Rectangle {
                             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
                             var opts = peers.length ? { dial: peers } : {}
                             opts.network = useRegtest.checked ? "regtest" : "testnet"
-                            opts.birthday = Number(birthday.text) || 0
                             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
                             opts.ble = bluetooth.checked
                             var startNode = function () {
@@ -517,7 +514,8 @@ Rectangle {
                         Note { text: root.st ? root.st.gateway_warning || "" : "" }
                         Btn {
                             secondary: true
-                            text: wallet.busy ? "Working…" : root.st && root.st.online ? "Sync now (from the chain service)" : "Sync now (from a gateway over the mesh)"
+                            text: wallet.busy ? "Refreshing…" : "Refresh balance (optional)"
+                            Layout.alignment: Qt.AlignLeft
                             enabled: !wallet.busy
                             onClicked: {
                                 wallet.busy = true; wallet.failed = false; wallet.msg = "Syncing…"

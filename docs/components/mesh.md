@@ -32,8 +32,14 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 ### v0.7.0 compact sync
 
 - Fleet network defaults to Regtest. Testnet identities use `utest1` and a birthday
-  at/after NU7, seeded from GetTreeState at birthday−1; Regtest starts at 1, not
-  4,465,026. Choose the birthday before receiving funds.
+  chosen per device automatically, seeded from GetTreeState at birthday−1 and
+  checked against the block's Ironwood commitment-tree size. Regtest uses RPC
+  tip−100, at least 1. Offline-created devices retain creation time until chain
+  contact, then conservatively interpolate creation−one day, not the contact tip.
+  v0.7.4 appends authenticated `clockq`/`clockr` variants carrying only the
+  gateway's tip height/time; creation time never leaves the wallet. Existing
+  compact batch, envelope and frame layouts are unchanged. Upgrade gateways for
+  automatic offline-created wallet bootstrap; older nodes drop the new variants.
 - `syncq` normally requests only the current height/hash; the gateway asks for
   the 200-hash retained history **only on predecessor mismatch**. `syncr`
   carries Ironwood nf/cmx/epk/52-byte ct, not full transactions. Consecutive empty
@@ -44,11 +50,12 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   hashes and recent nullifiers with their cursor. Reorgs rewind a common retained
   checkpoint and replace orphaned effects; deeper forks require resync from the
   original birthday. Reservations survive a rewind. No unmined change is spendable.
-- Gateway tip pushes carry only height/hash in the 512 B bucket and coalesce
-  changes for 15 minutes or 200 blocks. A device requests accumulated blocks only
-  when its view differs; catch-up batches contain at most 200 blocks. Routine
-  balance refresh may lag 15 minutes. Payment-result transitions push immediately;
-  manual/payment-triggered sync bypasses coalescing. A 15-minute fallback backs
+- Since v0.7.4 gateway tip pushes carry height/hash on every observed new tip
+  (polling every five seconds), so devices sync without a user action. This
+  intentionally prioritises readiness over v0.7.0's 15-minute coalescing budget;
+  its dated traffic measurements below do not describe v0.7.4. A device requests
+  blocks only when its view differs; mesh batches still contain at most 200
+  blocks. Payment-result transitions push immediately. A 15-minute fallback backs
   off to an hour when unchanged; an unchanged answer is a small height/hash tip,
   not a compact batch. Full signed presence refreshes **hourly** on stable links,
   expires after three hours, and is immediate on link-up. A gateway role/change

@@ -122,10 +122,10 @@ For operator setup see [Basecamp](basecamp-install.md) or the older invited
 ## Public testnet (v0.7.0)
 
 Use a **new home/fleet**, never relabel a funded Regtest wallet. Public testnet uses
-TAZ and `utest1` addresses. Network and birthday are saved on first creation;
-existing fleet files win over startup options. The default birthday is NU7
-height 4,465,026; choose a more recent height **before funding** to reduce first
-sync. Never choose a birthday later than a payment you need to recover.
+TAZ and `utest1` addresses. Scan start is automatic for freshly generated keys,
+including wallets created offline. Existing wallets keep their stored scan start;
+existing fleet settings remain authoritative for the network. Sync runs in the
+background without a manual step. Seed restoration is not supported.
 
 Create a gateway invite, install it on the device with internet, and start:
 

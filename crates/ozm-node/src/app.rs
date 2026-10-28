@@ -173,10 +173,12 @@ pub struct App {
     last_sync_req: std::sync::atomic::AtomicU64,
     sync_backoff: std::sync::atomic::AtomicU64,
     sync_apply: tokio::sync::Mutex<()>,
+    sync_running: std::sync::atomic::AtomicBool,
+    sync_error: Mutex<Option<String>>,
+    sync_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     compact_assembly: Mutex<zcash_offline_core::sync::Assembly>,
     pub(crate) sync_sources: Mutex<Vec<String>>,
     pub(crate) chain_view: Mutex<(u32, String)>,
-    last_tip_push: Mutex<(u64, u32, String)>,
     gateway_apply: tokio::sync::Mutex<()>,
     sub_rates: Mutex<BTreeMap<String, (f64, std::time::Instant)>>,
     /// The submission `gateway_apply` is processing (txid, bytes) and the notification targets of
@@ -207,6 +209,12 @@ impl App {
             if path.exists() { std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?; }
         }
         let mut wallet = WalletState::load(&wallet_path(&cfg))?;
+        if wallet.created_at == 0 {
+            wallet.created_at = cfg.me.created_at;
+            if wallet.birthday == 0 && cfg.me.created_at == 0 {
+                wallet.birthday = cfg.fleet.birthday.max(if cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet { 4_465_026 } else { 1 });
+            }
+        }
         let mut book: Book = match std::fs::read(book_path(&cfg)) {
             Ok(b) => serde_json::from_slice(&b)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Book::default(),
@@ -240,10 +248,12 @@ impl App {
             last_sync_req: Default::default(),
             sync_backoff: std::sync::atomic::AtomicU64::new(1),
             sync_apply: Default::default(),
+            sync_running: Default::default(),
+            sync_error: Default::default(),
+            sync_task: Default::default(),
             compact_assembly: Default::default(),
             sync_sources: Default::default(),
             chain_view: Default::default(),
-            last_tip_push: Default::default(),
             gateway_apply: Default::default(),
             sub_rates: Default::default(),
             sub_in_flight: Default::default(),
@@ -311,6 +321,7 @@ impl App {
     /// recreating files there.
     pub async fn stop(&self) {
         self.mesh.shutdown();
+        if let Some(task) = self.sync_task.lock().unwrap().take() { task.abort(); }
         let _pay = self.pay_lock.lock().await;
         let _sync = self.sync_apply.lock().await;
         let _state = self.state.lock().unwrap();
@@ -368,6 +379,31 @@ impl App {
 
     // ---------- online ----------
 
+    pub fn start_sync(self: &Arc<Self>) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.mesh.is_shutdown() || self.is_stopped() || self.sync_running.swap(true, SeqCst) { return; }
+        *self.sync_error.lock().unwrap() = None;
+        let app = self.clone();
+        *self.sync_task.lock().unwrap() = Some(tokio::spawn(async move {
+            if let Err(e) = app.sync().await {
+                let error = format!("{e:#}");
+                // A wallet opened offline is usable immediately; discovery will retry the sync.
+                if app.gateway_options().0.is_some() || app.selected_gateway().is_some() {
+                    *app.sync_error.lock().unwrap() = Some(error.clone());
+                    app.event("sync-error", json!({"error": error}));
+                }
+            }
+            app.sync_running.store(false, SeqCst);
+        }));
+    }
+
+    fn resolve_birthday(&self, tip: u32, time: u64) -> Result<u32> {
+        let mut st = self.state.lock().unwrap();
+        st.0.resolve_birthday(self.cfg.fleet.network, self.cfg.fleet.birthday, tip, time);
+        self.persist(&st.0, &st.1)?;
+        Ok(st.0.birthday)
+    }
+
     /// Replaces the wallet with a freshly synced copy, keeping locks taken by
     /// payments built while the sync ran, and persists it.
     fn install_wallet(&self, mut wallet: WalletState) -> Result<(u64, u64, u32)> {
@@ -398,11 +434,11 @@ impl App {
             return Ok(json!({"requested_from": gw, "tip": self.state.lock().unwrap().0.tip_height}));
         };
         let _g = self.sync_apply.lock().await;
-        let mut wallet = self.state.lock().unwrap().0.clone();
         let fvk = self.cfg.me.fvk()?;
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
             let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
-            let birthday = self.cfg.fleet.birthday;
+            let birthday = self.resolve_birthday(source.tip, source.tip_time().await?)?;
+            let mut wallet = self.state.lock().unwrap().0.clone();
             let checkpoints = |w: &WalletState| w.hashes.iter().map(|(h, s)| (*h, s.clone())).collect::<Vec<_>>();
             let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &checkpoints(&wallet), birthday, SCAN_BLOCKS).await?;
             loop {
@@ -425,6 +461,10 @@ impl App {
             self.event("synced", out.clone());
             return Ok(out);
         }
+        let rpc = Rpc::new(&url);
+        let tip = tokio::task::spawn_blocking(move || rpc.tip()).await??;
+        self.resolve_birthday(tip, 0)?;
+        let mut wallet = self.state.lock().unwrap().0.clone();
         let (wallet, report) = tokio::task::spawn_blocking(move || {
             let r = wallet.sync(&Rpc::new(&url), &fvk);
             r.map(|rep| (wallet, rep))
@@ -440,22 +480,35 @@ impl App {
     pub async fn request_mesh_sync(self: &Arc<Self>, force: bool) -> Result<String> {
         use std::sync::atomic::Ordering;
         let gw = self.gateways().into_iter().next().ok_or_else(|| anyhow!("no gateway in the fleet"))?;
+        if let Some(gateway) = self.selected_gateway() {
+            let _ = self.reported_tip.compare_exchange(0, gateway.announcement.body.tip, Ordering::Relaxed, Ordering::Relaxed);
+        }
         let last = self.last_sync_req.load(Ordering::Relaxed);
         if !force && now_ms().saturating_sub(last) < 5_000 {
             return Ok(gw);
         }
         self.last_sync_req.store(now_ms(), Ordering::Relaxed);
-        let (have_height, have_hash) = {
+        let (have_height, have_hash, birthday) = {
             let st = self.state.lock().unwrap();
-            (st.0.tip_height, st.0.tip_hash.clone())
+            (st.0.tip_height, st.0.tip_hash.clone(), st.0.birthday)
         };
-        self.send_to(&gw, Body::CompactReq { have_height, have_hash, checkpoints: vec![], birthday: self.cfg.fleet.birthday }).await?;
+        if birthday == 0 {
+            self.send_to(&gw, Body::ChainClockReq).await?;
+        } else {
+            self.send_to(&gw, Body::CompactReq { have_height, have_hash, checkpoints: vec![], birthday }).await?;
+        }
         Ok(gw)
     }
 
     pub(crate) async fn fallback_sync(self: &Arc<Self>, seconds: u64) {
         use std::sync::atomic::Ordering::Relaxed;
-        let delay = seconds.max(900).saturating_mul(self.sync_backoff.load(Relaxed)).min(3600) * 1000;
+        let behind = {
+            let st = self.state.lock().unwrap();
+            let chain = self.chain_view.lock().unwrap();
+            st.0.tip_height == 0 || st.0.tip_height < self.reported_tip.load(Relaxed)
+                || (chain.0 == st.0.tip_height && chain.1 != st.0.tip_hash)
+        };
+        let delay = if behind { 5_000 } else { seconds.max(900).saturating_mul(self.sync_backoff.load(Relaxed)).min(3600) * 1000 };
         if now_ms().saturating_sub(self.last_sync_req.load(Relaxed)) >= delay {
             let _ = self.request_mesh_sync(false).await;
             self.sync_backoff.store((self.sync_backoff.load(Relaxed) * 2).min(12), Relaxed);
@@ -466,6 +519,17 @@ impl App {
         let configured = self.gateway_options().0.unwrap_or_default();
         if configured.is_empty() { self.cfg.fleet.servers.clone() }
         else { configured.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() }
+    }
+
+    async fn on_clock_req(&self, from: &str) -> Result<()> {
+        let url = self.gateway_options().0.ok_or_else(|| anyhow!("not an online gateway"))?;
+        let (height, time) = if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
+            let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+            (source.tip, source.tip_time().await?)
+        } else {
+            tokio::task::spawn_blocking(move || Rpc::new(&url).tip().map(|tip| (tip, 0))).await??
+        };
+        self.send_to(from, Body::ChainClock { height, time }).await
     }
 
     async fn on_compact_req(self: &Arc<Self>, from: &str, have: u32, hash: String, checkpoints: Vec<(u32, String)>, birthday: u32) -> Result<()> {
@@ -484,12 +548,17 @@ impl App {
                 let rpc = Rpc::new(&url);
                 let tip = rpc.tip()?;
                 let mut prev = (have, hash);
+                let seed = if have == 0 && birthday > 1 {
+                    let seed = rpc.seed(birthday - 1)?;
+                    prev = (seed.height, seed.hash.clone());
+                    Some(seed)
+                } else { None };
                 if have > 0 && (have > tip || rpc.block_hash(have)? != prev.1) {
                     if checkpoints.is_empty() { return Ok(None); }
                     prev = checkpoints.iter().rev().find(|(h, s)| *h <= tip && rpc.block_hash(*h).is_ok_and(|v| v == *s))
                         .cloned().ok_or_else(|| anyhow!("reorg exceeds retained checkpoints"))?;
                 }
-                let mut batch = zcash_offline_core::sync::Batch { prev_height: prev.0, prev_hash: prev.1, seed: None,
+                let mut batch = zcash_offline_core::sync::Batch { prev_height: prev.0, prev_hash: prev.1, seed,
                     blocks: vec![], chain_tip: tip, sources: vec!["Regtest JSON-RPC".into()] };
                 for h in prev.0 + 1..=tip.min(prev.0 + 200) {
                     let (hash, txs) = rpc.block_txs(h)?;
@@ -526,6 +595,7 @@ impl App {
         let _guard = self.sync_apply.lock().await;
         let batch = self.compact_assembly.lock().unwrap().insert(part)?;
         let Some(batch) = batch else { return Ok(()); };
+        self.reported_tip.store(batch.chain_tip, std::sync::atomic::Ordering::Relaxed);
         let mut wallet = self.state.lock().unwrap().0.clone();
         let old_tip = wallet.tip_height;
         let report = wallet.apply_batch(&batch, &self.cfg.me.fvk()?)?;
@@ -540,11 +610,13 @@ impl App {
 
     async fn on_tip(self: &Arc<Self>, from: &str, height: u32, hash: String) -> Result<()> {
         self.require_gateway(from)?;
-        let changed = {
+        self.reported_tip.store(height, std::sync::atomic::Ordering::Relaxed);
+        let (changed, first_tip) = {
             let mut old = self.chain_view.lock().unwrap();
             let changed = *old != (height, hash.clone());
+            let first_tip = old.0 == 0;
             *old = (height, hash.clone());
-            changed
+            (changed, first_tip)
         };
         let needs_sync = {
             let st = self.state.lock().unwrap();
@@ -552,7 +624,7 @@ impl App {
         };
         if changed && needs_sync {
             self.sync_backoff.store(1, std::sync::atomic::Ordering::Relaxed);
-            self.request_mesh_sync(false).await?;
+            self.request_mesh_sync(first_tip).await?;
         }
         Ok(())
     }
@@ -563,7 +635,7 @@ impl App {
             let st = self.state.lock().unwrap();
             // A delayed challenge must not rewind a newer successful sync.
             if st.0.tip_height != have_height || st.0.tip_hash != have_hash { return Ok(()); }
-            Body::CompactReq { have_height, have_hash, birthday: self.cfg.fleet.birthday,
+            Body::CompactReq { have_height, have_hash, birthday: st.0.birthday,
                 checkpoints: st.0.hashes.iter().map(|(h, s)| (*h, s.clone())).collect() }
         };
         self.send_to(from, body).await
@@ -925,9 +997,16 @@ impl App {
                             if p.body.device.name == inner.from {
                                 let gateway = p.body.gateway;
                                 let new = !self.peers.lock().unwrap().contains_key(&from.to_string());
-                                if self.on_presence(from, p, if self.mesh.neighbors().contains(&from) { 1 } else { hops }).is_ok()
-                                    && gateway && new && self.gateway_options().0.is_none() {
-                                    let _ = self.request_mesh_sync(false).await;
+                                let device = p.body.device.clone();
+                                if self.on_presence(from, p, if self.mesh.neighbors().contains(&from) { 1 } else { hops }).is_ok() && new {
+                                    if gateway && self.gateway_options().0.is_none() {
+                                        let _ = self.request_mesh_sync(false).await;
+                                    } else if self.gateway_options().0.is_some() {
+                                        // The first request can race presence validation; reply only after
+                                        // registration so the wallet retries without the fallback delay.
+                                        let (height, hash) = self.chain_view.lock().unwrap().clone();
+                                        if height > 0 { let _ = self.send_device(&device, Body::Tip { height, hash }).await; }
+                                    }
                                 }
                             }
                             return;
@@ -956,6 +1035,14 @@ impl App {
                     Body::CompactPart(part) => self.on_compact_part(&from_name, part).await,
                     Body::Tip { height, hash } => self.on_tip(&from_name, height, hash).await,
                     Body::CheckpointReq { have_height, have_hash } => self.on_checkpoint_req(&from_name, have_height, have_hash).await,
+                    Body::ChainClockReq => self.on_clock_req(&from_name).await,
+                    Body::ChainClock { height, time } => {
+                        if self.require_gateway(&from_name).is_err() { return; }
+                        match self.resolve_birthday(height, time) {
+                            Ok(_) => self.request_mesh_sync(true).await.map(|_| ()),
+                            Err(e) => Err(e),
+                        }
+                    }
                     Body::FundReq { notes, amount_each } => self.on_fund_req(&from_name, notes, amount_each).await,
                     Body::FundRes { ok, detail } => {
                         if self.require_gateway(&from_name).is_err() { return; }
@@ -1258,8 +1345,21 @@ impl App {
 
     /// Internet-only polling; mesh wallets sync on the pushed tip, not a 30 s timer.
     pub(crate) async fn gateway_tick(self: &Arc<Self>) -> Result<()> {
-        if self.cfg.fleet.network != zcash_offline_core::fleet::Network::Testnet || self.gateway_options().0.is_none() { return Ok(()); }
+        let Some(url) = self.gateway_options().0 else { return Ok(()); };
         let Ok(_guard) = self.gateway_apply.try_lock() else { return Ok(()); };
+        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest {
+            let (height, hash) = tokio::task::spawn_blocking(move || -> Result<_> {
+                let rpc = Rpc::new(&url);
+                let tip = rpc.tip()?;
+                Ok((tip, rpc.block_hash(tip)?))
+            }).await??;
+            let changed = *self.chain_view.lock().unwrap() != (height, hash.clone());
+            *self.chain_view.lock().unwrap() = (height, hash.clone());
+            self.reported_tip.store(height, std::sync::atomic::Ordering::Relaxed);
+            if changed || self.state.lock().unwrap().0.tip_height != height { self.start_sync(); }
+            if changed { self.push_tip(height, &hash).await?; }
+            return Ok(());
+        }
         let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
         let old = self.chain_view.lock().unwrap().clone();
         let changed = old != (source.tip, source.hash.clone());
@@ -1291,22 +1391,17 @@ impl App {
             st.1.gateway.retain(|_, e| e.expiry_height == 0 || source.tip as u64 <= e.expiry_height as u64 + self.cfg.fleet.policy.expiry_margin as u64);
             if before != st.1.gateway.len() { self.persist(&st.0, &st.1)?; }
         }
-        let announce = {
-            let mut last = self.last_tip_push.lock().unwrap();
-            let due = zcash_offline_core::sync::announce_due(last.0, last.1, now_ms(), source.tip)
-                || (last.1 == source.tip && last.2 != source.hash);
-            if due { *last = (now_ms(), source.tip, source.hash.clone()); }
-            due
-        };
-        if announce {
-            let mut recipients: Vec<_> = self.cfg.fleet.devices.iter().filter(|d| d.name != self.name()).cloned().collect();
-            recipients.extend(self.peers.lock().unwrap().values().map(|s| s.announcement.body.device.clone()));
-            recipients.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
-            recipients.dedup_by(|a, b| a.peer_id == b.peer_id);
-            for dev in recipients {
-                self.send_device(&dev, Body::Tip { height: source.tip, hash: source.hash.clone() }).await?;
-            }
-        }
+        if changed || self.state.lock().unwrap().0.tip_height != source.tip { self.start_sync(); }
+        if changed { self.push_tip(source.tip, &source.hash).await?; }
+        Ok(())
+    }
+
+    async fn push_tip(&self, height: u32, hash: &str) -> Result<()> {
+        let mut recipients: Vec<_> = self.cfg.fleet.devices.iter().filter(|d| d.name != self.name()).cloned().collect();
+        recipients.extend(self.peers.lock().unwrap().values().map(|s| s.announcement.body.device.clone()));
+        recipients.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+        recipients.dedup_by(|a, b| a.peer_id == b.peer_id);
+        for dev in recipients { self.send_device(&dev, Body::Tip { height, hash: hash.into() }).await?; }
         Ok(())
     }
 
@@ -1540,12 +1635,18 @@ impl App {
         let neighbors: Vec<String> = self.mesh.neighbors().into_iter().map(|p| self.peer_name(p)).collect();
         let me = self.cfg.fleet.by_name(self.name()).ok();
         let sources = self.sync_sources.lock().unwrap().clone();
+        let chain = self.chain_view.lock().unwrap();
+        let ready = st.0.tip_height > 0 && st.0.tip_height >= self.reported_tip.load(std::sync::atomic::Ordering::Relaxed)
+            && (chain.0 != st.0.tip_height || chain.1 == st.0.tip_hash);
         json!({
             "name": self.name(),
             "role": if me.is_some_and(|d| d.is_gateway()) { "gateway" } else { "" },
             "version": env!("CARGO_PKG_VERSION"),
             "network": self.cfg.fleet.network,
-            "birthday": self.cfg.fleet.birthday,
+            "syncing": self.sync_running.load(std::sync::atomic::Ordering::SeqCst) || !ready && self.reported_tip.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "sync_error": self.sync_error.lock().unwrap().clone(),
+            "ready": ready,
+            "birthday": st.0.birthday,
             "chain_sources": sources,
             "single_source": sources.len() < 2,
             "peer_id": self.mesh.peer_id().to_string(),

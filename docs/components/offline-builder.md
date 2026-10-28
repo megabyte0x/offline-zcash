@@ -6,10 +6,18 @@ Chain and protocol constants are in [chain.md](chain.md). Checking the result on
 
 ## v0.7.0 testnet note plan
 
-Choose fleet `network: "testnet"` and a birthday at or after NU7 height 4,465,026,
-before any funding. A fresh wallet seeds its Ironwood ShardTree from
+Choose fleet `network: "testnet"`. Fresh keys record their creation time; each
+wallet chooses its own scan start automatically. Online creation uses tip−100;
+offline creation interpolates creation−one day between the release checkpoint
+(testnet 4,550,000 at Unix time 1,793,168,502) and the first-contact tip's height/time,
+clamped to that checkpoint and the tip. Regtest uses RPC tip−100, at least 1.
+Existing wallets keep their birthday; a fleet birthday is only a floor for new
+wallets. `--birthday` remains a CLI bench override, not a user setup option.
+A fresh wallet seeds its Ironwood ShardTree from
 `GetTreeState(birthday - 1)`; compact sync discovers notes locally. No viewing key
-goes to the gateway. The wallet persists a pruned tree and 200 checkpoints/roots;
+goes to the gateway. The frontier size must match that block's Ironwood tree-size
+metadata. This checks consistency, not a history-leaf proof.
+The wallet persists a pruned tree and 200 checkpoints/roots;
 reorgs rewind notes, spends and witnesses to a retained checkpoint. A deeper reorg
 stops with a resync error rather than silently trusting a replacement history.
 

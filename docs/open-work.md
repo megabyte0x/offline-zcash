@@ -6,6 +6,17 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.4. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
 
+**v0.7.4 candidate, item 1:** automatic per-device scan starts and background sync
+replace birthday setup and a required manual sync. On 28 October, the real
+Basecamp 0.3.2 AppImage in Ubuntu 24.04/Xvfb reached testnet height 4,550,718
+1.072 seconds after the gateway link came up; the capture 4.2 seconds after
+clicking Start already showed ready and the receive address. No invite, dial,
+birthday input or refresh was used. CLI link-to-tip was 0.845 seconds. These
+are fresh empty-wallet measurements, not funded-payment or macOS evidence.
+Offline/delayed-contact interpolation, floor/clamp boundaries and reset
+preservation are covered by the wallet test. Catch-up, concurrency, immediate
+incoming notes and deep-reorg recovery remain the next items in this candidate.
+
 | Version | What it proves | Doc |
 |---|---|---|
 | v0.1.0 | Offline payer builds and proves a v6 Ironwood transaction; it hops A → relay → B → gateway over `ozm-mesh` (TTL flood, 512-byte frames, store-and-forward, acks); B checks it offline and returns a receipt; the gateway submits, mines and returns a signed result. `bench/mesh-bench.sh all` on four containers | [mvp-v0.1.0](mvp-v0.1.0.md) |

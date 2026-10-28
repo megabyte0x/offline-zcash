@@ -142,6 +142,9 @@ pub struct DeviceSecret {
     pub role: String,
     pub ironwood_sk: String,
     pub ed25519_sk: String,
+    /// Key creation time in Unix seconds; zero identifies pre-v0.7.4 devices.
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 impl DeviceSecret {
@@ -161,6 +164,7 @@ impl DeviceSecret {
             role: role.into(),
             ironwood_sk: hex::encode(sk),
             ed25519_sk: hex::encode(ed),
+            created_at: crate::messages::now_ms() / 1000,
         }
     }
 
@@ -231,7 +235,7 @@ pub struct Fleet {
     pub name: String,
     #[serde(default)]
     pub network: Network,
-    /// First block to scan; the tree is seeded at birthday - 1, never empty at NU7.
+    /// Optional scan floor for newly generated devices. Existing wallets keep their birthday.
     #[serde(default)]
     pub birthday: u32,
     #[serde(default = "default_servers")]
@@ -277,7 +281,7 @@ pub fn generate_fleet_on(name: &str, devices: &[(String, String)], policy: Polic
     if devices.is_empty() {
         bail!("no devices");
     }
-    anyhow::ensure!(network != Network::Testnet || birthday >= 4_465_026, "testnet birthday must be at or after NU7 (4465026)");
+    anyhow::ensure!(network != Network::Testnet || birthday == 0 || birthday >= 4_465_026, "testnet birthday must be at or after NU7 (4465026)");
     let secrets: Vec<_> = devices.iter().map(|(n, r)| DeviceSecret::generate(n, r)).collect();
     let publics = secrets.iter().map(|s| s.public_on(network)).collect::<Result<Vec<_>>>()?;
     let address_proofs = secrets.iter().map(|s| Ok((s.public_on(network)?.peer_id, crate::binding::prove_on(s, network)?))).collect::<Result<_>>()?;

@@ -8,13 +8,6 @@ use zcash_protocol::consensus::BranchId;
 // Leave room for the authenticated envelope inside a 4 KiB padding bucket.
 pub const CHUNK_BYTES: usize = 3 * 1024;
 pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
-pub const ANNOUNCE_INTERVAL_MS: u64 = 900_000;
-
-/// Coalesce tip announcements; payment results still go out at each transition.
-pub fn announce_due(last_ms: u64, last_height: u32, now_ms: u64, height: u32) -> bool {
-    height != last_height && (last_ms == 0 || height.abs_diff(last_height) >= 200
-        || now_ms.saturating_sub(last_ms) >= ANNOUNCE_INTERVAL_MS)
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Action {
@@ -139,15 +132,6 @@ impl Assembly {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tip_batches_wait_for_time_or_200_blocks_and_ignore_idle_tips() {
-        assert!(announce_due(0, 0, 10, 100));
-        assert!(!announce_due(10, 100, 900_009, 136));
-        assert!(announce_due(10, 100, 900_010, 136));
-        assert!(!announce_due(10, 100, 900_010, 100));
-        assert!(announce_due(10, 100, 11, 300));
-    }
 
     #[test]
     fn oversized_block_crosses_chunks_without_loss_or_partial_commit() {

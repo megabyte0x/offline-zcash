@@ -37,6 +37,9 @@ pub enum Body {
     Tip { height: u32, hash: String },
     /// Request the retained fork history only after a predecessor mismatch.
     CheckpointReq { have_height: u32, have_hash: String },
+    /// v0.7.4: resolve a locally stored creation time without disclosing it to the gateway.
+    ChainClockReq,
+    ChainClock { height: u32, time: u64 },
 }
 
 impl Body {
@@ -56,6 +59,8 @@ impl Body {
             Body::CompactPart(_) => "syncr",
             Body::Tip { .. } => "tip",
             Body::CheckpointReq { .. } => "syncq",
+            Body::ChainClockReq => "clockq",
+            Body::ChainClock { .. } => "clockr",
         }
     }
 }

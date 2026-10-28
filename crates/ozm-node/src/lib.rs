@@ -42,7 +42,7 @@ pub struct RunOpts {
     /// Network for a newly created invite-free identity; existing fleet files remain authoritative.
     #[arg(long, env = "OZM_NETWORK", default_value = "testnet")]
     pub network: Network,
-    /// First scan height; 0 selects 1 on Regtest and 4465026 on testnet.
+    /// Bench-only first scan height override; 0 chooses automatically.
     #[arg(long, env = "OZM_BIRTHDAY", default_value_t = 0)]
     pub birthday: u32,
     /// Mesh TCP listen address.
@@ -178,8 +178,7 @@ pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
             anyhow::ensure!(!o.out.join(format!("{n}.{suffix}.json")).exists(), "folder already contains keys for {n}; choose a new folder");
         }
     }
-    let birthday = if o.birthday == 0 { match o.network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { o.birthday };
-    let (fleet, secrets) = generate_fleet_on(&o.name, &devs, Policy::default(), o.network, birthday)?;
+    let (fleet, secrets) = generate_fleet_on(&o.name, &devs, Policy::default(), o.network, o.birthday)?;
     std::fs::create_dir_all(&o.out)?;
     let folder = o.out.canonicalize()?;
     let fleet_path = folder.join("fleet.json");
@@ -284,7 +283,7 @@ pub fn leave_home(home: &Path) -> Result<PathBuf> {
 
 /// Creates keys on this device, once. No keys or wallet are replaced on restart.
 pub fn join_open(home: &Path) -> Result<()> {
-    join_open_on(home, Network::Regtest, 1)
+    join_open_on(home, Network::Regtest, 0)
 }
 
 pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> {
@@ -309,8 +308,7 @@ pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> 
     }
     let mut me = DeviceSecret::generate("", "");
     me.name = me.public()?.peer_id;
-    let birthday = if birthday == 0 { match network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { birthday };
-    anyhow::ensure!(network != Network::Testnet || birthday >= 4_465_026, "testnet birthday must be at or after NU7");
+    anyhow::ensure!(network != Network::Testnet || birthday == 0 || birthday >= 4_465_026, "testnet birthday must be at or after NU7");
     let fleet = Fleet { name: format!("Open {network} mesh"), network, birthday, servers: zcash_offline_core::fleet::default_servers(), policy: Policy::default(), devices: vec![me.public_on(network)?], open: true, address_proofs: Default::default() };
     join_invite(&serde_json::to_string(&Invite { fleet, secret: me })?, home)?;
     Ok(())
@@ -330,7 +328,16 @@ fn kept_wallet(home: &Path, network: Network) -> Option<PathBuf> {
 
 /// Starts the mesh, the app and its background loops. Must run inside a tokio runtime.
 pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
+    let mut creation_tip = None;
     if !o.secret.exists() && o.secret.file_name().is_some_and(|s| s == "secret.json") {
+        // A bounded preflight lets online key creation start at the tip without making an offline
+        // device wait for a server. The receive address needs no successful chain connection.
+        if o.birthday == 0 && o.network == Network::Testnet {
+            let servers = zcash_offline_core::fleet::default_servers();
+            if let Ok(Ok(source)) = tokio::time::timeout(Duration::from_secs(2), lightwallet::Lightwallet::connect(&servers[..1])).await {
+                creation_tip = Some(source.tip);
+            }
+        }
         join_open_on(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?, o.network, o.birthday)?;
     }
     let fleet = Fleet::load(&o.fleet)?;
@@ -380,6 +387,13 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         },
         mesh,
     )?;
+    {
+        let mut st = app.state.lock().unwrap();
+        if st.0.birthday == 0 {
+            st.0.birthday = if o.birthday > 0 { o.birthday } else { creation_tip.map_or(0, |tip| tip.saturating_sub(100).max(4_465_026)) };
+        }
+        st.0.save(&o.data.join("wallet.json"))?;
+    }
     if o.ble {
         match ozm_ble::Ble::start(app.mesh.clone(), [0; 4]).await {
             Ok(ble) => { let _ = app.ble.set(ble); }
@@ -419,6 +433,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         }
     });
 
+    app.start_sync();
     Ok(app)
 }
 

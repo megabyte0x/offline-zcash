@@ -87,6 +87,15 @@ impl Rpc {
         Ok(self.call("getblockcount", json!([]))?.as_u64().ok_or_else(|| anyhow!("getblockcount"))? as u32)
     }
 
+    pub fn seed(&self, height: u32) -> Result<crate::sync::Seed> {
+        let tree = self.call("z_gettreestate", json!([height.to_string()]))?;
+        let block = self.call("getblock", json!([height.to_string(), 1]))?;
+        let frontier = tree["ironwood"]["commitments"]["finalState"].as_str().unwrap_or("000000");
+        crate::wallet::check_frontier_size(frontier, block["trees"]["ironwood"]["size"].as_u64().unwrap_or(0))?;
+        anyhow::ensure!(tree["hash"] == block["hash"], "chain changed while fetching frontier");
+        Ok(crate::sync::Seed { height, hash: self.block_hash(height)?, frontier: frontier.into() })
+    }
+
     /// Block hash (display hex) and the raw transactions of block `h`.
     pub fn block_txs(&self, h: u32) -> Result<(String, Vec<Vec<u8>>)> {
         let block = self.call("getblock", json!([h.to_string(), 1]))?;

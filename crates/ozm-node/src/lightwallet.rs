@@ -91,6 +91,10 @@ impl Lightwallet {
     pub async fn seed(&mut self, height: u32) -> Result<Seed> {
         let tree = self.clients[0].1.get_tree_state(block_id(height)).await?.into_inner();
         ensure!(tree.height == height as u64 && tree.network == "test", "wrong tree-state height/network");
+        let block = self.clients[0].1.get_block(block_id(height)).await?.into_inner();
+        ensure!(display_hash(&block.hash)? == tree.hash, "chain changed while fetching frontier");
+        let size = block.chain_metadata.ok_or_else(|| anyhow!("missing Ironwood tree-size metadata"))?.ironwood_commitment_tree_size;
+        zcash_offline_core::wallet::check_frontier_size(&tree.ironwood_tree, size as u64)?;
         for i in 1..self.clients.len() {
             if let Ok(other) = self.clients[i].1.get_tree_state(block_id(height)).await {
                 let other = other.into_inner();
@@ -100,6 +104,10 @@ impl Lightwallet {
             }
         }
         Ok(Seed { height, hash: tree.hash, frontier: tree.ironwood_tree })
+    }
+
+    pub async fn tip_time(&mut self) -> Result<u64> {
+        Ok(self.clients[0].1.get_block(block_id(self.tip)).await?.into_inner().time as u64)
     }
 
     async fn range(client: &mut Client, start: u32, end: u32, predecessor: &str) -> Result<Vec<CompactBlock>> {

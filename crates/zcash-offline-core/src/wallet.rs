@@ -83,9 +83,31 @@ pub struct WalletState {
     pub reservations: BTreeMap<String, (String, u32)>,
     #[serde(default)]
     pub birthday: u32,
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 impl WalletState {
+    /// Testnet block 4,550,000, observed from GetBlock and GetTreeState on 28 October 2026.
+    pub const TESTNET_CHECKPOINT: (u32, u64) = (4_550_000, 1_793_168_502);
+
+    /// Resolve an offline-created wallet only once. A day of overlap protects addresses shared
+    /// before the first gateway contact; the contact tip alone would silently miss those receipts.
+    pub fn resolve_birthday(&mut self, network: crate::fleet::Network, floor: u32, tip: u32, time: u64) {
+        if self.birthday != 0 { return; }
+        let height = match network {
+            crate::fleet::Network::Regtest => tip.saturating_sub(100).max(1),
+            crate::fleet::Network::Testnet => {
+                let (checkpoint, checkpoint_time) = Self::TESTNET_CHECKPOINT;
+                let elapsed = self.created_at.saturating_sub(86_400).saturating_sub(checkpoint_time);
+                let span = time.saturating_sub(checkpoint_time).max(1);
+                let estimate = checkpoint as u128 + elapsed as u128 * tip.saturating_sub(checkpoint) as u128 / span as u128;
+                estimate.min(tip as u128).max(checkpoint.min(tip) as u128) as u32
+            }
+        };
+        self.birthday = height.max(floor.min(tip)).min(tip).max(1);
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
@@ -146,12 +168,16 @@ impl WalletState {
     /// payments so a reorg never frees a note we already paid with.
     pub fn reset_keep_locks(&mut self) {
         let reservations = std::mem::take(&mut self.reservations);
+        let (birthday, created_at) = (self.birthday, self.created_at);
         *self = WalletState::default();
         self.reservations = reservations;
+        self.birthday = birthday;
+        self.created_at = created_at;
     }
 
     /// Scans new blocks from the node. Rescans from scratch after a reorg.
     pub fn sync(&mut self, rpc: &Rpc, fvk: &FullViewingKey) -> Result<SyncReport> {
+        if self.tip_height == 0 && self.birthday > 1 { self.seed(&rpc.seed(self.birthday - 1)?)?; }
         self.sync_from(rpc, fvk)
     }
 
@@ -189,7 +215,7 @@ impl WalletState {
             .ok_or_else(|| anyhow!("missing seed root"))?;
         self.roots.insert(seed.height, hex::encode(root.to_bytes()));
         self.tree = Some(TreeData::capture(&tree)?);
-        self.birthday = seed.height + 1;
+        if self.birthday == 0 { self.birthday = seed.height + 1; }
         self.tip_height = seed.height;
         self.tip_hash = seed.hash.clone();
         self.hashes.insert(seed.height, seed.hash.clone());
@@ -352,6 +378,13 @@ pub fn has_ironwood(raw: &[u8]) -> bool {
     Transaction::read(raw, BranchId::Nu7).map(|tx| tx.ironwood_bundle().is_some()).unwrap_or(false)
 }
 
+pub fn check_frontier_size(encoded: &str, expected: u64) -> Result<()> {
+    let bytes = hex::decode(encoded)?;
+    let frontier = zcash_primitives::merkle_tree::read_frontier_v0::<MerkleHashOrchard, _>(&bytes[..])?;
+    ensure!(frontier.tree_size() == expected, "Ironwood frontier size {} differs from block metadata {expected}", frontier.tree_size());
+    Ok(())
+}
+
 /// Where wallet sync reads blocks from.
 pub trait BlockSource {
     fn tip(&self) -> Result<u32>;
@@ -442,6 +475,36 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::sync::{Action, CompactTx};
+
+    #[test]
+    fn offline_creation_uses_the_creation_day_not_the_first_contact_tip() {
+        use crate::fleet::Network;
+        let (height, time) = WalletState::TESTNET_CHECKPOINT;
+        let mut wallet = WalletState { created_at: time + 3 * 86_400, ..Default::default() };
+        // Contact a week after the checkpoint. Creation minus a day is only two days in.
+        wallet.resolve_birthday(Network::Testnet, 4_465_026, height + 24_192, time + 7 * 86_400);
+        assert_eq!(wallet.birthday, height + 6_912);
+        wallet.reset_keep_locks();
+        wallet.resolve_birthday(Network::Testnet, height + 9_000, height + 30_000, time + 9 * 86_400);
+        assert_eq!((wallet.birthday, wallet.created_at), (height + 6_912, time + 3 * 86_400));
+        for (created_at, floor, tip, expected) in [
+            (time - 86_400, 0, height + 900, height),
+            (u64::MAX, 0, height + 900, height + 900),
+            (time, height + 400, height + 900, height + 400),
+        ] {
+            let mut w = WalletState { created_at, ..Default::default() };
+            w.resolve_birthday(Network::Testnet, floor, tip, time + 86_400);
+            assert_eq!(w.birthday, expected);
+        }
+        let mut w = WalletState::default();
+        w.resolve_birthday(Network::Regtest, 0, 53, 0);
+        assert_eq!(w.birthday, 1);
+        w.birthday = 0;
+        w.resolve_birthday(Network::Regtest, 0, 804, 0);
+        assert_eq!(w.birthday, 704);
+        assert!(check_frontier_size("000000", 0).is_ok());
+        assert!(check_frontier_size("000000", 1).is_err());
+    }
 
     #[test]
     fn persisted_reorg_restores_spends_and_expiry_unlocks_only_beyond_the_boundary() {

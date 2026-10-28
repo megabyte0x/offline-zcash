@@ -25,18 +25,8 @@ Rectangle {
     property bool busy: false
     property bool failed: false
     property int revision: 0     // bumps when the device list changes, so validation re-evaluates
-    property string tipNote: ""
     // New sessions are testnet; Regtest is a developer option under Advanced.
     readonly property string sessionNetwork: useRegtest.checked ? "regtest" : "testnet"
-    // A testnet session starting at NU7 activation makes every wallet's first sync scan ~100k blocks.
-    function fillTestnetBirthday() {
-        root.tipNote = "asking testnet servers…"
-        call("testnet_tip", [], function (r) {
-            if (r.error) { root.tipNote = "servers did not answer; enter it from a testnet explorer"; return }
-            root.tipNote = "current tip " + r.blocks
-            if (root.sessionNetwork === "testnet" && Number(birthday.text) < 4465026) birthday.text = String(r.blocks)
-        })
-    }
     readonly property bool narrow: width < 700
 
     // Module QString results are JSON-encoded again by the Logos bridge.
@@ -73,9 +63,6 @@ Rectangle {
         void revision
         var names = {}
         if (sessionName.text.trim() === "") return "Enter a session name."
-        if (!/^\d+$/.test(birthday.text.trim())) return "Birthday must be a block height (0 for the network default)."
-        if (root.sessionNetwork === "testnet" && Number(birthday.text) < 4465026)
-            return "On testnet, set the birthday to the current block height" + (root.tipNote ? " (" + root.tipNote + ")" : "") + ". 0 would make every wallet scan from 4465026."
         for (var i = 0; i < devices.count; i++) {
             var d = devices.get(i), n = d.deviceName.trim()
             if (!/^[A-Za-z0-9_-]+$/.test(n)) return "Device " + (i + 1) + ": use letters, digits, - or _ in the name."
@@ -94,7 +81,7 @@ Rectangle {
         for (var i = 0; i < devices.count; i++) if (devices.get(i).gateway) g++
         return g
     }
-    Component.onCompleted: { logos.onModuleEvent(moduleName, "node_event"); refresh(); fillTestnetBirthday() }
+    Component.onCompleted: { logos.onModuleEvent(moduleName, "node_event"); refresh() }
     Connections {
         target: logos
         function onModuleEventReceived(module, eventName, data) { if (module === root.moduleName) root.refresh() }
@@ -211,7 +198,7 @@ Rectangle {
                 title: "1 · Session"
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: root.narrow ? 1 : 3; columnSpacing: 12; rowSpacing: 4
+                    columns: root.narrow ? 1 : 2; columnSpacing: 12; rowSpacing: 4
                     ColumnLayout { Layout.fillWidth: true; spacing: 2
                         Label2 { text: "Session name" }
                         Field { id: sessionName; objectName: "sessionName"; text: "Three laptops"; Accessible.name: "Session name"; invalid: text.trim() === "" } }
@@ -219,15 +206,12 @@ Rectangle {
                         Label2 { text: "Network" }
                         Label2 { objectName: "sessionNetwork"; Layout.preferredHeight: 40; verticalAlignment: Text.AlignVCenter; font.bold: true
                             text: root.sessionNetwork === "testnet" ? "Public testnet" : "Local Regtest (developers)" } }
-                    ColumnLayout { Layout.fillWidth: true; spacing: 2
-                        Label2 { text: "Birthday height" }
-                        Field { id: birthday; text: "0"; inputMethodHints: Qt.ImhDigitsOnly; Accessible.name: "Fleet birthday height"; invalid: !/^\d+$/.test(text.trim()) || (root.sessionNetwork === "testnet" && Number(text) < 4465026) } }
                 }
                 Label2 {
                     font.pixelSize: 12
                     text: root.sessionNetwork === "testnet"
-                          ? "Public testnet with TAZ test coins; the gateway uses TLS lightwalletd. Birthday is the first block wallets scan: use the current height" + (root.tipNote ? " (" + root.tipNote + ")" : "") + ", set before anyone receives funds."
-                          : "Local Regtest chain run with ths start. Birthday is the first block wallets scan; 0 uses 1. Set it before anyone receives funds."
+                          ? "Public testnet with TAZ test coins; the gateway uses TLS lightwalletd. Wallets start and sync automatically."
+                          : "Local Regtest chain run with ths start. Wallets start and sync automatically."
                 }
                 Label2 {
                     id: advanced
@@ -244,7 +228,6 @@ Rectangle {
                     text: "Create a local Regtest session instead of testnet"
                     palette.windowText: root.fg; palette.text: root.fg
                     Accessible.name: text
-                    onToggled: { if (!checked) root.fillTestnetBirthday(); else if (Number(birthday.text) >= 4465026) birthday.text = "0" }
                 }
                 Label2 { visible: advanced.open; font.pixelSize: 12; text: "Only for development: needs a local ths chain (ths start) on the gateway machine. Leave this off for testnet." }
             }
@@ -307,7 +290,7 @@ Rectangle {
                             var d = devices.get(i)
                             list.push(d.deviceName.trim() + (d.gateway ? ":gateway" : ""))
                         }
-                        var opts = { out: folder.text.trim(), name: sessionName.text.trim(), devices: list, network: root.sessionNetwork, birthday: Number(birthday.text) }
+                        var opts = { out: folder.text.trim(), name: sessionName.text.trim(), devices: list, network: root.sessionNetwork }
                         if ((!root.st || !root.st.joined) && joinName.text.trim() !== "") opts.join_device = joinName.text.trim()
                         root.busy = true; root.message = "Creating…"; root.failed = false
                         root.call("fleet_init", [JSON.stringify(opts)], function (r) {

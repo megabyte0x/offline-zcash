@@ -2,7 +2,7 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. v0.7.4 runs in Basecamp on **macOS (Apple silicon)
+mesh nodes or listening ports. v0.7.4 targets Basecamp on **macOS (Apple silicon)
 and Linux (x86_64, arm64)**, on NU7 public testnet (TAZ) or the local Regtest
 chain, with **test coins only**, never real ZEC.
 
@@ -106,17 +106,16 @@ To switch network or invite, use [Leave session](#leave-session).
    stores its own keys and address; nobody else receives them.
 2. New devices use **public testnet**; there is no network to choose. Only for
    development with a local `ths` chain, open **Advanced (local Regtest for
-   developers)** and turn on **Use a local Regtest chain instead of testnet**. On testnet,
-   set **Connection options → Wallet birthday height** to a recent block height:
-   `0` selects NU7 activation (4,465,026), and the first sync then scans every block
-   since. Pick the birthday before receiving funds: earlier payments are missed.
+   developers)** and turn on **Use a local Regtest chain instead of testnet**.
+   No block height or scan settings are needed. Fresh keys have no history to restore.
 3. Leave listen/dial empty for LAN discovery. If no neighbours appear, set **Dial
    address** to `<operator-ip>:7777`. Leave experimental Bluetooth off unless you
    are on [Linux with BLE](#bluetooth-on-linux).
-4. Click **Start without invite**. Wait for a selected gateway and a synced wallet;
-   the chain view shows the gateway's name, mesh ID, hops and tip. **Sync now** runs
-   in the background; the header shows `syncing · height X of Y`, and payments wait
-   until it finishes.
+4. Click **Start without invite**. Your receive address appears straight away;
+   share it even while offline. The wallet syncs automatically when it opens,
+   finds a gateway, or hears a new chain tip. The header says **ready** when caught
+   up; the chain view shows the gateway's name, mesh ID, hops and tip.
+   **Refresh balance (optional)** is only a manual retry, never a setup step.
 
 ### With an invite
 
@@ -161,9 +160,7 @@ the `ths` chain (Regtest) stay outside Basecamp.
 1. Open **Offline Zcash Organiser**. New sessions are **public testnet**. Only for
    development with a local `ths` chain, open **Advanced (local Regtest for
    developers)** and turn on **Create a local Regtest session instead of testnet**.
-   On testnet the Organiser fills the birthday with the current tip from the
-   testnet servers and refuses a birthday before 4,465,026; if the servers do not
-   answer, enter the current height from a testnet explorer.
+   Wallet scan settings are automatic, including for invites created offline.
 2. Add a device for each invite you need and tick **This device is the gateway**
    for at least one of them, for example `Operator`. Wallet devices can join
    without invites, so you may only need the gateway entry.
@@ -195,8 +192,8 @@ A separate gateway laptop pastes its gateway invite in the Gateway app and click
    on the same service. **Apply gateway settings** changes RPC and mining without
    restarting the mesh. Settings are restored after a restart.
 6. Copy the displayed `ths faucet <address> --amount 2` command, run it once in a
-   terminal, and click **Refresh gateway balance**. This wallet serves test funds;
-   refill it when it runs out.
+   terminal, and wait for the balance to update automatically. This wallet serves
+   test funds; refill it when it runs out. **Refresh gateway balance** is optional.
 
 ### Gateway on public testnet
 
@@ -211,9 +208,8 @@ VPS or `ths` is needed. Wallet devices do not need internet.
    `https://zaino.testnet.unsafe.zec.rocks:443`.
 3. Click **Check chain service**, then **Start gateway**. With only one server
    reachable the app shows **single source**; that is a warning, not a failure.
-4. The gateway wallet then syncs in the background from the session birthday; the
-   badge shows `syncing · height X of Y`. The other screens keep working, but
-   payments and Prepare for offline wait until the sync finishes. Leave stops the sync.
+4. The gateway wallet syncs automatically in the background; the badge shows
+   `syncing · height X of Y`. Leave stops the sync. There is no scan-height setup.
 
 There is no gateway faucet on testnet.
 
@@ -300,7 +296,7 @@ Use a trusted local operator and test coins only. Full details:
 | Gateway Start disabled | This device's invite is not the gateway, or it joined without an invite; use the gateway invite |
 | RPC URL refused on Regtest | Use the `http://` JSON-RPC URL from `ths endpoints`, not `https://` or lightwalletd `:9067`; for testnet, Leave session and join a testnet invite |
 | RPC check fails | Keep `ths start` running on the gateway machine |
-| Wallet never synced | Wait for a gateway, then **Sync now**; check the Gateway app's chain status |
+| Wallet never synced | Check the Gateway app's chain status; discovery starts sync automatically. **Refresh balance (optional)** retries it |
 | Test funds fail | Regtest only: enable mining, fund the gateway address, wait 60 seconds between requests |
 | Wrong network or wrong invite installed | [Leave session](#leave-session), then start again |
 | Header says "Regtest session (local ths chain)" but you wanted testnet | Before v0.7.4 the Organiser and the wallet started on Regtest unless you changed the network, so a session or invite made then (for example the default "Three laptops") is Regtest. [Leave session](#leave-session) on every device, create a new session in Organiser v0.7.4 (testnet by default) and join with its new invites |

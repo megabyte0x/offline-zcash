@@ -75,7 +75,7 @@
       <div class="small" id="sources"></div>
     </div>
     <div id="gwwarn" class="note warn" role="status"></div>
-    <button id="syncb" class="secondary">Sync now</button>
+    <button id="syncb" class="secondary small" style="width:auto">Refresh balance (optional)</button>
     <button id="fundb" class="secondary">Get test funds from the gateway (5 × 0.1 ZEC)</button>
     <p id="faucet" class="mut small" hidden>Testnet funds: faucet.testnet.valargroup.dev (0.125 TAZ / 24 h; the service may fail). Gateways do not hand out testnet funds.</p>
     <div class="msg mut" id="syncmsg" role="status" aria-live="polite"></div>
@@ -175,7 +175,7 @@ async function refresh() {
     $('to').placeholder = (PREFIX[network] || 'u') + '…';
     $('ver').textContent = 'v' + s.version;
     $('who').textContent = [s.name, s.role, network].filter(Boolean).join(' · ');
-    $('online').textContent = s.online ? 'gateway / online' : s.selected_gateway ? 'offline · gateway via mesh' : 'offline · no gateway yet';
+    $('online').textContent = (s.ready ? 'ready · ' : s.syncing ? 'syncing · ' : '') + (s.online ? 'gateway / online' : s.selected_gateway ? 'offline · gateway via mesh' : 'offline · no gateway yet');
     $('online').className = 'pill ' + (s.online || s.selected_gateway ? 'ok' : 'warn');
     $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');
     $('bal').textContent = zec(s.wallet.spendable);
@@ -187,7 +187,6 @@ async function refresh() {
     $('sources').className = 'small ' + (s.single_source ? 'mut' : '');
     $('gwwarn').textContent = s.gateway_warning || '';
     $('addr').textContent = s.address || 'No address yet.';
-    $('syncb').textContent = s.online ? 'Sync now (from the chain service)' : 'Sync now (from a gateway over the mesh)';
     $('fundb').hidden = s.online || network !== 'regtest';
     $('faucet').hidden = network !== 'testnet';
     $('to').placeholder = (PREFIX[network] || 'u1') + '…';

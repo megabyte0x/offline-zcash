@@ -96,11 +96,12 @@ async fn open_identity_persists_and_first_used_gateway_stays_pinned() {
         let home = dir.path().join(network.to_string());
         let mut opts = RunOpts::for_home(&home);
         opts.network = network;
+        opts.birthday = birthday;
         opts.listen = "127.0.0.1:0".parse().unwrap();
         opts.discover = false;
         opts.auto_sync_secs = 0;
         let app = start(&opts).await.unwrap();
-        assert_eq!(app.cfg.fleet.birthday, birthday);
+        assert_eq!(app.status()["birthday"], birthday);
         assert!(app.status()["address"].as_str().unwrap().starts_with(prefix));
         assert!(app.request_funds(2, 10_000).await.is_err());
         app.mesh.shutdown();
@@ -196,6 +197,7 @@ async fn compact_requests_send_history_only_after_a_matching_gateway_challenge()
     let hash = "ab".repeat(32);
     {
         let mut st = app.state.lock().unwrap();
+        st.0.birthday = 1;
         st.0.tip_height = 200;
         st.0.tip_hash = hash.clone();
         st.0.hashes = (1..=200).map(|h| (h, hash.clone())).collect();
