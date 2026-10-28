@@ -1,11 +1,11 @@
 {
   "name": "zcash_offline_module",
   "display_name": "Offline Zcash service",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "type": "core",
   "interface": "cdylib",
   "category": "wallet",
-  "description": "Offline Zcash payments over a local mesh: the ozm-node device (payer, payee, relay, gateway) as a Logos core module",
+  "description": "Offline Zcash payments over a local mesh: the ozm-node device (wallet, mesh relay and optional gateway) as a Logos core module",
   "main": "zcash_offline_module_plugin",
   "dependencies": [],
   "codegen": {

@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use zcash_offline_core::{fleet::{generate_fleet_on, Network}, parse_zec, DeviceSecret, Fleet, Policy};
+use zcash_offline_core::{fleet::{generate_fleet_on, is_gateway_role, Network}, parse_zec, DeviceSecret, Fleet, Policy};
 
 #[derive(Args, Clone)]
 pub struct RunOpts {
@@ -51,7 +51,7 @@ pub struct RunOpts {
     /// Mesh neighbours to dial (host:port), repeatable or comma-separated.
     #[arg(long, env = "OZM_DIAL", value_delimiter = ',')]
     pub dial: Vec<String>,
-    /// Find fleet devices on the local network (UDP beacons) and connect to them.
+    /// Find Offline Zcash devices on the local network (UDP beacons) and connect to them.
     #[arg(long, env = "OZM_DISCOVER")]
     pub discover: bool,
     /// Scan and advertise Bluetooth LE alongside LAN (Linux / BlueZ only).
@@ -133,7 +133,7 @@ pub struct FleetInitOptions {
     pub network: Network,
     #[serde(default)]
     pub birthday: u32,
-    /// NAME:ROLE, with roles combined using +.
+    /// NAME, or NAME:gateway for a gateway. Legacy payer/payee/relay roles are accepted and ignored.
     pub devices: Vec<String>,
 }
 
@@ -158,12 +158,13 @@ pub struct FleetInvite {
 pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
     anyhow::ensure!(!o.name.trim().is_empty(), "session name is required");
     let devs = o.devices.iter().map(|d| {
-        let (n, r) = d.split_once(':').ok_or_else(|| anyhow!("expected NAME:ROLE, got {d}"))?;
+        let (n, r) = d.split_once(':').unwrap_or((d, ""));
         anyhow::ensure!(!n.is_empty() && n.len() <= 64 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "device name must be 1–64 letters, digits, - or _: {n}");
-        anyhow::ensure!(r.split('+').all(|r| matches!(r, "payer" | "payee" | "relay" | "gateway")), "unknown role in {d}");
-        Ok((n.to_string(), r.to_string()))
+        anyhow::ensure!(r.is_empty() || r.split('+').all(|r| matches!(r, "payer" | "payee" | "relay" | "gateway")), "expected NAME or NAME:gateway, got {d}");
+        Ok((n.to_string(), if is_gateway_role(r) { "gateway" } else { "" }.to_string()))
     }).collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(devs.iter().any(|(_, r)| r == "gateway"), "at least one device must be the gateway");
     for (i, (n, _)) in devs.iter().enumerate() {
         anyhow::ensure!(!devs[..i].iter().any(|(other, _)| other.eq_ignore_ascii_case(n)), "duplicate device name: {n}");
     }
@@ -191,6 +192,25 @@ pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
     Ok(FleetInitResult { folder, fleet_path, devices })
 }
 
+/// Regtest gateways speak Zakura JSON-RPC over plain HTTP; TLS servers are testnet lightwalletd.
+pub fn regtest_rpc_url(url: &str) -> Result<()> {
+    let url = url.trim();
+    anyhow::ensure!(!url.to_ascii_lowercase().starts_with("https://"),
+        "this device is on a Regtest session, so the gateway needs the plain http:// Zakura JSON-RPC URL from `ths endpoints` (usually http://127.0.0.1:18232). \
+         {url} is a TLS server such as testnet lightwalletd; to use testnet, leave this session and join a testnet session");
+    anyhow::ensure!(url.starts_with("http://"), "the Regtest chain RPC URL must start with http://, for example http://127.0.0.1:18232 from `ths endpoints`");
+    Ok(())
+}
+
+/// Checks a Regtest gateway URL against `getblockchaininfo`.
+pub fn check_regtest_rpc(url: &str) -> Result<serde_json::Value> {
+    regtest_rpc_url(url)?;
+    let info = zcash_offline_core::rpc::Rpc::new(url.trim()).call("getblockchaininfo", json!([])).with_context(|| format!(
+        "no Zakura JSON-RPC answered at {url}. Use the rpc URL from `ths endpoints` (usually http://127.0.0.1:18232), not lightwalletd (port 9067), and check that ths start is running"))?;
+    anyhow::ensure!(info["blocks"].is_u64() && info["chain"].is_string(), "RPC returned no blockchain information");
+    Ok(info)
+}
+
 pub fn home_dir(home: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(h) = home {
         return Ok(h);
@@ -215,13 +235,47 @@ pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
     std::fs::create_dir_all(home)?;
     std::fs::write(home.join("fleet.json"), serde_json::to_string_pretty(&inv.fleet)?)?;
     write_private(&home.join("secret.json"), serde_json::to_string_pretty(&inv.secret)?.as_bytes())?;
+    let label = |d: &zcash_offline_core::DevicePublic| if d.is_gateway() { format!("{} (gateway)", d.name) } else { d.name.clone() };
     Ok(format!(
-        "Joined fleet '{}' as {} ({}). Devices: {}",
+        "Joined fleet '{}' as {}. Devices: {}",
         inv.fleet.name,
-        inv.secret.name,
-        inv.secret.role,
-        inv.fleet.devices.iter().map(|d| format!("{} ({})", d.name, d.role)).collect::<Vec<_>>().join(", ")
+        label(me),
+        inv.fleet.devices.iter().map(label).collect::<Vec<_>>().join(", ")
     ))
+}
+
+/// Moves this device's files to `<home>-backup-<UTC time>` beside `home` and returns that path, so the
+/// device can start without an invite or join another one. Nothing is deleted. Session exports under
+/// `home/sessions` move to the sibling `sessions` folder first, so their invites stay reachable.
+pub fn leave_home(home: &Path) -> Result<PathBuf> {
+    anyhow::ensure!(std::fs::read_dir(home).is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.file_name() != "sessions"))),
+        "this device has not joined a session");
+    let old_sessions = home.join("sessions");
+    if old_sessions.is_dir() {
+        let sessions = home.with_file_name("sessions");
+        std::fs::create_dir_all(&sessions)?;
+        for e in std::fs::read_dir(&old_sessions)? {
+            let e = e?;
+            let to = sessions.join(e.file_name());
+            if !to.exists() { std::fs::rename(e.path(), to)?; }
+        }
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+    // Civil date from days since 1970 (Howard Hinnant's algorithm), UTC.
+    let z = (secs / 86_400) as i64 + 719_468;
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (day, month) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    let year = yoe + z.div_euclid(146_097) * 400 + i64::from(month <= 2);
+    let t = secs % 86_400;
+    let mut name = home.file_name().ok_or_else(|| anyhow!("home has no folder name"))?.to_os_string();
+    name.push(format!("-backup-{year:04}{month:02}{day:02}-{:02}{:02}{:02}", t / 3600, t % 3600 / 60, t % 60));
+    let backup = home.with_file_name(name);
+    anyhow::ensure!(!backup.exists(), "{} already exists; try again in a second", backup.display());
+    std::fs::rename(home, &backup).with_context(|| format!("move {} to {}", home.display(), backup.display()))?;
+    Ok(backup)
 }
 
 /// Creates keys on this device, once. No keys or wallet are replaced on restart.
@@ -235,7 +289,7 @@ pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> 
     }
     anyhow::ensure!(!home.join("fleet.json").exists() && !home.join("data/wallet.json").exists(),
         "device files exist but secret.json is missing; restore the keys or choose a new home");
-    let mut me = DeviceSecret::generate("", "payer+payee+relay");
+    let mut me = DeviceSecret::generate("", "");
     me.name = me.public()?.peer_id;
     let birthday = if birthday == 0 { match network { Network::Regtest => 1, Network::Testnet => 4_465_026 } } else { birthday };
     anyhow::ensure!(network != Network::Testnet || birthday >= 4_465_026, "testnet birthday must be at or after NU7");
@@ -262,14 +316,16 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
     anyhow::ensure!(pubme == me.public_on(fleet.network)?, "secret for {} does not match the fleet file", me.name);
     anyhow::ensure!(fleet.network != Network::Testnet || !o.mine, "--mine is Regtest-only; public testnet cannot generate blocks");
     let rpc = o.rpc.clone().filter(|r| !r.is_empty()).or_else(|| {
-        (fleet.network == Network::Testnet && pubme.role.split('+').any(|r| r == "gateway")).then(|| fleet.servers.join(","))
+        (fleet.network == Network::Testnet && pubme.is_gateway()).then(|| fleet.servers.join(","))
     });
     if o.rpc.as_ref().is_some_and(|r| !r.is_empty()) || o.mine {
-        anyhow::ensure!(pubme.role.split('+').any(|r| r == "gateway"), "this invite does not grant the gateway role; ask the organiser for a gateway invite");
+        anyhow::ensure!(pubme.is_gateway(), "this invite does not grant the gateway role; ask the organiser for a gateway invite");
+    }
+    if let Some(url) = rpc.as_deref().filter(|_| fleet.network == Network::Regtest) {
+        regtest_rpc_url(url)?;
     }
     std::fs::create_dir_all(&o.data)?;
-    let tag = if pubme.role.split('+').any(|r| r == "gateway") { [0; 8] } else { fleet.discovery_tag() };
-    let discovery = o.discover.then(|| Discovery { port: o.discovery_port, tag, ..Default::default() });
+    let discovery = o.discover.then(|| Discovery { port: o.discovery_port, ..Default::default() });
     let (mesh, mut events) = Mesh::start(MeshConfig {
         peer_id: pubme.peer_id.parse()?,
         ack_signer: Some(me.signing_key()?),
@@ -295,8 +351,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         mesh,
     )?;
     if o.ble {
-        let hint = tag[..4].try_into().expect("four bytes");
-        match ozm_ble::Ble::start(app.mesh.clone(), hint).await {
+        match ozm_ble::Ble::start(app.mesh.clone(), [0; 4]).await {
             Ok(ble) => { let _ = app.ble.set(ble); }
             Err(e) => { app.mesh.shutdown(); return Err(e); }
         }

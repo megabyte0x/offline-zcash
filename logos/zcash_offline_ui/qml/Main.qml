@@ -38,8 +38,9 @@ Rectangle {
     readonly property bool joined: st !== null && st.joined === true
     readonly property bool running: st !== null && st.running === true
     readonly property bool showSetup: st !== null && (!joined || !running)
-    readonly property string network: st && st.network ? st.network : "regtest"
-    readonly property string addrPrefix: network === "testnet" ? "utest1" : network === "mainnet" ? "u1" : "uregtest1"
+    readonly property string network: st && st.network ? st.network : ""
+    // Qualify: the setup ComboBox's id is also `network`, and a bare name resolves to the id.
+    readonly property string addrPrefix: root.network === "testnet" ? "utest1" : root.network === "mainnet" ? "u1" : root.network === "regtest" ? "uregtest1" : ""
     readonly property bool narrow: width < 640
 
     // ── Bridge helpers ──────────────────────────────────────────────────
@@ -52,6 +53,7 @@ Rectangle {
         }
         if (v && typeof v === "object" && v.success !== undefined && v.value !== undefined && v.error !== undefined)
             return v.success ? unwrap(v.value) : { error: String(v.error) }   // LogosResult
+        if (v && typeof v === "object" && v.error !== undefined && v.message) return { error: String(v.error) + " (" + (v.method || "call") + "): " + v.message }   // LogosQmlBridge CallError detail
         return (v === null || v === undefined) ? { error: "empty reply" } : v
     }
     function call(method, args, cb, timeoutMs) {
@@ -126,6 +128,32 @@ Rectangle {
         }
     }
     Timer { interval: 3000; running: true; repeat: true; onTriggered: root.refresh() }
+    Popup {
+        id: leaveConfirm
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; focus: true; padding: 20
+        width: Math.min(root.width - 40, 480)
+        background: Rectangle { color: root.card; border.color: root.line; radius: 10 }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
+            Muted { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Afterwards this device can start without an invite or join a new one, on either network." }
+            RowLayout { Layout.fillWidth: true; spacing: 10
+                Btn { secondary: true; text: "Cancel"; onClicked: leaveConfirm.close() }
+                Btn {
+                    objectName: "confirmLeaveButton"; text: "Leave and keep a backup"
+                    onClicked: {
+                        leaveConfirm.close(); setup.busy = true; setup.failed = false; setup.msg = "Leaving…"
+                        root.call("leave", [], function (r) {
+                            setup.busy = false; setup.failed = !!r.error
+                            setup.msg = r.error ? "Could not leave: " + r.error : r.message
+                            root.paysLoaded = false; root.pays = { payments: [], refusals: [], gateway: [] }
+                            root.refresh()
+                        }, 60000)
+                    }
+                } }
+        }
+    }
 
     // ── Reusable bits ───────────────────────────────────────────────────
     component Pill: Rectangle {
@@ -256,13 +284,14 @@ Rectangle {
                     color: root.fg; font.pixelSize: 18; font.bold: true
                 }
                 Pill {
-                    text: root.reachError !== "" ? "module not reachable"
+                    text: root.reachError !== "" ? "service not answering"
                           : root.st ? (root.st.name || "not joined") + (root.st.role ? " · " + root.st.role : "") + " · " + root.network : "Connecting…"
                     textColor: root.reachError !== "" ? root.bad : root.mut
                 }
                 Pill {
                     visible: root.st !== null
-                    text: !root.running ? "stopped" : root.st.online ? "gateway / online"
+                    text: !root.running ? "stopped" : root.st.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
+                          : root.st.online ? "gateway / online"
                           : root.st.selected_gateway ? "offline · gateway via mesh" : "offline · no gateway yet"
                     textColor: !root.running ? root.mut : (root.st.online || root.st.selected_gateway) ? root.ok : root.warn
                 }
@@ -290,13 +319,15 @@ Rectangle {
                 // ── Not reachable / loading ──
                 Card {
                     visible: root.st === null || root.reachError !== ""
-                    title: root.reachError !== "" ? "Module not reachable" : "Loading"
+                    title: root.reachError !== "" ? "Service not answering" : "Loading"
                     Layout.fillWidth: true
                     Layout.maximumWidth: 720
                     Layout.leftMargin: 20; Layout.rightMargin: 20
                     Muted {
                         text: root.reachError !== ""
-                              ? "Cannot reach zcash_offline_module: " + root.reachError + ". Install or load the Offline Zcash service in Manage Packages. This page retries every 3 seconds."
+                              ? "The Offline Zcash service did not answer: " + root.reachError + ". "
+                                + (/not connected|not reachable|no such module|not loaded/i.test(root.reachError) ? "Install or load the Offline Zcash service in Manage Packages. " : "It may be busy. ")
+                                + "This page retries every 3 seconds."
                               : "Connecting to zcash_offline_module…"
                         color: root.reachError !== "" ? root.bad : root.mut
                     }
@@ -316,7 +347,7 @@ Rectangle {
 
                     Muted {
                         visible: root.joined
-                        text: "This device has joined as " + (root.st ? root.st.name + " (" + root.st.role + ", " + root.network + ")" : "") + ". Start it to reconnect to the mesh."
+                        text: "This device has joined as " + (root.st ? root.st.name + " (" + (root.st.role ? root.st.role + ", " : "") + root.network + ")" : "") + ". Start it to reconnect to the mesh."
                     }
                     Text { visible: !root.joined; text: "No invite needed"; color: root.fg; font.pixelSize: 16; font.bold: true }
                     Muted {
@@ -362,7 +393,7 @@ Rectangle {
                             }
                         }
                     }
-                    Muted { visible: !root.joined && inviteToggle.open; font.pixelSize: 12; text: "An invite sets your name, role and network; the network choice above is then ignored." }
+                    Muted { visible: !root.joined && inviteToggle.open; font.pixelSize: 12; text: "An invite sets your name, network and trusted gateway; the network choice above is then ignored." }
 
                     Toggle { id: advToggle; label: "Connection options" }
                     ColumnLayout {
@@ -448,6 +479,8 @@ Rectangle {
                             text: root.st && root.st.wallet ? "spendable · " + root.zec(root.st.wallet.locked) + " locked in pending payments · "
                                             + root.st.wallet.notes + " notes · synced to height " + root.st.wallet.tip : ""
                         }
+                        Msg { text: root.st && root.st.syncing ? "Syncing in the background" + (root.st.chain_tip ? ": height " + root.st.wallet.tip + " of " + root.st.chain_tip : "") + ". Payments wait until it finishes." : root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : ""
+                              failed: !!(root.st && !root.st.syncing && root.st.sync_error) }
                         Rectangle {
                             Layout.fillWidth: true; Layout.topMargin: 4
                             radius: 8; color: "transparent"; border.color: root.line
@@ -479,11 +512,9 @@ Rectangle {
                                 wallet.busy = true; wallet.failed = false; wallet.msg = "Syncing…"
                                 root.call("sync_now", [], function (r) {
                                     wallet.busy = false; wallet.failed = !!r.error
-                                    wallet.msg = r.error ? "Sync failed: " + r.error
-                                        : r.requested_from ? "Asked " + r.requested_from + " for blocks; the balance updates when they arrive."
-                                        : "Synced to height " + r.tip + (r.new_notes !== undefined ? ", " + r.new_notes + " new notes." : ".")
+                                    wallet.msg = r.error ? "Sync failed: " + r.error : "Syncing in the background; the balance updates as blocks arrive."
                                     root.refresh()
-                                }, 120000)
+                                })
                             }
                         }
                         Btn {
@@ -514,13 +545,13 @@ Rectangle {
                         property bool failed: false
                         property string feeNote: ""
                         property bool busy: false
-                        readonly property bool wrongPrefix: to.text.trim() !== "" && to.text.trim().indexOf(root.addrPrefix) !== 0
+                        readonly property bool wrongPrefix: root.addrPrefix !== "" && to.text.trim() !== "" && to.text.trim().indexOf(root.addrPrefix) !== 0
                         readonly property string amountErr: root.amountError(amt.text)
                         Label2 { text: "Recipient Zcash address" }
                         Field {
                             id: to
                             objectName: "recipientAddress"
-                            placeholderText: root.addrPrefix + "…"
+                            placeholderText: root.addrPrefix !== "" ? root.addrPrefix + "…" : "Unified address"
                             invalid: pay.wrongPrefix
                             Accessible.name: "Recipient Zcash address"
                             Accessible.description: hint.text
@@ -760,6 +791,16 @@ Rectangle {
                                   ? (root.st.ble_running ? "on" : "stopped, restart the node") : "off")
                         }
                     }
+                }
+                Card {
+                    visible: root.joined
+                    title: "Session"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 720
+                    Layout.leftMargin: root.narrow ? 12 : 20; Layout.rightMargin: root.narrow ? 12 : 20
+                    Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept." }
+                    Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !setup.busy && !(root.st && root.st.syncing); onClicked: leaveConfirm.open() }
+                    Muted { visible: !!(root.st && root.st.syncing); font.pixelSize: 12; text: "Leave is available when the wallet sync finishes." }
                 }
                 Item { implicitHeight: 12 }
             }

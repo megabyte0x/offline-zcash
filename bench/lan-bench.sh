@@ -57,7 +57,7 @@ up() {
 
   log "Fleet and invites (A payer, B payee, C payee, D gateway)"
   "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/invites" --name lan-bench \
-    --device A:payer+payee --device B:payee+payer --device C:payee --device D:gateway
+    --device A --device B --device C --device D:gateway
   chmod 644 "$STATE"/invites/*.json  # disposable Regtest keys; containers read them as root
 
   log "Funding the gateway's faucet wallet from ths (2 × 1 ZEC)"

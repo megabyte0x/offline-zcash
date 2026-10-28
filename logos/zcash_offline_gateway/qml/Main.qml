@@ -27,11 +27,17 @@ Rectangle {
     property bool busy: false
     property bool refreshing: false
     property bool settingsLoaded: false
+    property string reachError: ""   // last failed status call; the badge must not show a stale state
     readonly property bool joined: st !== null && st.joined === true
-    readonly property bool allowed: joined && String(st.role || "").split("+").indexOf("gateway") >= 0
+    readonly property bool allowed: joined && st.role === "gateway"
     readonly property bool testnet: st !== null && st.network === "testnet"
-    readonly property bool online: st !== null && st.running === true && st.online === true
+    readonly property bool online: st !== null && reachError === "" && st.running === true && st.online === true
+    readonly property bool syncing: st !== null && st.syncing === true
     readonly property bool narrow: width < 640
+    property string servers: ""   // testnet: the fleet's TLS lightwalletd servers
+    // Regtest gateways need the plain http:// Zakura JSON-RPC; the engine gives the full reason on check.
+    readonly property bool rpcInvalid: !testnet && !/^http:\/\//i.test(rpc.text.trim())
+    readonly property string chainUrl: testnet ? servers : rpc.text.trim()
 
     function unwrap(payload) {
         var v = payload
@@ -40,6 +46,7 @@ Rectangle {
         }
         if (v && typeof v === "object" && v.success !== undefined && v.value !== undefined && v.error !== undefined)
             return v.success ? unwrap(v.value) : { error: String(v.error) }
+        if (v && typeof v === "object" && v.error !== undefined && v.message) return { error: String(v.error) + " (" + (v.method || "call") + "): " + v.message }   // LogosQmlBridge CallError detail
         return v === null || v === undefined ? { error: "empty reply" } : v
     }
     function call(method, args, cb, timeout) {
@@ -62,13 +69,14 @@ Rectangle {
         if (refreshing) return
         refreshing = true
         call("status", [], function (s) {
-            if (s.error) { root.refreshing = false; root.failed = true; root.message = "Cannot reach zcash_offline_module: " + s.error; return }
+            if (s.error) { root.refreshing = false; root.reachError = s.error; return }
+            root.reachError = ""
             root.st = s
-            if (!root.settingsLoaded) {
-                if (s.rpc) rpc.text = s.rpc
-                else if (s.network === "testnet") rpc.text = "https://testnet.zec.rocks:443,https://zaino.testnet.unsafe.zec.rocks:443"
+            if (!root.settingsLoaded && s.joined) {
+                if (s.rpc && s.network !== "testnet") rpc.text = s.rpc
                 mine.checked = !!s.mine
                 root.settingsLoaded = true
+                if (s.network === "testnet") root.call("fleet", [], function (f) { if (!f.error) root.servers = (f.servers || []).join(",") })
             }
             if (!s.running) { root.refreshing = false; root.loaded = true; return }
             root.call("list_payments", [], function (p) {
@@ -79,25 +87,22 @@ Rectangle {
     }
     function checkRpc(startAfter) {
         root.busy = true; root.failed = false; root.message = root.testnet ? "Checking TLS lightwalletd…" : "Checking getblockchaininfo…"
-        root.call("check_rpc", [rpc.text.trim()], function (info) {
-            if (info.error) { root.busy = false; root.failed = true; root.message = "Chain service check failed: " + info.error + (root.testnet ? ". Check the server list and your internet connection." : ". Is ths start running on this machine?"); return }
+        root.call("check_rpc", [root.chainUrl], function (info) {
+            if (info.error) { root.busy = false; root.failed = true; root.message = "Chain service check failed: " + info.error + (root.testnet ? ". Check your internet connection." : "."); return }
             root.message = "Chain service answers · " + info.chain + " · height " + info.blocks
             if (!startAfter) { root.busy = false; return }
-            if (mine.checked && root.testnet) {
-                root.busy = false; root.failed = true; root.message = "Mining is for Regtest only. Turn off mining for testnet."; return
-            }
-            var opts = { rpc: rpc.text.trim(), mine: mine.checked }
+            var opts = { rpc: root.chainUrl, mine: mine.checked && !root.testnet }
             if (listenAddr.text.trim() !== "") opts.listen = listenAddr.text.trim()
             var peers = dial.text.split(/[\s,]+/).filter(function (s) { return s !== "" })
             if (peers.length) opts.dial = peers
             root.call("start", [JSON.stringify(opts)], function (s) {
                 root.busy = false; root.failed = !!s.error
-                root.message = s.error ? "Gateway not started: " + s.error : "Gateway running on the shared device · " + s.name
+                root.message = s.error ? "Gateway not started: " + s.error : "Gateway running on the shared device · " + s.name + ". Its wallet syncs in the background."
                 root.refresh()
                 if (!s.error) root.call("sync_now", [], function (r) {
                     if (r.error) { root.failed = true; root.message = "Gateway started; wallet sync failed: " + r.error }
                     root.refresh()
-                }, 120000)
+                })
             }, 60000)
         }, 70000)
     }
@@ -107,6 +112,30 @@ Rectangle {
         function onModuleEventReceived(module, eventName, data) { if (module === root.moduleName) root.refresh() }
     }
     Timer { interval: 3000; repeat: true; running: true; onTriggered: root.refresh() }
+    function leave() {
+        root.busy = true; root.failed = false; root.message = "Leaving…"
+        root.call("leave", [], function (r) {
+            root.busy = false; root.failed = !!r.error
+            root.message = r.error ? "Could not leave: " + r.error : r.message
+            if (!r.error) { root.settingsLoaded = false; root.servers = ""; root.submissions = []; rpc.text = "http://127.0.0.1:18232"; mine.checked = false }
+            root.refresh()
+        }, 60000)
+    }
+    Popup {
+        id: leaveConfirm
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; focus: true; padding: 20
+        width: Math.min(root.width - 40, 480)
+        background: Rectangle { color: root.card; border.color: root.line; radius: 10 }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
+            Label2 { text: "The gateway and node stop. This device's keys, wallet and submission history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards you can join another invite, for example a testnet session." }
+            RowLayout { Layout.fillWidth: true; spacing: 10
+                Btn { secondary: true; text: "Cancel"; Layout.fillWidth: true; onClicked: leaveConfirm.close() }
+                Btn { objectName: "confirmLeaveButton"; text: "Leave and keep a backup"; Layout.fillWidth: true; onClicked: { leaveConfirm.close(); root.leave() } } }
+        }
+    }
 
     component Card: Rectangle {
         id: cardRoot
@@ -127,9 +156,10 @@ Rectangle {
     component Label2: Text { color: root.mut; font.pixelSize: 14; wrapMode: Text.Wrap; Layout.fillWidth: true; textFormat: Text.PlainText }
     component Field: TextField {
         id: f
+        property bool invalid: false
         Layout.fillWidth: true; color: root.fg; font.pixelSize: 14; padding: 10; selectByMouse: true
         placeholderTextColor: "#7d8699"
-        background: Rectangle { color: root.field; radius: 8; border.width: f.activeFocus ? 2 : 1; border.color: f.activeFocus ? root.acc : root.line }
+        background: Rectangle { color: root.field; radius: 8; border.width: f.activeFocus ? 2 : 1; border.color: f.invalid ? root.bad : f.activeFocus ? root.acc : root.line }
     }
     component Btn: Button {
         id: b
@@ -176,16 +206,22 @@ Rectangle {
                 Rectangle { width: 24; height: 24; radius: 12; color: root.acc; Accessible.ignored: true
                     Text { anchors.centerIn: parent; text: "Z"; color: "#111"; font.pixelSize: 15; font.bold: true } }
                 Text { text: "Offline Zcash Gateway"; color: root.fg; font.pixelSize: 22; font.bold: true }
-                Pill { visible: root.joined; text: root.joined ? root.st.name + " · " + root.st.role + " · " + (root.st.network || "regtest") : "" }
-                Pill { visible: root.st !== null; text: root.online ? "gateway online" : root.st && root.st.running ? "running · gateway not online" : "stopped"; textColor: root.online ? root.ok : root.mut }
+                Pill { visible: root.joined; text: root.joined ? [root.st.name, root.st.role, root.st.network || "regtest"].filter(function (x) { return !!x }).join(" · ") : "" }
+                Pill {
+                    visible: root.st !== null || root.reachError !== ""
+                    text: root.reachError !== "" ? "service not answering" : root.syncing ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "")
+                          : root.online ? "gateway online" : root.st && root.st.running ? "running · gateway not online" : "stopped"
+                    textColor: root.reachError !== "" ? root.bad : root.online || root.syncing ? root.ok : root.mut
+                }
             }
             Label2 { text: "Bridges mesh payments to the chain. On Regtest the operator runs ths start outside Basecamp; on testnet the gateway uses TLS lightwalletd servers. The fleet chooses the network." }
-            Label2 { visible: root.st === null && root.message === ""; text: "Connecting to zcash_offline_module…" }
+            Label2 { visible: root.st === null && root.message === "" && root.reachError === ""; text: "Connecting to zcash_offline_module…" }
+            Note { tone: root.bad; text: root.reachError !== "" ? "The Offline Zcash service did not answer: " + root.reachError + ". This page retries every 3 seconds." : "" }
 
             Card {
                 visible: root.st !== null && !root.joined
                 title: "1 · Join as the gateway"
-                Label2 { text: "Paste the gateway invite created in Offline Zcash Organiser. Only an invite with the gateway role can run a gateway; installing this app grants nothing." }
+                Label2 { text: "Paste the gateway invite created in Offline Zcash Organiser. Only an invite marked as the gateway can run one; installing this app grants nothing." }
                 Rectangle {
                     Layout.fillWidth: true; Layout.preferredHeight: 120
                     radius: 8; color: root.field; border.color: invite.activeFocus ? root.acc : root.line; border.width: invite.activeFocus ? 2 : 1
@@ -214,20 +250,28 @@ Rectangle {
             Note {
                 visible: root.joined && !root.allowed
                 tone: root.bad
-                text: root.joined && !root.allowed ? "This device joined as " + root.st.role + ", not gateway. Installing this app does not change your role. Ask the organiser for a gateway invite and use it on a new device." : ""
+                text: root.joined && !root.allowed ? "This device's invite does not make it the gateway, and installing this app does not change that. Ask the organiser for a gateway invite, then leave this session and join with it." : ""
             }
 
             Card {
                 title: root.joined ? "Chain service" : "2 · Chain service"
                 visible: root.st !== null
-                Label2 { text: root.testnet ? "Testnet TLS lightwalletd servers (comma-separated)" : "Chain RPC URL (Regtest, from ths endpoints)" }
-                Field { id: rpc; objectName: "rpcUrl"; text: "http://127.0.0.1:18232"; Accessible.name: root.testnet ? "Testnet lightwalletd servers" : "Chain RPC URL" }
+                Label2 { text: root.testnet ? "Testnet TLS lightwalletd servers (from the session)" : "Chain RPC URL (Regtest, from ths endpoints)" }
+                Repeater {
+                    model: root.testnet ? root.servers.split(",").filter(function (s) { return s !== "" }) : []
+                    Text { text: modelData; color: root.fg; font.family: "monospace"; font.pixelSize: 13; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                }
+                Field { id: rpc; objectName: "rpcUrl"; visible: !root.testnet; invalid: root.rpcInvalid; text: "http://127.0.0.1:18232"; Accessible.name: "Chain RPC URL" }
+                Note {
+                    tone: root.bad
+                    text: root.rpcInvalid ? "This device is on a Regtest session, so the gateway needs the plain http:// Zakura JSON-RPC URL from ths endpoints (usually http://127.0.0.1:18232). https:// servers such as testnet.zec.rocks are testnet lightwalletd; to use testnet, leave this session and join a testnet invite." : ""
+                }
                 Switch {
-                    id: mine; objectName: "mineBlocks"; enabled: !root.testnet
-                    text: root.testnet ? "Mine blocks (Regtest only, off on testnet)" : "Mine blocks after each submission (Regtest)"
+                    id: mine; objectName: "mineBlocks"; visible: !root.testnet
+                    text: "Mine blocks after each submission (Regtest)"
                     palette.windowText: root.fg; palette.text: root.fg; Accessible.name: text
                 }
-                Label2 { font.pixelSize: 12; text: root.testnet ? "Testnet has no gateway faucet and no mining." : "Mining also lets wallets request test funds. Use only the local ths Regtest chain, never real ZEC." }
+                Label2 { font.pixelSize: 12; text: root.testnet ? "Testnet has no gateway faucet and no mining. The session's organiser chose these servers." : "Mining also lets wallets request test funds. Use only the local ths Regtest chain, never real ZEC." }
                 GridLayout {
                     Layout.fillWidth: true
                     columns: root.narrow ? 1 : 2; columnSpacing: 10; rowSpacing: 4
@@ -241,15 +285,15 @@ Rectangle {
                 Label2 { font.pixelSize: 12; text: "Mesh dial and listen apply on first start. The chain service and mining can change later without restarting the shared engine." }
                 Flow {
                     Layout.fillWidth: true; spacing: 10; Layout.topMargin: 6
-                    Btn { objectName: "checkRpcButton"; secondary: true; text: "Check chain service"; enabled: !root.busy && rpc.text.trim() !== ""; onClicked: root.checkRpc(false) }
+                    Btn { objectName: "checkRpcButton"; secondary: true; text: "Check chain service"; enabled: !root.busy && root.chainUrl !== "" && !root.rpcInvalid; onClicked: root.checkRpc(false) }
                     Btn {
                         objectName: "startGatewayButton"
                         text: root.busy ? "Working…" : root.online ? "Apply gateway settings" : "Start gateway"
-                        enabled: !root.busy && root.allowed && rpc.text.trim() !== ""
+                        enabled: !root.busy && root.allowed && root.chainUrl !== "" && !root.rpcInvalid
                         onClicked: root.checkRpc(true)
                     }
                 }
-                Label2 { visible: root.joined && !root.allowed; font.pixelSize: 12; text: "Start is disabled: this device does not hold the gateway role." }
+                Label2 { visible: root.joined && !root.allowed; font.pixelSize: 12; text: "Start is disabled: this device is not the session's gateway." }
                 Note { text: root.message; tone: root.failed ? root.bad : root.busy ? root.mut : root.ok }
                 Label2 {
                     font.pixelSize: 12
@@ -264,7 +308,9 @@ Rectangle {
                 visible: root.allowed
                 title: "Gateway wallet"
                 Text { text: root.st && root.st.wallet ? root.zec(root.st.wallet.spendable) : "Not started"; color: root.fg; font.pixelSize: 24; font.weight: Font.DemiBold }
-                Label2 { text: root.st && root.st.wallet ? "synced to height " + root.st.wallet.tip + " · used to serve test funds" : "Start the gateway to sync its wallet." }
+                Label2 { text: root.st && root.st.wallet ? (root.syncing ? "syncing in the background · height " + root.st.wallet.tip + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "synced to height " + root.st.wallet.tip)
+                                                         + (root.testnet ? "" : " · used to serve test funds") : "Start the gateway to sync its wallet." }
+                Label2 { visible: !!(root.st && !root.syncing && root.st.sync_error); color: root.bad; text: root.st && root.st.sync_error ? "Last sync failed: " + root.st.sync_error : "" }
                 Label2 { text: "Funding address" }
                 TextEdit {
                     text: root.st && root.st.address ? root.st.address : ""
@@ -287,8 +333,9 @@ Rectangle {
                 Btn {
                     secondary: true
                     visible: root.online
-                    text: "Refresh gateway balance"
-                    onClicked: root.call("sync_now", [], function (r) { root.failed = !!r.error; root.message = r.error ? "Sync failed: " + r.error : "Wallet synced to height " + r.tip; root.refresh() }, 120000)
+                    enabled: !root.syncing
+                    text: root.syncing ? "Syncing…" : "Refresh gateway balance"
+                    onClicked: root.call("sync_now", [], function (r) { root.failed = !!r.error; root.message = r.error ? "Sync failed: " + r.error : "Wallet sync started in the background."; root.refresh() })
                 }
             }
 
@@ -310,6 +357,13 @@ Rectangle {
                         Label2 { font.pixelSize: 12; text: "submitted " + sub.modelData.submissions + (sub.modelData.submissions === 1 ? " time" : " times") }
                     }
                 }
+            }
+            Card {
+                visible: root.joined
+                title: "Session"
+                Label2 { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept." }
+                Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !root.busy && !root.syncing; onClicked: leaveConfirm.open() }
+                Label2 { visible: root.syncing; font.pixelSize: 12; text: "Leave is available when the wallet sync finishes." }
             }
             Item { implicitHeight: 16 }
         }

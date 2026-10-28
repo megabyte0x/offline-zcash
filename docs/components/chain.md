@@ -11,7 +11,8 @@ Fleet `network` selects parameters and address encoding; the RPC chain name
 The gateway is a **TLS light client**, not a full node. Defaults:
 `https://testnet.zec.rocks:443` and
 `https://zaino.testnet.unsafe.zec.rocks:443`; configure `fleet.json`'s `servers`
-or the gateway's comma-separated endpoint setting. The secondary returned
+or the CLI gateway's comma-separated `--rpc` list. Since v0.7.3 the Basecamp
+Gateway app shows the fleet's servers on a testnet session instead of an RPC field. The secondary returned
 gRPC `UNAVAILABLE: Received http2 header with status: 503` on 27 October.
 Use the primary when no secondary is reachable, with a single-source warning.
 Compare reachable servers' common-height hashes, compact batches, tree states

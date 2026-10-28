@@ -73,7 +73,7 @@ impl OfflineNode {
             None if self.home.join("secret.json").exists() => {
                 let me: DeviceSecret =
                     serde_json::from_slice(&std::fs::read(self.home.join("secret.json"))?)?;
-                json!({"name": me.name, "role": me.role})
+                json!({"name": me.name, "role": if zcash_offline_core::fleet::is_gateway_role(&me.role) { "gateway" } else { "" }})
             }
             None => json!({}),
         };
@@ -149,16 +149,6 @@ impl OfflineNode {
                 &self.home.join("fleet.json"),
             )?)?)
         })())
-    }
-
-    /// First four bytes of the LAN fleet tag; a discovery filter, not authentication.
-    pub fn fleet_hint(&self) -> Vec<u8> {
-        if self.app().is_ok_and(|a| a.cfg.me.role.split('+').any(|r| r == "gateway")) {
-            return vec![0; 4];
-        }
-        Fleet::load(&self.home.join("fleet.json"))
-            .map(|f| f.discovery_tag()[..4].to_vec())
-            .unwrap_or_default()
     }
 
     pub fn pay(&self, to: String, amount_zec: String) -> String {

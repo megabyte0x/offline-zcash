@@ -66,7 +66,6 @@ fun main(args: Array<String>) {
     }
     val (a, b, d) = nodes
     try {
-        check(a.fleetHint().size == 4 && a.fleetHint().contentEquals(b.fleetHint()))
         // Flow-control rejection and cancellation must not claim successful delivery.
         check(!ChunkWriter({ 20 }) { _, done -> done(false) }.write(ByteArray(50)))
         val blocked = CountDownLatch(1)

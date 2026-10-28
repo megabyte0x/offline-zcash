@@ -240,10 +240,11 @@ impl App {
 
     /// Enables or updates the gateway on the existing identity, wallet and mesh.
     pub fn configure_gateway(&self, rpc: String, mine: bool) -> Result<()> {
-        anyhow::ensure!(self.cfg.fleet.by_name(self.name())?.role.split('+').any(|r| r == "gateway"),
+        anyhow::ensure!(self.cfg.fleet.by_name(self.name())?.is_gateway(),
             "this invite does not grant the gateway role; ask the organiser for a gateway invite");
         anyhow::ensure!(self.cfg.fleet.network != zcash_offline_core::fleet::Network::Testnet || !mine, "mining is Regtest-only");
         anyhow::ensure!(!rpc.trim().is_empty(), "chain RPC URL is required");
+        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest { crate::regtest_rpc_url(&rpc)?; }
         *self.online.lock().unwrap() = (Some(rpc), mine);
         Ok(())
     }
@@ -1447,7 +1448,7 @@ impl App {
         let sources = self.sync_sources.lock().unwrap().clone();
         json!({
             "name": self.name(),
-            "role": self.cfg.me.role,
+            "role": if me.is_some_and(|d| d.is_gateway()) { "gateway" } else { "" },
             "version": env!("CARGO_PKG_VERSION"),
             "network": self.cfg.fleet.network,
             "birthday": self.cfg.fleet.birthday,
@@ -1456,6 +1457,7 @@ impl App {
             "peer_id": self.mesh.peer_id().to_string(),
             "address": me.map(|d| d.address.clone()),
             "online": rpc.is_some(),
+            "chain_tip": self.reported_tip.load(std::sync::atomic::Ordering::Relaxed),
             "open_network": self.cfg.fleet.open,
             "selected_gateway": self.gateway_status(),
             "gateway_warning": self.gateway_warning(),

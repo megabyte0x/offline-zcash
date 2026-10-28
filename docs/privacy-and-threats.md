@@ -136,6 +136,15 @@ names. Signed nonce results are broadcast in plaintext (P12); old clients retain
 private results. The authenticated submitting peer and repeated txid/timing
 remain visible, so this reduces the explicit pair leak, not first-spy tracking.
 
+**v0.7.3 update:** the payer, payee and relay roles never had an effect and are
+gone; only `gateway` remains. Invited devices trust their fleet's named gateway
+rather than pinning the first one they hear. Devices no longer beacon the 8-byte
+LAN fleet tag or the 4-byte BLE fleet hint (both are zero), so invited devices now
+auto-connect to any Offline Zcash device, as open devices already did. The tag
+authenticated nothing. This removes the fleet-membership marker from S4/PO2; the
+stable peer ID, IP address and the fact that a device runs Offline Zcash remain
+visible.
+
 **v0.7.0 implementation update:** compact sync and new-tip/control messages use
 512 B / 4 KiB / 16 KiB padding buckets; `pay`, `sub` and `rcpt` retain their old
 padding. **Sync and payment traffic are distinguishable by size.** Their timing
@@ -166,7 +175,7 @@ v0.5.1 source revision. v0.6.0 signs every inner envelope and mesh ack (R1/R4/S1
 adds loopback API tokens/Host checks and text-only web rendering (S5/OS4), proves
 address receiving authority and pins bindings (B5), removes pending acceptance for
 open/unknown payers (A2/S6), and pins the first used gateway with change warnings
-(G4). [Exact controls and remaining limits](basecamp-install.md#open-mode-trust-and-faucet-limits).
+(G4). [Exact controls and remaining limits](#open-mode-controls-v060).
 First-contact Sybils, dishonest pinned gateways and unverified chain views remain
 risks. Receiving authority is not spending authority, and the new proof code is
 experimental and not independently audited.
@@ -283,7 +292,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | S1 | Strangers can't inject traffic | S | Open links still accept traffic under a stranger's own identity | High / High | Signed envelopes/acks since v0.6.0; v0.7.2 inventory proof and resource caps | **Partial** (impersonation already fixed; open admission intentional) | Membership authorization and Sybil resistance deferred |
 | S2 | No Sybil | S | Unlimited identities: first-contact hijack or eclipse | High / High | Existing gateway/address pins and comparisons; v0.7.2 global/sender admission bounds | **Partial / Deferred** | Identity quotas alone cannot stop fresh identities; trusted enrollment/proofs needed |
 | S3 | Names and addresses aren't impersonated | S | Self-chosen display names still collide | High / High | v0.6.0 address-authority proofs and first-use pins; routing uses mesh keys, not unknown display names | **Partial** (binding spoof already fixed) | Human-verifiable identity/enrollment remains deferred |
-| S4 | Membership and topology stay hidden | P | Beacons expose fleet tag, stable peer ID and IP; BLE exposes a fleet hint | High / Medium | No hiding claim | **Not / Deferred** | Hint-only rotation would leave stable IDs visible; coordinated Android/Linux identity/outbox rotation is not contained or old-peer compatible |
+| S4 | Membership and topology stay hidden | P | Beacons expose a stable peer ID, IP and that the device runs Offline Zcash | High / Medium | v0.7.3 beacons a zero fleet tag and zero BLE hint, so fleet membership is no longer marked; no other hiding claim | **Not / Deferred** | Coordinated Android/Linux identity/outbox rotation is not contained or old-peer compatible |
 | S5 | Remote strings can't run in the UI | S | A UI regression could introduce stored XSS | Medium / High | v0.6.0 text-only rendering and API token/Host checks; existing regression coverage | **Enforced** (already fixed) | Keep remote strings out of HTML construction |
 | S6 | Pending is never offered to strangers | S | Pending would lack accountability | High / High | v0.6.0: open and unknown payers wait for gateway-reported inclusion | **Enforced** (already fixed) | — |
 
@@ -310,7 +319,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.2 | Fix and when |
 |---|---|---|---|---|---|---|---|
 | PO1 | The mesh hides who pays whom | P | Cleartext sender/recipient, size and time; `sub` timing links the txid to A and B | High / Medium | Sealed payload | **Not** | Uniform size, cover traffic |
-| PO2 | BLE doesn't track devices | P | Static fleet hint, unencrypted GATT and stable peer ID | High / Medium | No device name; payment bodies sealed | **Not / Deferred** | As S4: rotating only the hint does not prevent tracking; identity/outbox/radio coordination needs a protocol change |
+| PO2 | BLE doesn't track devices | P | Static service UUID, unencrypted GATT and stable peer ID | High / Medium | No device name; payment bodies sealed; v0.7.3 advertises a zero fleet hint | **Not / Deferred** | As S4: identity/outbox/radio coordination needs a protocol change |
 | PO3 | The LAN doesn't leak | P | Beacons and plaintext TCP | High / Medium | — | **Not** | Link encryption |
 | PO4 | The uplink doesn't leak | P | Gateway IP and tx timing at lightwalletd | High / Medium | TLS | **Not** | Tor |
 | PO5 | No active radio adversary | S+P | Jamming, direction finding | Low–Medium / High | Accepted | **Not** | — |
@@ -370,7 +379,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | A9, B7, G5/G6/G8, L3, PO1/PO3/PO4 | Tor, recipient hiding, cover traffic, fleet-encrypted result broadcasts and separate gateway identity need transport/routing/deployment changes. Nonces remove explicit counterpart names only. |
 | A5, O1–O4, G4, S2/S3 | On-device fleet keys and organiser-signed public enrollment change the invite/trust lifecycle. First-use pins are not membership authorization or Sybil resistance. |
 | B8/A10/Z5 | Diversified receipt routes and amount/input-shape privacy need binding and wallet policy changes. A deliberate Max payment necessarily reveals the value being paid to its recipient. |
-| PO2/S4, R3/OS7 | Coordinated BLE/beacon identity rotation and forward secrecy affect Android/Linux discovery, keys and durable outboxes. Hint-only rotation leaves stable IDs visible and is not a tracking fix. |
+| PO2/S4, R3/OS7 | Coordinated BLE/beacon identity rotation and forward secrecy affect Android/Linux discovery, keys and durable outboxes. v0.7.3 removed the fleet tag/hint; stable IDs remain visible. |
 | D1–D3/D4 | Signed packages, private APK signing and reproducible releases need owner-controlled keys and distribution policy. SHA-pinned actions and cache isolation do not authenticate packages. |
 | D5 | Host-enforced Basecamp caller origin/authorization requires the upstream host protocol, not an unauthenticated module-name allow-list. |
 | OS2/OS3 | Keystore/Keychain/Secure Enclave and Windows ACL integration need platform-specific storage and recovery design. Unix 0600 does not defeat same-user malware. |
@@ -400,10 +409,59 @@ The sections above were written for the BitChat-fork design. Until they are rewr
 3. P3 and the threat table assume PoW, MMR paths and two gateways (residual Medium). v0.7.2 authenticates sources and compares reachable servers, but does not verify those chain proofs; the residual is High.
 4. P7 assumes Tor and our own node; Tor is unbuilt and lightwalletd is a third party.
 5. P2, P11 and "payers known and accountable" assume a closed fleet. Open/unknown payers cannot receive pending acceptance; invited pending payments now have count/value caps. Durable sequences increase monotonically with a clock-derived floor.
-6. P5 covers BitChat peer IDs, not UDP beacons, the static BLE hint or plaintext TCP links. Hello is still public; a fresh proof gates inventory and signed destination/payload-bound acks cannot be forged by relays.
+6. P5 covers BitChat peer IDs, not UDP beacons, BLE advertisements or plaintext TCP links. Hello is still public; a fresh proof gates inventory and signed destination/payload-bound acks cannot be forged by relays.
 7. P8 and the assumptions table have no public-testnet column (public lightwalletd, public faucet, minimum-difficulty reorgs).
 8. P9/P10 (nullifier sharing/co-signers) remain unbuilt. P12's plaintext broadcast is now implemented for nonce-addressed signed gateway results; legacy results remain directed. Conflict bundles and mainnet fleet-key encryption are unbuilt.
 9. The "Light client" leak row doesn't cover a gateway relaying compact actions with no header, the birthday-height leak or the unverifiable frontier.
 10. Missing rows: organiser key custody and unsigned invites; local API, XSS and Basecamp isolation; unsigned supply chain and the public APK key; no forward secrecy and plaintext files; the faucet; address bindings; split-transaction fingerprints and fees; Max leaking notes.
 11. The fleet-fingerprint section assumes uniform 2-action, 10,000-zat txs. Splits/Max have more actions and correctly pay the larger ZIP 317 fee (Z4); their shape still fingerprints them.
 12. It still frames the harness as four Macs with BitChat. Open item 1 (packet capture) must now include the header leaks above.
+
+## Open-mode controls (v0.6.0)
+
+Moved from the Basecamp install guide; the controls date from v0.6.0. v0.7.3
+changes only that invited devices trust their fleet's named gateway instead of
+pinning the first one they hear.
+
+All inner envelopes (including sync, faucet and submission requests/replies) are
+signed by their sender and bound to the intended recipient. Mesh delivery acks
+are signed by the original destination. Sealing alone is not authentication.
+Gateway announcements and address bindings are individually sealed; only mesh
+IDs and public routing keys are broadcast. A fresh announcement lasts 35 seconds.
+Before first use, open devices choose fewest hops, then highest advertised tip,
+then mesh ID. **First use pins the gateway's key** in `data/trust.json`, across
+restarts. A nearer or newer gateway cannot silently replace it. An unavailable pin
+produces a warning and blocks automatic switching. To change operator on purpose,
+verify the new operator's mesh ID outside the app, then use Leave session in
+Basecamp (v0.7.3), or stop the device and remove only `data/trust.json`. Never
+delete `secret.json` or wallet data.
+
+**First contact is still trust-on-first-use, not operator authentication.** A Sybil
+gateway can win the initial choice. Hop counts and tips are not independently
+proved; **sync, inclusion and mined results are gateway-reported**. Gateway
+signatures do not prove chain facts.
+
+Address bindings include a domain-separated Schnorr proof of knowledge of the
+Ironwood receiver's incoming-viewing scalar, bound to the exact address and mesh
+identity. No viewing or spending key is shared. This proves **receiving authority,
+not spending authority**; a holder of a copied incoming viewing key can also prove
+it. First receipt routing pins address → mesh key; changed or ambiguous bindings
+disable receipt routing and never redirect funds. The typed address always decides
+the transaction's destination. This experimental proof implementation has not had
+an independent cryptographic review.
+
+Open-mode and unknown payers **never receive pending acceptance**. A payee waits
+for its pinned gateway to report inclusion before issuing an `Included` receipt.
+That receipt is not an independently verified inclusion or finality proof.
+
+The loopback web API requires a per-run random token and a loopback Host header;
+the UI and CLI obtain the token from the local page. Remote strings are rendered
+as text. Keep the API bound to `127.0.0.1`; `--api 0.0.0.0` is for isolated tests,
+not a secure network API. There is no protection from programs running as your user.
+
+The Regtest faucet allows one request per device per 60 seconds (persisted over
+gateway restarts), at most 10 notes and the configured total cap (default 1 ZEC).
+New identities can evade the limit: it is not Sybil protection. v0.5.x nodes
+ignore unsupported v0.6.0 messages without crashing, but v0.6.0 and later reject
+unsigned legacy envelopes and acks, so payment and sync endpoints must upgrade
+together.

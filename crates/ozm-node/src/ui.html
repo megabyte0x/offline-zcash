@@ -82,7 +82,7 @@
   <section aria-labelledby="h-pay">
     <h2 id="h-pay">Pay offline</h2>
     <label for="to">Recipient Zcash address</label>
-    <input id="to" placeholder="uregtest1…" autocomplete="off" spellcheck="false" aria-describedby="tohint">
+    <input id="to" placeholder="Unified address" autocomplete="off" spellcheck="false" aria-describedby="tohint">
     <div class="hint" id="tohint">Paste the unified address the recipient shared with you.</div>
     <label for="amt">Amount (ZEC)</label>
     <div class="row"><input id="amt" value="0.01" inputmode="decimal" autocomplete="off" aria-describedby="fee"><button id="maxb" class="secondary" aria-label="Use maximum spendable amount">Max</button></div>
@@ -170,8 +170,9 @@ async function refresh() {
     const s = await api('/api/status');
     $('reach').textContent = '';
     network = s.network || 'regtest';
+    $('to').placeholder = (PREFIX[network] || 'u') + '…';
     $('ver').textContent = 'v' + s.version;
-    $('who').textContent = s.name + ' · ' + s.role + ' · ' + network;
+    $('who').textContent = [s.name, s.role, network].filter(Boolean).join(' · ');
     $('online').textContent = s.online ? 'gateway / online' : s.selected_gateway ? 'offline · gateway via mesh' : 'offline · no gateway yet';
     $('online').className = 'pill ' + (s.online || s.selected_gateway ? 'ok' : 'warn');
     $('nbrs').textContent = 'mesh neighbours: ' + (s.neighbor_links.map(n => `${n.name} (${n.kind.toUpperCase()})`).join(', ') || 'none');

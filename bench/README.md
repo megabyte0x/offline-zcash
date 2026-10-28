@@ -12,7 +12,7 @@ bench/mesh-bench.sh down         # remove containers, networks and bench/.state
 
 What `up` does:
 1. Builds `ozm-node` in release mode and an image `ozm-node:bench` (Debian 12 with tcpdump).
-2. Creates the fleet keys with `ozm-node fleet-init`.
+2. Creates the fleet keys with `ozm-node fleet-init`. Since v0.7.3 the scripts use the new form, for example `--device A --device R --device B --device D:gateway`: every device pays, receives and relays, and only the gateway is marked. Legacy forms such as `A:payer` or `R:relay` are still accepted, but every role except `gateway` is ignored.
 3. Funds A with ten 0.1 ZEC notes using `ths faucet`.
 4. Syncs A and B once in a one-shot container on `ths-default`.
 5. Starts the four daemons. Each device's UI and API are published on `127.0.0.1`: A on 7781, R on 7782, B on 7783, D on 7784.

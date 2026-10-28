@@ -34,7 +34,8 @@ class BleLink(context: Context, private val node: OfflineNode, private val repor
     private var advertising = false
     private var foreground = true
     private var stopped = false
-    private val hint = node.fleetHint()
+    // Zero service-data hint: every Offline Zcash device connects and relays (older peers accept zero).
+    private val hint = ByteArray(4)
 
     private inner class Conn(val device: BluetoothDevice, val central: Boolean) {
         val id = ids.incrementAndGet().toULong()
@@ -196,7 +197,7 @@ class BleLink(context: Context, private val node: OfflineNode, private val repor
         override fun onScanResult(type: Int, result: ScanResult) { handler.post {
             if (stopped || links.values.any { it.device.address == result.device.address }) return@post
             val remote = result.scanRecord?.getServiceData(ParcelUuid(SERVICE)) ?: return@post
-            if (remote.size != 4 || !(remote.contentEquals(hint) || remote.all { it == 0.toByte() } || hint.all { it == 0.toByte() })) return@post
+            if (remote.size != 4) return@post
             // Do not evict healthy peers on every scan result when six slots are full.
             if (links.size >= 6) return@post
             val c = reserve(result.device, true)
@@ -237,7 +238,7 @@ class BleLink(context: Context, private val node: OfflineNode, private val repor
 
     fun setForeground(value: Boolean) { handler.post { foreground = value; handler.removeCallbacks(scanCycle); scanCycle.run() } }
     fun start() { handler.post {
-        if (adapter?.isEnabled != true || hint.size != 4) { report("Enable Bluetooth, then restart mesh; LAN remains active"); return@post }
+        if (adapter?.isEnabled != true) { report("Enable Bluetooth, then restart mesh; LAN remains active"); return@post }
         server = manager.openGattServer(context, serverCallback)
         val service = BluetoothGattService(SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         characteristic = BluetoothGattCharacteristic(STREAM, BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or BluetoothGattCharacteristic.PROPERTY_NOTIFY, BluetoothGattCharacteristic.PERMISSION_WRITE).apply {

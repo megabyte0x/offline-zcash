@@ -16,7 +16,7 @@ You can set these options:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `OZM_VERSION` | Version to install, for example `0.7.0` | latest release |
+| `OZM_VERSION` | Version to install, for example `0.7.3` | latest release |
 | `OZM_INSTALL_DIR` | Folder for the binary | `~/.local/bin` |
 | `OZM_DRY_RUN=1` | Show what would be downloaded, then stop | off |
 
@@ -100,7 +100,17 @@ the CLI obtains its token from the local UI. Keep it on `127.0.0.1`.
 [Open trust model](basecamp-install.md#open-mode-trust-and-faucet-limits).
 
 Invites still work: run `ozm-node join <invite.json>` **before** first start, then
-`ozm-node start`. Existing fleet scripts may still pass names to `pay --to`.
+`ozm-node start`. An invited device trusts its fleet's named gateway instead of
+pinning the first one it hears. Existing fleet scripts may still pass names to `pay --to`.
+
+Every device can pay, receive and relay; `gateway` is the only role. Create a fleet
+with `NAME` or `NAME:gateway` per device and at least one gateway, for example
+`ozm-node fleet-init --out invites --name my-session --device Operator:gateway --device Alice --device Bob`.
+Older invites, fleet files and inputs such as `Alice:payer+payee` still work; every
+role except `gateway` is ignored.
+
+The CLI has no Leave session. To start over or switch network, keep the old home
+and use a new one with `--home`; never delete a funded wallet.
 For operator setup see [Basecamp](basecamp-install.md) or the older invited
 [CLI session guide](mvp-v0.2.0.md#running-a-session).
 
@@ -115,7 +125,7 @@ sync. Never choose a birthday later than a payment you need to recover.
 Create a gateway invite, install it on the device with internet, and start:
 
 ```sh copy Copy Testnet Gateway
-ozm-node fleet-init --out ./testnet-fleet --name testnet --network testnet --device Gateway:gateway+relay
+ozm-node fleet-init --out ./testnet-fleet --name testnet --network testnet --device Gateway:gateway
 ozm-node join ./testnet-fleet/Gateway.invite.json --home ~/.ozm-testnet-gateway
 ozm-node start --home ~/.ozm-testnet-gateway
 ```
@@ -173,7 +183,7 @@ as root or opening the whole system bus. Sandboxed desktop launchers also need
 system-bus access. libdbus is bundled into the binary; BlueZ is not.
 
 The web UI lists neighbours as `Name (BLE)` or `Name (TCP)` and shows Bluetooth
-on/off. Open or same-fleet Android and Linux devices should appear within a few seconds;
+on/off. Other Offline Zcash Android and Linux devices should appear within a few seconds;
 LAN links may win the mesh's duplicate-link selection. Missing/off adapters or a
 failed registration/scan produce a startup error; restart without `--ble` for LAN
 only. macOS returns an unsupported-platform error for `--ble`.

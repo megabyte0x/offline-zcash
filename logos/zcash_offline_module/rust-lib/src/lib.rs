@@ -1,5 +1,5 @@
-//! `zcash_offline_module`: the ozm-node device (mesh, wallet, payer, payee,
-//! relay and gateway roles) as a Logos core module.
+//! `zcash_offline_module`: the ozm-node device (mesh, wallet, payments and
+//! the optional gateway) as a Logos core module.
 //!
 //! Rust-first: the trait below is the module's contract. Every method returns
 //! a JSON string; failures are `{"error": "..."}`. The device lives in
@@ -22,7 +22,8 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Builds and sends an offline payment to a Regtest unified address. Returns the payment (POST /api/pay).
     fn pay(&mut self, to: String, amount_zec: String) -> String;
 
-    /// Syncs the wallet: from Zakura RPC when online, else asks a gateway over the mesh (POST /api/sync).
+    /// Starts a wallet sync in the background and returns at once; `status` reports `syncing`/`sync_error`
+    /// and `node_event` sends `synced` or `sync-error`. Online: from the chain; offline: via a gateway.
     fn sync_now(&mut self) -> String;
 
     /// Asks a Regtest gateway for `notes` test notes of `amount_zec` each (POST /api/fund).
@@ -31,7 +32,7 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Payments, refusals and gateway submissions (GET /api/payments).
     fn list_payments(&mut self) -> String;
 
-    /// Creates a session folder and per-device invites. Options: out, name, devices (NAME:ROLE list), optional join_device.
+    /// Creates a session folder and per-device invites. Options: out, name, devices (NAME or NAME:gateway), optional join_device.
     fn fleet_init(&mut self, options_json: String) -> String;
 
     /// Checks that a chain RPC answers getblockchaininfo. Does not start or grant a role.
@@ -40,11 +41,17 @@ pub trait ZcashOfflineModule: Send + 'static {
     /// Asks the desktop to open a folder containing a fleet. UI apps cannot open local file URLs.
     fn open_fleet_folder(&mut self, folder: String) -> String;
 
+    /// Current public-testnet tip from the default TLS lightwalletd servers, for choosing a session birthday.
+    fn testnet_tip(&mut self) -> String;
+
     /// Largest spendable amount and the exact builder fee. Does not lock notes or make a payment.
     fn max_payment(&mut self) -> String;
 
     /// Splits one mined note into equal self outputs. Wait for mined and sync before going offline.
     fn prepare_offline(&mut self, notes: i64, amount_zec: String) -> String;
+
+    /// Stops the node and moves the device files to a timestamped backup, so the device can join again.
+    fn leave(&mut self) -> String;
 
     /// Auto-starts a device that was already joined, so restarts resume.
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
@@ -94,6 +101,15 @@ const OPTIONS_FILE: &str = "module-start.json";
 #[derive(Default)]
 struct Node {
     app: Option<Arc<App>>,
+    api: Option<tokio::task::JoinHandle<()>>,
+    /// A first testnet scan can take minutes; it must never hold the module's call thread.
+    sync: Arc<SyncState>,
+}
+
+#[derive(Default)]
+struct SyncState {
+    running: std::sync::atomic::AtomicBool,
+    error: std::sync::Mutex<Option<String>>,
 }
 
 fn home() -> Result<PathBuf> {
@@ -127,16 +143,19 @@ impl Node {
         let mut v = match &self.app {
             Some(a) => a.status(),
             None if joined(&home) => {
-                // Not running: name, role and address from the installed files.
+                // Not running: name, gateway role and address from the installed files.
                 let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(home.join("secret.json"))?)?;
                 let fleet = Fleet::load(&home.join("fleet.json"))?;
-                json!({"name": me.name, "role": me.role, "network": fleet.network, "address": fleet.by_name(&me.name).ok().map(|d| d.address.clone())})
+                json!({"name": me.name, "role": if zcash_offline_core::fleet::is_gateway_role(&me.role) { "gateway" } else { "" }, "network": fleet.network, "address": fleet.by_name(&me.name).ok().map(|d| d.address.clone())})
             }
             None => json!({}),
         };
+        v["syncing"] = json!(self.sync.running.load(std::sync::atomic::Ordering::SeqCst));
+        v["sync_error"] = json!(self.sync.error.lock().unwrap().clone());
         v["joined"] = json!(joined(&home));
         v["running"] = json!(self.app.is_some());
         v["home"] = json!(home.display().to_string());
+        v["sessions"] = json!(home.with_file_name("sessions").display().to_string());
         if self.app.is_none() {
             let o = saved_options(&home);
             v["rpc"] = json!(o.rpc);
@@ -191,18 +210,46 @@ impl Node {
                 None => None,
             };
             let app = ozm_node::start(&opts).await?;
-            if let Some(listener) = listener {
+            let api = listener.map(|listener| {
                 let router = ozm_node::router(app.clone(), false);
                 tokio::spawn(async move {
                     let _ = axum::serve(listener, router).await;
-                });
-            }
-            anyhow::Ok(app)
+                })
+            });
+            anyhow::Ok((app, api))
         })?;
+        let (app, api) = app;
+        self.api = api;
         let _ = app.on_event.set(Box::new(|event: &str, detail: &Value| emit_node_event(event, &detail.to_string())));
         self.app = Some(app);
         let _ = std::fs::write(home.join(OPTIONS_FILE), serde_json::to_vec_pretty(&o)?);
         self.status_value()
+    }
+}
+
+impl Node {
+    fn start_sync(&self) -> Result<Value> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let app = self.app()?.clone();
+        if !self.sync.running.swap(true, SeqCst) {
+            *self.sync.error.lock().unwrap() = None;
+            let sync = self.sync.clone();
+            rt().spawn(async move {
+                if let Err(e) = app.sync().await {
+                    let error = format!("{e:#}");
+                    app.event("sync-error", json!({"error": error}));
+                    *sync.error.lock().unwrap() = Some(error);
+                }
+                sync.running.store(false, SeqCst);
+            });
+        }
+        Ok(json!({"syncing": true}))
+    }
+
+    /// Payments wait for the wallet lock a sync holds; refuse instead of blocking the call thread.
+    fn not_syncing(&self) -> Result<()> {
+        anyhow::ensure!(!self.sync.running.load(std::sync::atomic::Ordering::SeqCst), "wallet sync in progress; try again when it finishes");
+        Ok(())
     }
 }
 
@@ -237,9 +284,7 @@ impl ZcashOfflineModule for Node {
                 let source = rt().block_on(ozm_node::lightwallet::Lightwallet::connect(&servers))?;
                 return Ok(json!({"chain": "testnet", "blocks": source.tip, "sources": source.sources}));
             }
-            let info = zcash_offline_core::rpc::Rpc::new(&rpc_url).call("getblockchaininfo", json!([]))?;
-            anyhow::ensure!(info["blocks"].is_u64() && info["chain"].is_string(), "RPC returned no blockchain information");
-            Ok(info)
+            ozm_node::check_regtest_rpc(&rpc_url)
         })())
     }
 
@@ -285,6 +330,7 @@ impl ZcashOfflineModule for Node {
     fn pay(&mut self, to: String, amount_zec: String) -> String {
         out((|| {
             let a = self.app()?.clone();
+            self.not_syncing()?;
             let zat = parse_zec(&amount_zec)?;
             let p = rt().block_on(a.pay(&to, zat))?;
             Ok(serde_json::to_value(p)?)
@@ -292,7 +338,12 @@ impl ZcashOfflineModule for Node {
     }
 
     fn sync_now(&mut self) -> String {
-        out(self.app().cloned().and_then(|a| rt().block_on(a.sync())))
+        out(self.start_sync())
+    }
+
+    fn testnet_tip(&mut self) -> String {
+        out(rt().block_on(ozm_node::lightwallet::Lightwallet::connect(&zcash_offline_core::fleet::default_servers()))
+            .map(|s| json!({"blocks": s.tip, "sources": s.sources})))
     }
 
     fn max_payment(&mut self) -> String {
@@ -302,6 +353,7 @@ impl ZcashOfflineModule for Node {
     fn prepare_offline(&mut self, notes: i64, amount_zec: String) -> String {
         out((|| {
             let notes = u32::try_from(notes).context("positive note count")?;
+            self.not_syncing()?;
             let payment = rt().block_on(self.app()?.prepare_offline(notes, parse_zec(&amount_zec)?))?;
             Ok(serde_json::to_value(payment)?)
         })())
@@ -324,6 +376,22 @@ impl ZcashOfflineModule for Node {
         }))
     }
 
+    fn leave(&mut self) -> String {
+        out((|| {
+            let home = home()?;
+            self.not_syncing()?;
+            if let Some(app) = self.app.take() {
+                app.mesh.shutdown();
+            }
+            if let Some(api) = self.api.take() {
+                api.abort();
+            }
+            let backup = ozm_node::leave_home(&home)?;
+            Ok(json!({"ok": true, "backup": backup, "sessions": home.with_file_name("sessions"),
+                "message": format!("Left the session. Keys, wallet and history are kept in {}; nothing was deleted.", backup.display())}))
+        })())
+    }
+
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {
         let Ok(h) = home() else { return };
         if !joined(&h) {
@@ -332,6 +400,9 @@ impl ZcashOfflineModule for Node {
         let o = saved_options(&h);
         if let Err(e) = self.start_with(o) {
             eprintln!("zcash_offline_module: auto-start failed: {e:#}");
+        } else if self.app.as_ref().is_some_and(|a| a.gateway_options().0.is_some()) {
+            // Resume a sync a restart interrupted; never on the call thread.
+            let _ = self.start_sync();
         }
     }
 }

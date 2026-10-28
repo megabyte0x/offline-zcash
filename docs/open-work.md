@@ -4,7 +4,7 @@ Ordered. Each item names the component doc that owns it. Update this list as ite
 
 ## Built
 
-v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. Releases are on GitHub.
+v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; its funded public split/payment run remains unverified because funding failed. The current release is v0.7.3. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its APK keeps building and its version tracks releases, but no Android work is planned for now. Releases are on GitHub.
 
 | Version | What it proves | Doc |
 |---|---|---|
@@ -16,6 +16,10 @@ v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet
 | v0.5.0 | One shared Basecamp engine plus three apps: Offline Zcash, Organiser (fleet/invite export and join), Gateway (RPC check, live RPC/mining settings, balance/submissions). Four `.lgx` packages × three platforms, CLI tarballs, Android 0.5.0/code 6. Invite roles remain authoritative; wire format unchanged | [basecamp-install](basecamp-install.md), [../logos/README.md](../logos/README.md) |
 | v0.5.1 | Public custom Logos catalogue: install all four packages by name, merged portable variants, content-root verification and checksums; changelog-driven release notes. Android 0.5.1/code 7. Official-catalogue submission remains a draft | [basecamp-install](basecamp-install.md#install-by-name-recommended), [changelog](../CHANGELOG.md), [submission](logos-catalogue-submission.md) |
 | v0.6.0 | Invite-free local identities, open LAN/BLE discovery, signed/sealed envelopes and destination-authenticated acks; nearest-first gateway selection then persistent pinning, proof-bearing/pinned address bindings and rate-limited funds. Address payments and exact builder-fee Max in Basecamp/web/Android. Open/unknown payers wait for inclusion, never pending acceptance. Loopback API token/Host checks and text-only web rendering. Six-device no-invite bench. Chain views remain gateway-reported | [basecamp-install](basecamp-install.md#open-mode-trust-and-faucet-limits), [install](install.md), [changelog](../CHANGELOG.md) |
+| v0.7.0 | Public-testnet light-client gateway over TLS lightwalletd, fleet network/birthday, Common 4.0, compact sync, Prepare for offline and gateway-reported `included`/`mined` (details below). Android 0.7.0/code 9 | [install](install.md#public-testnet-v070), [chain](components/chain.md), [gateway](components/gateway.md) |
+| v0.7.1 | UI-only release: the same payment-state labels and explanations in web, Basecamp and Android; clearer setup, pay, Prepare for offline, Organiser and Gateway screens; accessibility. Android 0.7.1/code 10 | [changelog](../CHANGELOG.md) |
+| v0.7.2 | Contained hardening: Unix 0600 files, bounded mesh and gateway resources, key-possession proof before inventory, nonce-addressed gateway results (P12), invited pending caps, multi-server submission. Older v0.7.x peers only live-forward. Android 0.7.2/code 11 | [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [gateway](components/gateway.md#v072-contained-hardening) |
+| v0.7.3 | Scope: Basecamp apps on macOS and Linux. Gateway is the only role: every device pays, receives and relays; Organiser has one gateway checkbox per device and requires at least one; invited devices trust the fleet's named gateway; legacy roles in old invites are accepted and ignored. LAN/BLE fleet tag and hint are zero (v0.7.2 peers still connect); Android `fleetHint()` removed. Leave session in all three Basecamp apps moves `ozm` to a timestamped backup (not available on Android or in the `ozm-node` CLI; use another `--home`). Regtest Gateway accepts only `http://` JSON-RPC; testnet Gateway shows the fleet's lightwalletd servers. Android 0.7.3/code 12 | [basecamp-install](basecamp-install.md#leave-session), [mesh](components/mesh.md), [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [changelog](../CHANGELOG.md) |
 
 **v0.7.0:** configurable TLS lightwalletd gateway (no full node/viewing-key scanning),
 fleet network/birthday, Common 4.0, compact Ironwood chunks and empty runs,
@@ -47,12 +51,12 @@ packages built on Linux x86_64. Android release Kotlin compilation and lint
 passed; no arm64 APK/device or macOS run is implied. Web screenshots use the live
 testnet wallet; QML screenshots/interaction use a fixture bridge, not Basecamp.
 
-The owner tested **v0.5.1 on three real Macs successfully**. v0.7.0 still needs
-real-Mac retesting. Basecamp Local Network
+The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (now v0.7.3)
+still needs real-Mac retesting. Basecamp Local Network
 permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
 fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs do not verify macOS or radios.
 
-Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group and iOS. **Next transport steps:** real Android phones ([mesh.md BLE link](components/mesh.md#ble-link-android-first), B2–B7) and Linux desktop adapters ([D1/D2/D5](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)): one-hop Linux↔Linux/Android, Basecamp, forced multi-hop, BLE→LAN gateway, durability and capture. D3 adds macOS; D4 waits for Basecamp's Bluetooth usage-description support (issue filed upstream). The gateway's result is "gateway-reported", not proved.
+Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group and iOS. **Next transport steps** (after the Basecamp macOS/Linux focus): real Android phones ([mesh.md BLE link](components/mesh.md#ble-link-android-first), B2–B7) and Linux desktop adapters ([D1/D2/D5](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)): one-hop Linux↔Linux/Android, Basecamp, forced multi-hop, BLE→LAN gateway, durability and capture. D3 adds macOS; D4 waits for Basecamp's Bluetooth usage-description support (issue filed upstream). The gateway's result is "gateway-reported", not proved.
 
 ## Design problems (in order)
 

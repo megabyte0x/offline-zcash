@@ -2,11 +2,22 @@
 
 ## Built in v0.7.0
 
-A gateway is any gateway-role device with internet. On public testnet it is a
+A gateway is a device with internet whose invite names it the fleet's gateway.
+Since v0.7.3 `gateway` is the only role: every device can pay, receive and relay,
+and invited devices trust the fleet's named gateway rather than the first one they
+hear. On public testnet the gateway is a
 **light client** using configurable TLS lightwalletd servers, not a full node or
 VPS. It serves GetBlockRange compact actions and GetTreeState birthday frontiers
-without receiving viewing keys or scanning anyone else's wallet. A combined-role
-device can still scan its own wallet locally. Regtest retains ths JSON-RPC.
+without receiving viewing keys or scanning anyone else's wallet. The gateway
+device still scans its own wallet locally. Regtest retains ths JSON-RPC.
+
+On a Regtest session the Basecamp Gateway app (v0.7.3) accepts only the plain
+`http://` Zakura JSON-RPC URL from `ths endpoints` (usually
+`http://127.0.0.1:18232`). It refuses `https://` URLs, explaining that switching to
+testnet means leaving the session and joining a testnet invite, and refuses
+lightwalletd (`:9067`, gRPC) as not JSON-RPC. On a testnet session it hides the
+RPC field, mining toggle and ths faucet command and shows the fleet file's
+lightwalletd servers.
 
 It verifies raw transactions, submits with SendTransaction, persists the exact
 bytes and notification recipients, and watches the server's tip. It reconciles

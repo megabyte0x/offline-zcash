@@ -25,6 +25,16 @@ Rectangle {
     property bool busy: false
     property bool failed: false
     property int revision: 0     // bumps when the device list changes, so validation re-evaluates
+    property string tipNote: ""
+    // A testnet session starting at NU7 activation makes every wallet's first sync scan ~100k blocks.
+    function fillTestnetBirthday() {
+        root.tipNote = "asking testnet servers…"
+        call("testnet_tip", [], function (r) {
+            if (r.error) { root.tipNote = "servers did not answer; enter it from a testnet explorer"; return }
+            root.tipNote = "current tip " + r.blocks
+            if (network.currentText === "testnet" && Number(birthday.text) < 4465026) birthday.text = String(r.blocks)
+        })
+    }
     readonly property bool narrow: width < 700
 
     // Module QString results are JSON-encoded again by the Logos bridge.
@@ -35,6 +45,7 @@ Rectangle {
         }
         if (v && typeof v === "object" && v.success !== undefined && v.value !== undefined && v.error !== undefined)
             return v.success ? unwrap(v.value) : { error: String(v.error) }
+        if (v && typeof v === "object" && v.error !== undefined && v.message) return { error: String(v.error) + " (" + (v.method || "call") + "): " + v.message }   // LogosQmlBridge CallError detail
         return v === null || v === undefined ? { error: "empty reply" } : v
     }
     function call(method, args, cb) {
@@ -45,7 +56,7 @@ Rectangle {
             if (s.error) { root.message = "Cannot reach zcash_offline_module: " + s.error; root.failed = true; return }
             if (root.st === null && root.failed && root.message.indexOf("Cannot reach") === 0) { root.message = ""; root.failed = false }
             root.st = s
-            if (folder.text === "") folder.text = s.home + "/sessions/" + Date.now()
+            if (folder.text === "") folder.text = s.sessions + "/" + Date.now()
         })
     }
     // First problem that blocks fleet creation, or "".
@@ -54,13 +65,15 @@ Rectangle {
         var names = {}
         if (sessionName.text.trim() === "") return "Enter a session name."
         if (!/^\d+$/.test(birthday.text.trim())) return "Birthday must be a block height (0 for the network default)."
+        if (network.currentText === "testnet" && Number(birthday.text) < 4465026)
+            return "On testnet, set the birthday to the current block height" + (root.tipNote ? " (" + root.tipNote + ")" : "") + ". 0 would make every wallet scan from 4465026."
         for (var i = 0; i < devices.count; i++) {
             var d = devices.get(i), n = d.deviceName.trim()
             if (!/^[A-Za-z0-9_-]+$/.test(n)) return "Device " + (i + 1) + ": use letters, digits, - or _ in the name."
             if (names[n.toLowerCase()]) return "Two devices are named " + n + "."
             names[n.toLowerCase()] = true
-            if (!d.payerRole && !d.payeeRole && !d.relayRole && !d.gatewayRole) return n + " needs at least one role."
         }
+        if (gatewayCount() === 0) return "Choose at least one gateway device."
         if (folder.text.trim() === "") return "Choose a session folder."
         var j = joinName.text.trim()
         if (joinName.enabled && j !== "" && !names[j.toLowerCase()]) return "Join this device as: " + j + " is not in the device list."
@@ -69,7 +82,7 @@ Rectangle {
     function gatewayCount() {
         void revision
         var g = 0
-        for (var i = 0; i < devices.count; i++) if (devices.get(i).gatewayRole) g++
+        for (var i = 0; i < devices.count; i++) if (devices.get(i).gateway) g++
         return g
     }
     Component.onCompleted: { logos.onModuleEvent(moduleName, "node_event"); refresh() }
@@ -81,9 +94,9 @@ Rectangle {
 
     ListModel {
         id: devices
-        ListElement { deviceName: "Operator"; payerRole: false; payeeRole: false; relayRole: false; gatewayRole: true }
-        ListElement { deviceName: "Alice"; payerRole: true; payeeRole: true; relayRole: false; gatewayRole: false }
-        ListElement { deviceName: "Bob"; payerRole: true; payeeRole: true; relayRole: false; gatewayRole: false }
+        ListElement { deviceName: "Operator"; gateway: true }
+        ListElement { deviceName: "Alice"; gateway: false }
+        ListElement { deviceName: "Bob"; gateway: false }
     }
     component Card: Rectangle {
         id: cardRoot
@@ -141,6 +154,29 @@ Rectangle {
         palette.windowText: root.fg; palette.text: root.fg; palette.base: root.field; palette.button: root.field
         Accessible.name: text
     }
+    function leave() {
+        root.busy = true; root.failed = false; root.message = "Leaving…"
+        root.call("leave", [], function (r) {
+            root.busy = false; root.failed = !!r.error
+            root.message = r.error ? "Could not leave: " + r.error : r.message
+            root.refresh()
+        })
+    }
+    Popup {
+        id: leaveConfirm
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; focus: true; padding: 20
+        width: Math.min(root.width - 40, 480)
+        background: Rectangle { color: root.card; border.color: root.line; radius: 10 }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
+            Label2 { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards this device can join another invite or start without one." }
+            RowLayout { Layout.fillWidth: true; spacing: 10
+                Btn { secondary: true; text: "Cancel"; Layout.fillWidth: true; onClicked: leaveConfirm.close() }
+                Btn { objectName: "confirmLeaveButton"; text: "Leave and keep a backup"; Layout.fillWidth: true; onClicked: { leaveConfirm.close(); root.leave() } } }
+        }
+    }
     FolderDialog {
         id: chooser
         title: "Choose the parent folder for a new session"
@@ -158,7 +194,7 @@ Rectangle {
                     Text { anchors.centerIn: parent; text: "Z"; color: "#111"; font.pixelSize: 15; font.bold: true } }
                 Text { text: "Offline Zcash Organiser"; color: root.fg; font.pixelSize: 22; font.bold: true } }
             Label2 { text: "Create a test-coin session and give each person only their own invite. All Offline Zcash apps on this computer share one device." }
-            Label2 { text: root.st === null ? "Connecting to zcash_offline_module…" : root.st.joined ? "This device: " + root.st.name + " · " + root.st.role + " · " + (root.st.network || "regtest") : "This device has not joined a session yet." }
+            Label2 { text: root.st === null ? "Connecting to zcash_offline_module…" : root.st.joined ? "This device: " + [root.st.name, root.st.role, root.st.network || "regtest"].filter(function (x) { return !!x }).join(" · ") : "This device has not joined a session yet." }
             Label2 { font.pixelSize: 12; text: "Invites are optional: wallets can also start without one. Use invites when you want named devices and a fixed gateway." }
 
             Card {
@@ -173,32 +209,31 @@ Rectangle {
                         Label2 { text: "Network" }
                         ComboBox {
                             id: network; model: ["regtest", "testnet"]; Accessible.name: "Fleet network"; Layout.fillWidth: true; Layout.preferredHeight: 40
+                            onActivated: { if (currentText === "testnet") root.fillTestnetBirthday(); else if (Number(birthday.text) >= 4465026) birthday.text = "0" }
                             palette.button: root.field; palette.buttonText: root.fg; palette.window: root.card; palette.text: root.fg
                             palette.base: root.field; palette.highlight: root.acc; palette.highlightedText: "#111"
                         } }
                     ColumnLayout { Layout.fillWidth: true; spacing: 2
                         Label2 { text: "Birthday height" }
-                        Field { id: birthday; text: "0"; inputMethodHints: Qt.ImhDigitsOnly; Accessible.name: "Fleet birthday height"; invalid: !/^\d+$/.test(text.trim()) } }
+                        Field { id: birthday; text: "0"; inputMethodHints: Qt.ImhDigitsOnly; Accessible.name: "Fleet birthday height"; invalid: !/^\d+$/.test(text.trim()) || (network.currentText === "testnet" && Number(text) < 4465026) } }
                 }
                 Label2 {
                     font.pixelSize: 12
-                    text: (network.currentText === "testnet" ? "Public testnet with TAZ test coins; the gateway uses TLS lightwalletd. " : "Local Regtest chain run with ths start. ")
-                          + "Birthday is the first block wallets scan; 0 uses " + (network.currentText === "testnet" ? "4465026" : "1") + ". Set it before anyone receives funds."
+                    text: network.currentText === "testnet"
+                          ? "Public testnet with TAZ test coins; the gateway uses TLS lightwalletd. Birthday is the first block wallets scan: use the current height" + (root.tipNote ? " (" + root.tipNote + ")" : "") + ", set before anyone receives funds."
+                          : "Local Regtest chain run with ths start. Birthday is the first block wallets scan; 0 uses 1. Set it before anyone receives funds."
                 }
             }
 
             Card {
-                title: "2 · Devices and roles"
-                Label2 { font.pixelSize: 12; text: "Names use letters, digits, - or _. Combine roles as needed; exactly one device usually runs the gateway." }
+                title: "2 · Devices"
+                Label2 { font.pixelSize: 12; text: "Names use letters, digits, - or _. Every device can pay, receive and relay. Mark the device that connects the mesh to the chain as the gateway; invited devices trust it instead of the first gateway they hear." }
                 Repeater {
                     model: devices
                     Flow {
                         required property int index
                         required property string deviceName
-                        required property bool payerRole
-                        required property bool payeeRole
-                        required property bool relayRole
-                        required property bool gatewayRole
+                        required property bool gateway
                         Layout.fillWidth: true
                         spacing: 8
                         Field {
@@ -208,18 +243,14 @@ Rectangle {
                             Accessible.name: "Device " + (index + 1) + " name"
                             onTextEdited: { devices.setProperty(index, "deviceName", text); root.revision++ }
                         }
-                        RoleBox { text: "payer"; checked: payerRole; Accessible.name: deviceName + " payer role"; onToggled: { devices.setProperty(index, "payerRole", checked); root.revision++ } }
-                        RoleBox { text: "payee"; checked: payeeRole; Accessible.name: deviceName + " payee role"; onToggled: { devices.setProperty(index, "payeeRole", checked); root.revision++ } }
-                        RoleBox { text: "relay"; checked: relayRole; Accessible.name: deviceName + " relay role"; onToggled: { devices.setProperty(index, "relayRole", checked); root.revision++ } }
-                        RoleBox { text: "gateway"; checked: gatewayRole; Accessible.name: deviceName + " gateway role"; onToggled: { devices.setProperty(index, "gatewayRole", checked); root.revision++ } }
+                        RoleBox { text: "This device is the gateway"; checked: gateway; Accessible.name: deviceName + " is the gateway"; onToggled: { devices.setProperty(index, "gateway", checked); root.revision++ } }
                         Btn { secondary: true; text: "Remove"; Accessible.name: "Remove " + deviceName; enabled: devices.count > 1; onClicked: { devices.remove(index); root.revision++ } }
                     }
                 }
-                Label2 { visible: root.gatewayCount() === 0; color: root.warn; text: "No device has the gateway role. Invited payments then depend on a gateway outside this session." }
                 Btn {
                     secondary: true
                     text: "Add device"
-                    onClicked: { devices.append({ deviceName: "Device" + (devices.count + 1), payerRole: true, payeeRole: true, relayRole: false, gatewayRole: false }); root.revision++ }
+                    onClicked: { devices.append({ deviceName: "Device" + (devices.count + 1), gateway: false }); root.revision++ }
                 }
             }
 
@@ -239,7 +270,8 @@ Rectangle {
                     Accessible.name: "Join this device as"
                     onTextEdited: root.revision++
                 }
-                Label2 { visible: !joinName.enabled; font.pixelSize: 12; text: "This device already joined a session, so it exports only." }
+                Label2 { visible: !joinName.enabled; font.pixelSize: 12; text: "This device already joined a session, so it exports only. To join one of these invites here, leave the current session first." }
+                Btn { visible: !joinName.enabled; secondary: true; text: "Leave session…"; objectName: "leaveSessionButton"; enabled: !root.busy && !(root.st && root.st.syncing); onClicked: leaveConfirm.open() }
                 Btn {
                     objectName: "createFleetButton"
                     Layout.fillWidth: true; Layout.topMargin: 6
@@ -248,12 +280,8 @@ Rectangle {
                     onClicked: {
                         var list = []
                         for (var i = 0; i < devices.count; i++) {
-                            var d = devices.get(i), roles = []
-                            if (d.payerRole) roles.push("payer")
-                            if (d.payeeRole) roles.push("payee")
-                            if (d.relayRole) roles.push("relay")
-                            if (d.gatewayRole) roles.push("gateway")
-                            list.push(d.deviceName.trim() + ":" + roles.join("+"))
+                            var d = devices.get(i)
+                            list.push(d.deviceName.trim() + (d.gateway ? ":gateway" : ""))
                         }
                         var opts = { out: folder.text.trim(), name: sessionName.text.trim(), devices: list, network: network.currentText, birthday: Number(birthday.text) }
                         if ((!root.st || !root.st.joined) && joinName.text.trim() !== "") opts.join_device = joinName.text.trim()
@@ -262,6 +290,7 @@ Rectangle {
                             root.busy = false; root.failed = !!r.error
                             if (r.error) { root.message = "Session not created: " + r.error; return }
                             root.exported = r
+                            folder.text = root.st.sessions + "/" + Date.now()   // the next export needs a new folder
                             root.message = r.joined || "Session created; this device did not join."
                             root.refresh()
                         })
@@ -292,7 +321,7 @@ Rectangle {
                     model: root.exported ? root.exported.devices : []
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 0
-                        Text { text: modelData.name + " · " + modelData.role; color: root.fg; font.pixelSize: 14; font.bold: true; textFormat: Text.PlainText }
+                        Text { text: modelData.name + (modelData.role ? " · " + modelData.role : ""); color: root.fg; font.pixelSize: 14; font.bold: true; textFormat: Text.PlainText }
                         Text { text: modelData.invite_path; color: root.mut; font.family: "monospace"; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; textFormat: Text.PlainText }
                     }
                 }

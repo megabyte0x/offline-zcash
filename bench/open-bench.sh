@@ -75,7 +75,7 @@ test_all() {
     echo "PASS $from → $to by address, included receipt and mined on both; no pending acceptance"
   done
   # A locally generated destination never starts a mesh, so no binding can be discovered.
-  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/absent" --name absent --device Absent:payee >/dev/null
+  "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/absent" --name absent --device Absent:gateway >/dev/null
   local absent; absent=$(jq -r '.devices[0].address' "$STATE/absent/fleet.json")
   node A sync >/dev/null; sleep 5
   tx=$(node A pay --to "$absent" --amount 0.0073 | jq -er .txid)

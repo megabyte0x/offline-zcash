@@ -28,7 +28,7 @@ enum Cmd {
     FleetInit {
         #[arg(long)]
         out: PathBuf,
-        /// NAME:ROLE, repeatable (roles: payer, payee, relay, gateway; combine with +).
+        /// NAME, or NAME:gateway for the gateway; repeatable, at least one gateway. Every device pays, receives and relays.
         #[arg(long = "device", required = true)]
         devices: Vec<String>,
         #[arg(long, default_value = "ozm-fleet")]
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
         Cmd::FleetInit { out, devices, name, network, birthday } => {
             let result = ozm_node::fleet_init(&FleetInitOptions { out, devices, name, network, birthday })?;
             for d in &result.devices {
-                println!("{:<8} {:<14} peer {}  {}", d.name, d.role, d.peer_id, d.address);
+                println!("{:<8} {:<8} peer {}  {}", d.name, d.role, d.peer_id, d.address);
             }
             println!("\nGive each person their <name>.invite.json (it contains their private keys).");
             Ok(())
@@ -229,7 +229,8 @@ async fn run(o: RunOpts) -> Result<()> {
     let router = router(app.clone(), o.debug_api);
     let listener = tokio::net::TcpListener::bind(o.api).await.with_context(|| format!("bind API {}", o.api))?;
     let url = format!("http://{}", o.api).replace("0.0.0.0", "127.0.0.1");
-    println!("ozm-node {} — {} ({}) — open {url}", env!("CARGO_PKG_VERSION"), app.name(), app.cfg.me.role);
+    let gateway = if app.cfg.fleet.by_name(app.name()).is_ok_and(|d| d.is_gateway()) { " (gateway)" } else { "" };
+    println!("ozm-node {} — {}{gateway} — open {url}", env!("CARGO_PKG_VERSION"), app.name());
     if o.open {
         let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
         let _ = std::process::Command::new(opener).arg(&url).spawn();

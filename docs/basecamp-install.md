@@ -2,327 +2,297 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. v0.7.0 supports NU7 public testnet and local Regtest,
-with **test coins only**, not real ZEC.
+mesh nodes or listening ports. v0.7.3 runs in Basecamp on **macOS (Apple silicon)
+and Linux (x86_64, arm64)**, on NU7 public testnet (TAZ) or the local Regtest
+chain, with **test coins only**, never real ZEC.
 
 | Your job | Install these packages |
 |---|---|
-| Join, relay, hold a wallet, pay and receive | Service + **Offline Zcash** (`zcash_offline_ui`) |
-| Create sessions and distribute invites | Service + **Offline Zcash Organiser** (`zcash_offline_organiser`) |
+| Hold a wallet, pay, receive and relay | Service + **Offline Zcash** (`zcash_offline_ui`) |
+| Create sessions and export invites | Service + **Offline Zcash Organiser** (`zcash_offline_organiser`) |
 | Connect the mesh to the chain | Service + **Offline Zcash Gateway** (`zcash_offline_gateway`) |
-| Organise, run the gateway and use a wallet | Service + all three apps |
 
-An app exposes controls; it does **not** grant a fleet role. The gateway requires
-an invite containing `gateway`. Roles can be combined (`payer+payee+gateway`).
-The existing invite/fleet format is trusted setup from the organiser, **not an
-organiser-signed enrollment format**. Do not edit or accept invites from strangers.
-Each invite contains private test keys: give it only to its named owner.
+Every device can pay and receive, and every device relays. The only role is
+**gateway**: the organiser marks which devices are gateways, and only a device
+whose invite makes it a gateway can run one. Installing the Gateway app does not.
+Invites contain private test keys: give each one only to its named owner, and
+never accept invites from strangers. The invite format is trusted setup from the
+organiser, not organiser-signed enrollment.
 
-The owner ran v0.5.1 successfully on three real Macs using this guide. That does
-not verify v0.6.0 or Bluetooth on macOS. Local Network permission
-support is pending upstream in
-[logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527).
-If discovery fails, use **Dial address** = `<operator-ip>:7777`. All three Macs
-must use the same non-isolating Wi-Fi; it does not need internet.
+## Requirements
 
-## Public testnet (v0.7.0)
-
-Install the v0.7.0 service and apps together. Keep a separate Basecamp user directory
-for each network; never change an existing funded wallet's fleet network.
-
-1. In **Organiser**, select `testnet` and a birthday at or after **4,465,026**,
-   before funds are sent. `0` selects that activation height (Regtest selects 1).
-   A recent height reduces initial sync, but excludes earlier payments. Create a
-   `Gateway:gateway+relay` invite and give it only to the internet device.
-2. In **Gateway**, join that invite. The fleet network selects TLS lightwalletd,
-   not the server's ambiguous `chain: test` string. Use the configurable
-   comma-separated servers `https://testnet.zec.rocks:443,https://zaino.testnet.unsafe.zec.rocks:443`.
-   Check and Start; mining is disabled on testnet. No VPS/full node is needed.
-3. On wallet devices, choose `testnet` and the birthday in **Offline Zcash** before
-   first Start (or use matching invites). The LAN gateway transports compact
-   blocks; wallets decrypt locally, without sharing viewing keys. Preserve keys
-   and wallet data across restart.
-4. Copy a wallet's `utest1` address to [Valar](https://faucet.testnet.valargroup.dev).
-   Its advertised allowance is 0.125 TAZ/address/24 h. There is **no gateway faucet**
-   on testnet. Our orb claim failed `the wallet cannot pay this address`; zecpages
-   timed out after 30001 ms. [Exact evidence](components/offline-builder.md#v070-testnet-note-plan).
-5. After funding and sync, use **Prepare for offline**, for example 10 notes of
-   0.0101 TAZ. Larger splits pay ZIP 317's action-count fee above the 10,000-zat
-   two-action floor. Wait for `mined` and sync until the notes are spendable,
-   then disconnect wallet devices from internet and pay by address over the mesh.
-   Never spend unmined change.
-
-`submitted` is not inclusion. `included` is 1 confirmation; `mined` is 10.
-**Both are gateway-reported, not PoW/MMR/inclusion proofs.** Testnet reorgs can
-downgrade either state. The gateway watches tips and pushes results to payer and
-payee; it retries the same transaction every three blocks until expiry. A refusal
-may still mine until expiry. Compact wallets rewind retained checkpoints instead
-of wiping history on every reorg.
-
-Zaino returned HTTP 503 on 27 October. The app displays **single source** when
-only the primary answers, compares reachable servers, and withholds disagreement;
-agreement is not independent chain verification. The funded public split/payment
-run is unverified because faucet funding failed; local-chain and read-only public
-checks must not be represented as a successful public payment.
+- [Basecamp 0.3.2 or newer](https://github.com/logos-co/logos-basecamp/releases/latest).
+- **macOS:** Apple silicon. Open the `aarch64.dmg`, drag Basecamp to
+  Applications, and right-click → **Open** the first time if macOS blocks it.
+  Basecamp does not yet ask for the Local Network permission
+  ([logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)),
+  so LAN discovery may fail; then set **Dial address** to `<operator-ip>:7777`.
+- **Linux:** x86_64 or arm64 with **glibc 2.39+** (Ubuntu 24.04 or newer; Debian 12
+  and Ubuntu 22.04 are too old). Make the AppImage executable and open it. If
+  `libOpenGL.so.0` is missing, install `libopengl0`.
+- All devices on the same Wi-Fi or LAN without client isolation, with TCP 7777 and
+  UDP 7778 allowed. The LAN does not need internet.
 
 ## Install Basecamp and the packages
 
-Use [Basecamp 0.3.2 or newer](https://github.com/logos-co/logos-basecamp/releases/latest):
-
-- Apple silicon Mac: open the `aarch64.dmg`, drag Basecamp to Applications,
-  and right-click → **Open** if macOS blocks it.
-- Linux x86_64 or arm64: make the AppImage executable and open it. It needs
-  **glibc 2.39+** (Ubuntu 24.04+, not Debian 12/Ubuntu 22.04). If
-  `libOpenGL.so.0` is missing, install `libopengl0`.
-
 ### Install by name (recommended)
 
-In Basecamp 0.3.2, open **Settings → Package Repositories**, paste this URL and
-click **Add**, then **Refresh**:
+Open **Settings → Package Repositories**, paste this URL, click **Add**, then
+**Refresh**:
 
 ```text copy Copy Catalogue URL
 https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
 ```
 
 Open **Manage Packages**, search `zcash`, and install **Offline Zcash service**
-and the apps from the table above. Basecamp resolves the shared dependency.
-Accept the unsigned-package warning only if you trust this experimental build.
-The public catalogue and downloads need no GitHub account or token. This is
-our catalogue, not the official Logos catalogue.
-
-For the headless runtime, install
-[released logosctl 0.3.2](https://docs.logos.co/core/build-modules/build-and-run-a-logos-core-module)
-(Linux needs glibc 2.39+, for example Ubuntu 24.04), then:
-
-```sh copy Copy Catalogue Install
-logosctl daemon start --detach
-logosctl catalog add https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
-logosctl catalog refresh
-logosctl package search zcash
-logosctl package install zcash_offline_module --yes
-logosctl package install zcash_offline_ui --yes
-logosctl package install zcash_offline_organiser --yes
-logosctl package install zcash_offline_gateway --yes
-logosctl module load zcash_offline_module
-logosctl call zcash_offline_module status
-```
-
-`logosctl` installs into its own session, **not Basecamp's data directory**.
-Use Basecamp's Package Repositories screen for Basecamp installs. The catalogue
-selects the newest release; add `--version 0.7.2` to pin a CLI install.
-Its identity card points to `releases/latest/download/index.json`; every release
-also attaches its own index, merged packages and `catalogue.sha256`. Content
-roots bind the index to the downloaded packages, but do not authenticate the
-publisher. Packages are unsigned (`trustedSigners` is empty).
+and the apps from the table above. No GitHub account or token is needed. This is
+our own catalogue, not the official Logos one. Packages are unsigned: accept the
+warning only if you trust this experimental build. For `logosctl` (headless,
+separate from Basecamp's data), see [logos/README.md](../logos/README.md#install-by-name).
 
 ### Manual LGX fallback
 
-From [Offline Zcash v0.7.2](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.7.2),
-download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`
-(or the merged `<name>-0.7.2.lgx` files, which contain all three):
+From the [latest release](https://github.com/megabyte0x/offline-zcash/releases/latest),
+download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`,
+or the merged `<name>-<version>.lgx` files, which contain all three:
 
-1. `zcash_offline_module-0.7.2-<platform>.lgx` — **Offline Zcash service**, always needed.
-2. The apps from the table above: `zcash_offline_ui`,
-   `zcash_offline_organiser`, `zcash_offline_gateway`, with the same version/platform suffix.
-
-Upgrade store-and-forward peers together: v0.7.2 authenticates inventory with new
-link proof messages. Older v0.7.x peers can live-forward but cannot inventory-sync
-with it. Nonce-addressed gateway results expose txid/status in plaintext broadcasts
-(P12), not explicit payer/payee notification lists. See the [v0.7.2 trust audit](privacy-and-threats.md#trust-assumptions-at-v070).
+1. `zcash_offline_module-<version>-<platform>.lgx` — **Offline Zcash service**, always needed.
+2. The apps you chose: `zcash_offline_ui`, `zcash_offline_organiser`,
+   `zcash_offline_gateway`, with the same version and platform.
 
 In Basecamp, open **Manage Packages → Install Local Package**. Install the service
-first, then each chosen app. Accept the unsigned-package warning for these test
-packages. The apps appear in the sidebar; hover for their names. All use the
-same service dependency, which Basecamp starts automatically.
+first, then each app. The apps appear in the sidebar; hover for their names.
+To build the packages yourself, see [logos/README.md](../logos/README.md#build).
 
-To build instead (Nix with flakes, about 10 GB free; first build can take longer):
+Upgrade all devices in a session together. Peers older than v0.7.2 can only
+live-forward to newer ones, not store-and-forward.
 
-```sh copy Copy Build Commands
-git clone https://github.com/megabyte0x/offline-zcash
-cd offline-zcash
-for m in zcash_offline_module zcash_offline_ui zcash_offline_organiser zcash_offline_gateway; do
-  (cd "logos/$m" && nix build .#lgx-portable --accept-flake-config --cores 1 -o "../../out-$m")
-done
-ls out-*/*.lgx
-```
+## Where the data lives
 
-Use portable packages with released Basecamp; `.#lgx` is for dev builds only.
-We retain the already-hashed portable builder outputs rather than switching
-bundlers. Released catalogue packages do not include `-dev` variants; build
-`.#lgx` on your development machine when using a Nix/dev Basecamp runtime.
+Basecamp gives the Offline Zcash service one data folder per Basecamp user
+directory. Its **persistence path** is:
 
-## A three-Mac session, without an ozm-node terminal
+| Platform | Persistence path |
+|---|---|
+| Linux | `~/.local/share/Logos/LogosBasecamp/module_data/zcash_offline_module/<instance-id>` |
+| macOS | `~/Library/Application Support/Logos/LogosBasecamp/module_data/zcash_offline_module/<instance-id>` |
 
-The operator installs all three apps; Alice and Bob install only **Offline
-Zcash**, plus the service. The apps handle fleet creation, gateway startup and
-payments. Docker and the `ths` chain stay outside Basecamp.
+`<instance-id>` is a 12-character hex folder that Basecamp creates once and then
+reuses. On Linux, `~/.local/share` is `$XDG_DATA_HOME` if you set it. If you start
+Basecamp with `--user-dir <dir>`, the path is
+`<dir>/module_data/zcash_offline_module/<instance-id>` instead.
 
-### 1. Operator: start the local chain
+Inside it:
 
-Install [ths v0.4.1](https://github.com/zcashlabs/thus-spoke-zakura/releases/tag/v0.4.1)
-and Docker. In a terminal run:
+| Folder | Contents |
+|---|---|
+| `ozm` | This device: keys (`secret.json`), fleet, wallet, payment history, gateway pin |
+| `sessions/<timestamp>` | Organiser exports: `fleet.json`, invites and secrets |
+| `ozm-backup-YYYYMMDD-HHMMSS` | A device folder moved aside by [Leave session](#leave-session) (UTC time) |
 
-```sh copy Copy Chain Command
-ths start
-```
+You do not need to find these by hand: the Organiser shows the export folder before
+you create a session, and Leave session shows the backup folder it created. Back up
+the persistence path before upgrading or reinstalling Basecamp; never delete `ozm`
+or a backup that held funds.
 
-Keep it running. You do not run an `ozm-node` organiser or gateway process.
+## Join a session
 
-### 2. Operator: create the fleet in Organiser
+One Basecamp user directory holds one device, on one network (Regtest or testnet).
+To switch network or invite, use [Leave session](#leave-session).
 
-1. Open **Offline Zcash Organiser**.
-2. Enter a session name and at least `Operator` (`gateway`). The default Alice
-   and Bob entries can remain for optional invited devices; open devices do not need them.
-3. Choose a new session folder, or keep the suggested one. Existing fleet/key
-   files are never overwritten.
-4. Set **Join this device as** to `Operator` (leave it empty to export only).
-5. Click **Create fleet and invites**. It writes `fleet.json` and each device's
-   `.invite.json` and `.secret.json`, shows the folder and invite paths, and joins
-   the operator without starting a second engine.
-6. Keep the exported keys private. Only distribute named invites if you want
-   invited devices instead of the open join below. **Open session folder** opens
-   the export; if no file manager opens, paste its path into Finder → Go → Go to Folder.
+### Without an invite (default)
 
-An organiser can export later sessions without replacing its installed identity.
-One Basecamp user directory holds one device; replacing it requires a separate
-Basecamp user directory, not pasting another person's invite over a wallet.
+1. Open **Offline Zcash** and leave **I have an organiser invite** closed. The device creates and
+   stores its own keys and address; nobody else receives them.
+2. Before the first start, choose the network (`regtest` or `testnet`). On testnet,
+   set **Connection options → Wallet birthday height** to a recent block height:
+   `0` selects NU7 activation (4,465,026), and the first sync then scans every block
+   since. Pick the birthday before receiving funds: earlier payments are missed.
+3. Leave listen/dial empty for LAN discovery. If no neighbours appear, set **Dial
+   address** to `<operator-ip>:7777`. Leave experimental Bluetooth off unless you
+   are on [Linux with BLE](#bluetooth-on-linux).
+4. Click **Start without invite**. Wait for a selected gateway and a synced wallet;
+   the chain view shows the gateway's name, mesh ID, hops and tip. **Sync now** runs
+   in the background; the header shows `syncing · height X of Y`, and payments wait
+   until it finishes.
 
-### 3. Operator: start the gateway in Gateway
+### With an invite
 
-1. Open **Offline Zcash Gateway**. It already sees `Operator` from Organiser.
-   A separate gateway laptop can instead paste its gateway invite here and **Join device**.
-2. Leave **Chain RPC URL** at `http://127.0.0.1:18232` and enable
-   **Mine blocks (Regtest)**.
-3. Click **Check RPC**: it must report `getblockchaininfo`, chain `test` and a height.
-4. Click **Start gateway**. The same device starts its mesh, syncs its wallet and
-   serves sync/funding requests. If Offline Zcash already started the device,
-   this enables the gateway on that existing engine. **Apply gateway settings**
-   updates RPC/mining without replacing the mesh. Saved settings resume after restart.
-5. To seed the test-fund wallet, copy the displayed `ths faucet <address> --amount 2`
-   command and run it once in the operator's `ths` terminal. Click **Refresh gateway balance**.
-   This is chain funding, not a separate gateway program. Refill if it runs out.
+Before the first start, open **I have an organiser invite**, paste your own invite
+and click **Join with invite and start**.
+An invited device trusts its fleet's named gateway instead of pinning the first
+one it hears. An installed identity is never replaced by pasting another invite;
+use [Leave session](#leave-session) first.
 
-Installing Gateway with an Alice/Bob invite shows **This invite does not grant
-the gateway role** and disables Start. Neither installing the app nor setting an
-RPC URL changes the invite's role.
+## Pay and receive
 
-### 4. Alice and Bob: start without invites in Offline Zcash
+1. On Regtest, click **Get test funds (5 × 0.1 ZEC)** and wait for the balance.
+   On testnet, see [Wallets on testnet](#wallets-on-testnet).
+2. The payee copies **Your address** and sends it to the payer outside the app.
+3. The payer pastes it under **Pay offline**, enters an amount or clicks **Max**,
+   and clicks **Build, prove and send over the mesh**.
+4. Expand **history** to follow each state. Invite-free and unknown payers are
+   never accepted pending: the payee waits for the gateway to report inclusion.
+   Fast LAN payments may jump straight to `mined`.
 
-1. Leave **Invite JSON** empty. Each device generates and stores its own private
-   keys and Regtest unified address; the organiser never receives those keys.
-2. Leave listen/dial empty for normal LAN discovery. If it fails, set **Dial
-   address** to `<operator-ip>:7777` (for example `192.168.1.20:7777`).
-3. Leave experimental Bluetooth off. Click **Start without invite**.
-4. Wait for the selected gateway and synced wallet. Wallet shows its name, mesh
-   ID, hop count and advertised tip. Click **Sync now** if needed.
+`submitted` is not inclusion. `included` is 1 confirmation and `mined` is 10.
+**Both are reported by the gateway, not proved**, and a reorg can downgrade them.
+Received coins are spendable after `mined` and a sync.
 
-Optional: before first start, paste your own organiser invite and click **Join
-and start** instead. Invited devices retain their configured gateway authority;
-an open device accepts a self-signed gateway on the reachable mesh. One installed
-identity cannot be replaced by another invite: preserve the wallet and keys.
+**Max** fills the largest amount the builder can send after its ZIP 317 fee. It
+skips locked notes, unmined change and dust that would cost more than it adds.
+It does not send anything itself.
 
-Do not install organiser/gateway apps on these two Macs unless they need those
-controls. Gateway authority still requires a gateway invite.
+Any unified address for the session's network with an Ironwood receiver works,
+including one not on the mesh. That payment still goes to the gateway and shows
+**no payee receipt**. Addresses for another network and transparent-only
+addresses are refused.
 
-### 5. Alice: get test coins and pay Bob
+## Run a gateway
 
-1. Click **Get test funds (5 × 0.1 ZEC)**; wait for a 0.5 ZEC balance.
-2. Bob copies **Your address** and shares it with Alice outside the app. Under
-   **Pay offline**, Alice pastes Bob's Regtest unified address, enters `0.01`, and clicks
-   **Build, prove and send over the mesh**.
-3. Open devices wait for gateway-reported inclusion: `sent` → `awaiting-inclusion` → `mined`.
-   Pending acceptance remains available only between devices in the same invited fleet.
-   Fast LAN payments may jump straight to `mined`; expand **history** for each step.
-4. The operator's Gateway app shows the txid, submission count and mined result.
+The gateway is the device with chain access. It needs an invite that makes it the
+gateway; the Gateway app and the service refuse to start one otherwise. Docker and
+the `ths` chain (Regtest) stay outside Basecamp.
 
-Bob can spend the received coins after `mined` and a balance refresh. `mined`
-means **gateway-reported**, not an independently verified chain proof. The wider
-chain-proof protocol remains unbuilt.
+### Create the session in Organiser
 
-**Max** fills the largest sendable amount using the same padded Ironwood action
-count and ZIP 317 fee rule as the builder (and the configured fee floor). It
-excludes locked notes and unmined change. Uneconomic dust stays behind if adding
-it would reduce the sendable amount. The quote can change after another payment
-or sync; Max does not send anything itself.
+1. Open **Offline Zcash Organiser**. Choose the network (`regtest` or `testnet`).
+   On testnet the Organiser fills the birthday with the current tip from the
+   testnet servers and refuses a birthday before 4,465,026; if the servers do not
+   answer, enter the current height from a testnet explorer.
+2. Add a device for each invite you need and tick **This device is the gateway**
+   for at least one of them, for example `Operator`. Wallet devices can join
+   without invites, so you may only need the gateway entry.
+3. Keep the suggested session folder, `<persistence path>/sessions/<timestamp>`
+   ([paths](#where-the-data-lives)), or choose another. Existing fleet or key files
+   are never overwritten.
+4. To use this device as the gateway, set **Join this device as** to `Operator`.
+   Leave it empty to export only.
+5. Click **Create session and invites**. It writes `fleet.json` and each device's
+   `.invite.json` and `.secret.json`. **Open session folder** opens the export; if
+   no file manager opens, paste the shown path into Finder → Go → Go to Folder.
 
-Any valid Regtest unified address with an Ironwood receiver works, including an
-address not on the mesh. Such a payment goes to the gateway and displays
-**submitted, no payee receipt**, then **mined · no payee receipt**. No device
-directory or recipient list is needed. Other networks and transparent-only
-addresses are rejected rather than silently using another receiver.
+A separate gateway laptop pastes its gateway invite in the Gateway app and clicks
+**Join device**. A device whose invite is not the gateway sees Start disabled.
 
-### Open-mode trust and faucet limits
+### Gateway on Regtest
 
-All inner envelopes (including sync, faucet and submission requests/replies) are
-signed by their sender and bound to the intended recipient. Mesh delivery acks
-are signed by the original destination. Sealing alone is not authentication.
-Gateway announcements and address bindings are individually sealed; only mesh
-IDs and public routing keys are broadcast. A fresh announcement lasts 35 seconds.
-Before first use, devices choose fewest hops, then highest advertised tip, then
-mesh ID. **First use pins the gateway's key** in `data/trust.json`, across restarts.
-A nearer/newer gateway cannot silently replace it. An unavailable pin produces a
-warning and blocks automatic switching. To deliberately change operators, stop
-the device, verify the new operator's mesh ID outside the app, remove only
-`data/trust.json`, and restart. Never delete `secret.json` or wallet data.
+1. Install [ths v0.4.1](https://github.com/zcashlabs/thus-spoke-zakura/releases/tag/v0.4.1)
+   and Docker, run `ths start`, and keep it running.
+2. In **Offline Zcash Gateway**, set **Chain RPC URL** to the plain `http://`
+   Zakura JSON-RPC address from `ths endpoints`, usually `http://127.0.0.1:18232`.
+   `https://` URLs such as testnet.zec.rocks are refused, because the device is on
+   a Regtest session; to use testnet, [leave the session](#leave-session) and join
+   a testnet invite. lightwalletd (`:9067`) is refused because it is not JSON-RPC.
+3. Enable **Mine blocks (Regtest)**: ths does not mine submitted transactions on
+   its own.
+4. Click **Check chain service**. It must report chain `test` and a height.
+5. Click **Start gateway**. If the device already runs, this enables the gateway
+   on the same service. **Apply gateway settings** changes RPC and mining without
+   restarting the mesh. Settings are restored after a restart.
+6. Copy the displayed `ths faucet <address> --amount 2` command, run it once in a
+   terminal, and click **Refresh gateway balance**. This wallet serves test funds;
+   refill it when it runs out.
 
-**First contact is still trust-on-first-use, not operator authentication.** A Sybil
-gateway can win the initial choice. Hop counts/tips are not independently proved;
-**sync, inclusion and mined results are gateway-reported**. Use a trusted local
-operator and test coins only. Gateway signatures do not prove chain facts.
+### Gateway on public testnet
 
-Address bindings include a domain-separated Schnorr proof of knowledge of the
-Ironwood receiver's incoming-viewing scalar, bound to the exact address and mesh
-identity. No viewing/spending key is shared. This proves **receiving authority,
-not spending authority**; a holder of a copied incoming viewing key can also prove
-it. First receipt routing pins address → mesh key; changed/ambiguous bindings
-disable receipt routing, never redirect funds. The typed address always determines
-the transaction's destination. This experimental proof implementation has not
-had an independent cryptographic review.
+The testnet gateway is a light client of TLS lightwalletd servers; no full node,
+VPS or `ths` is needed. Wallet devices do not need internet.
 
-Open-mode and unknown payers **never receive pending acceptance**. A payee waits
-for its pinned gateway to report inclusion before issuing an `Included` receipt.
-That receipt is not an independently verified inclusion or finality proof.
+1. Create a `testnet` session in Organiser with the internet device as the gateway,
+   and join it on that device.
+2. **Offline Zcash Gateway** hides the RPC field, the mining toggle and the faucet
+   command on a testnet session. It shows the fleet's lightwalletd servers from the
+   fleet file, by default `https://testnet.zec.rocks:443` and
+   `https://zaino.testnet.unsafe.zec.rocks:443`.
+3. Click **Check chain service**, then **Start gateway**. With only one server
+   reachable the app shows **single source**; that is a warning, not a failure.
+4. The gateway wallet then syncs in the background from the session birthday; the
+   badge shows `syncing · height X of Y`. The other screens keep working, but
+   payments, Prepare for offline and Leave wait until the sync finishes.
 
-The loopback web API requires a per-run random token and a loopback Host header;
-the UI and CLI obtain the token from the local page. Remote strings are rendered
-as text. Keep the API bound to `127.0.0.1`; `--api 0.0.0.0` is for isolated tests,
-not a secure network API. There is no protection from programs running as your user.
+There is no gateway faucet on testnet.
 
-The Regtest faucet allows one request per device per 60 seconds (persisted over
-gateway restarts), at most 10 notes and the configured total cap (default 1 ZEC).
-New identities can evade the limit: it is not Sybil protection. Keep the gateway
-wallet funded. v0.5.x nodes ignore unsupported new messages without crashing;
-upgrade all payment/sync endpoints to v0.6.0: unsigned legacy envelopes/acks are
-no longer accepted. Invite creation and joining remain supported in v0.6.0.
+### Wallets on testnet
+
+1. Start without an invite on `testnet` (or join a testnet invite), then copy the
+   `utest1` address to a public TAZ faucet such as
+   [Valar](https://faucet.testnet.valargroup.dev). Faucet claims have failed in our
+   tests ([details](components/offline-builder.md#v070-testnet-note-plan)).
+2. After funding and sync, use **Prepare for offline**, for example 10 notes of
+   0.0101 TAZ. Larger splits pay a higher ZIP 317 fee.
+3. Wait for `mined` and a sync until the notes are spendable, then go offline and
+   pay over the mesh. Unmined change is never spendable.
+
+The gateway retries the same transaction every three blocks until expiry. A
+refused payment may still be mined until it expires.
+
+## Leave session
+
+**Leave session**, in all three apps, takes the device out of its current session.
+After you confirm, it (not while a wallet sync is running):
+
+1. stops the node;
+2. moves the whole `<persistence path>/ozm` folder to
+   `<persistence path>/ozm-backup-YYYYMMDD-HHMMSS` (UTC time), shown on screen.
+   Nothing is deleted: keys and funds stay in the backup;
+3. moves any older Organiser exports from `ozm/sessions` to
+   `<persistence path>/sessions`, so exported invites stay reachable;
+4. returns the device to the not-joined state.
+
+The device can then start without an invite or join a new invite, for example to
+switch from Regtest to testnet. To restore, quit Basecamp, move or rename any new
+`ozm` folder out of the way, and rename the backup folder back to `ozm`
+([paths](#where-the-data-lives)). Leave exists only in these Basecamp apps, not in the `ozm-node` CLI;
+for the CLI, use a different `--home`.
+
+## Open-mode trust and faucet limits
+
+- A device without an invite picks a gateway by fewest hops, then highest
+  advertised tip, and **pins that gateway's key at first use**. A different
+  gateway cannot silently replace it; if the pinned one disappears the app warns
+  and does not switch. Invited devices trust their fleet's named gateway instead.
+- First contact is trust-on-first-use. A fake gateway can win it: check the
+  gateway's mesh ID with the operator outside the app. To change operator on
+  purpose, use [Leave session](#leave-session).
+- **Sync, inclusion and mined results are gateway-reported**, not chain proofs.
+- Address bindings prove the address holder can receive, not spend, and pin the
+  address to a mesh key at first receipt routing. The typed address always decides
+  where the money goes.
+- Invite-free and unknown payers never get pending acceptance.
+- The Regtest faucet allows one request per device per 60 seconds, at most 10
+  notes and the gateway's total cap (default 1 ZEC). New identities can get
+  around it; it is not Sybil protection.
+
+Use a trusted local operator and test coins only. Full details:
+[privacy-and-threats.md](privacy-and-threats.md#open-mode-controls-v060).
 
 ## Problems
 
 | Symptom | Check |
 |---|---|
-| AppImage does not start (`GLIBC_* not found`) | Use glibc 2.39+, e.g. Ubuntu 24.04 |
-| Package refused | Match platform/version and use portable, not `-dev`, with released Basecamp |
-| Missing app icon / module not reachable | Manage Packages must list the service plus the chosen app; reopen the app |
-| RPC check fails | Keep `ths start` running on the gateway machine; check the RPC URL |
-| No mesh neighbours | Same Wi-Fi, no guest-network isolation; allow TCP 7777 and UDP 7778; dial `<operator-ip>:7777` |
-| macOS discovery fails | Local Network support is pending upstream (#527); use the dial fallback above, without assuming a permission prompt exists |
-| Wallet has never synced | Wait for the gateway, then Sync now; check Gateway's RPC result |
-| Test funds fail | Enable Regtest mining, fund the gateway address, and wait 60 seconds between requests from one device |
-| Payment refused | Read its history; pending is not final and testnet/mainnet are not supported here |
-| Multiple Basecamp instances on one Linux host | Use separate user directories and unique mesh listen ports; ordinary laptops all use 7777 |
+| AppImage does not start (`GLIBC_* not found`) | Use glibc 2.39+, for example Ubuntu 24.04 |
+| Package refused | Match platform and version; released Basecamp needs the portable packages, not `-dev` |
+| Missing app or module not reachable | Manage Packages must list the service and the app; reopen the app |
+| "The Offline Zcash service did not answer" | The text after it is Basecamp's detail. "not connected/not reachable": install or load the service. Otherwise the service is busy; the page retries every 3 seconds |
+| No mesh neighbours | Same Wi-Fi without guest/client isolation; allow TCP 7777 and UDP 7778; set **Dial address** to `<operator-ip>:7777` |
+| macOS discovery fails | Basecamp's Local Network permission support is pending ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)); use **Dial address** = `<operator-ip>:7777` |
+| Gateway Start disabled | This device's invite is not the gateway, or it joined without an invite; use the gateway invite |
+| RPC URL refused on Regtest | Use the `http://` JSON-RPC URL from `ths endpoints`, not `https://` or lightwalletd `:9067`; for testnet, Leave session and join a testnet invite |
+| RPC check fails | Keep `ths start` running on the gateway machine |
+| Wallet never synced | Wait for a gateway, then **Sync now**; check the Gateway app's chain status |
+| Test funds fail | Regtest only: enable mining, fund the gateway address, wait 60 seconds between requests |
+| Wrong network or wrong invite installed | [Leave session](#leave-session), then start again |
+| Need to find keys, wallet or exported invites | See [Where the data lives](#where-the-data-lives) |
+| Several Basecamp instances on one Linux host | Use separate user directories and different mesh listen ports |
 
 ### Bluetooth on Linux
 
-**Offline Zcash** Setup has a **Bluetooth LE (Linux only, experimental)** toggle.
-Enable it before first start; changing transport on an already running engine
-requires restarting Basecamp. RPC/mining settings are the exception and update live.
-
-You need `bluetoothd`, system D-Bus and a powered LE adapter with simultaneous
-scanning/advertising. The user's D-Bus/polkit policy and Basecamp sandbox must
-permit BlueZ GATT, advertising and discovery. Do not run Basecamp as root.
-libdbus is bundled; BlueZ is a host requirement. Do not run the CLI and Basecamp
-on the same adapter at once. Unavailable Bluetooth makes Start fail; disable it
-to use LAN. Neighbours show BLE/TCP and Mesh shows Bluetooth status.
-
-**No real-radio testing yet (D1/D2/D5 open).** macOS BLE is not implemented and
-also needs upstream Bluetooth usage-description support in #527. See
-[desktop BLE milestones](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open).
+The **Bluetooth LE (Linux only, experimental)** toggle in Offline Zcash must be set
+before the first start; changing it later requires restarting Basecamp. You need
+`bluetoothd`, system D-Bus and a powered LE adapter that can scan and advertise at
+once, and D-Bus/polkit must allow BlueZ GATT, advertising and discovery. Do not run
+Basecamp as root, and do not run the CLI and Basecamp on the same adapter. If
+Bluetooth is unavailable, Start fails; turn it off to use LAN. macOS Bluetooth is
+not implemented. **No real-radio test has been done yet**
+([BLE milestones](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)).

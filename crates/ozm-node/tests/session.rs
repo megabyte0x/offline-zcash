@@ -7,10 +7,11 @@ fn generated_invites_join_and_never_overwrite_keys() {
         out: dir.path().join("session"),
         name: "Three laptops".into(),
         network: Default::default(), birthday: 0,
-        devices: vec!["Operator:gateway+relay".into(), "Alice:payer+payee".into(), "Bob:payee".into()],
+        // Legacy roles stay accepted; only gateway is kept.
+        devices: vec!["Operator:gateway+relay".into(), "Alice".into(), "Bob:payer+payee".into()],
     };
     let result = fleet_init(&o).unwrap();
-    assert_eq!(result.devices.len(), 3);
+    assert_eq!(result.devices.iter().map(|d| d.role.as_str()).collect::<Vec<_>>(), ["gateway", "", ""]);
     assert!(result.fleet_path.is_file());
     for device in &result.devices {
         let invite = std::fs::read_to_string(&device.invite_path).unwrap();
@@ -28,7 +29,7 @@ fn generated_invites_join_and_never_overwrite_keys() {
     assert!(fleet_init(&o).is_err());
     assert_eq!(std::fs::read(&result.devices[0].secret_path).unwrap(), before);
     o.out = dir.path().join("invalid");
-    for devices in [vec!["../escape:payer"], vec!["Alice:payer", "alice:payee"], vec!["D:notgateway"], vec!["D:gateway+"], vec![]] {
+    for devices in [vec!["G:gateway", "../escape"], vec!["Alice:gateway", "alice"], vec!["G:gateway", "D:notgateway"], vec!["D:gateway+"], vec!["A", "B:payer+relay"], vec![]] {
         o.devices = devices.into_iter().map(String::from).collect();
         assert!(fleet_init(&o).is_err());
         assert!(!o.out.exists());
@@ -61,6 +62,8 @@ async fn gateway_configuration_reuses_mesh_and_requires_invite_role() {
             assert_eq!(after["online"], true);
             assert_eq!(after["mine"], true);
             app.configure_gateway("http://127.0.0.1:18233".into(), false).unwrap();
+            let tls = app.configure_gateway("https://testnet.zec.rocks:443".into(), false).unwrap_err().to_string();
+            assert!(tls.contains("Regtest session") && tls.contains("leave this session"), "{tls}");
             assert_eq!(app.status()["rpc"], "http://127.0.0.1:18233");
             assert_eq!(app.status()["mine"], false);
         } else {
@@ -320,7 +323,7 @@ async fn pending_caps_count_expired_debt_but_release_mined_payments() {
     use zcash_offline_core::{envelope::{self, Inner}, messages::{Body, Signed, Statement}, DeviceSecret};
     let dir = tempfile::tempdir().unwrap();
     let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "exposure".into(),
-        network: Default::default(), birthday: 0, devices: vec!["A:payer".into(), "B:payee".into(), "C:payer".into()] }).unwrap();
+        network: Default::default(), birthday: 0, devices: vec!["A".into(), "B".into(), "C".into(), "G:gateway".into()] }).unwrap();
     let a: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
     let c: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[2].secret_path).unwrap()).unwrap();
     for (i, (payer, count, value, state, amount, capped)) in [
@@ -418,4 +421,23 @@ async fn submission_hides_counterparty_and_nonce_results_survive_restart_and_reo
         assert_eq!(app.payment(txid).unwrap().state, expected);
     }
     app.mesh.shutdown();
+}
+
+#[test]
+fn leave_keeps_a_backup_and_session_exports() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("ozm");
+    let exported = home.join("sessions/1");
+    let result = fleet_init(&FleetInitOptions { out: exported.clone(), name: "leave".into(),
+        network: Default::default(), birthday: 0, devices: vec!["G:gateway".into()] }).unwrap();
+    let secret = std::fs::read(&result.devices[0].secret_path).unwrap();
+    join_invite(&std::fs::read_to_string(&result.devices[0].invite_path).unwrap(), &home).unwrap();
+    let backup = ozm_node::leave_home(&home).unwrap();
+    assert!(!home.exists());
+    assert!(backup.file_name().unwrap().to_str().unwrap().starts_with("ozm-backup-20"));
+    assert_eq!(std::fs::read(backup.join("secret.json")).unwrap(), secret);
+    assert!(dir.path().join("sessions/1/G.invite.json").is_file());
+    assert!(ozm_node::leave_home(&home).is_err());
+    ozm_node::join_open(&home).unwrap();
+    assert!(home.join("secret.json").is_file());
 }

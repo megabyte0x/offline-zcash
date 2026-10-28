@@ -91,7 +91,7 @@ impl Default for Policy {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DevicePublic {
     pub name: String,
-    /// "payer", "payee", "relay", "gateway" or a combination like "payer+payee".
+    /// "gateway" or empty. Older fleets may hold combinations like "payer+payee"; only gateway counts.
     pub role: String,
     pub peer_id: String,
     pub ed25519: String,
@@ -100,7 +100,15 @@ pub struct DevicePublic {
     pub address: String,
 }
 
+/// Every device can pay and receive, and every device relays; gateway is the only role with an effect.
+pub fn is_gateway_role(role: &str) -> bool {
+    role.split('+').any(|r| r == "gateway")
+}
+
 impl DevicePublic {
+    pub fn is_gateway(&self) -> bool {
+        is_gateway_role(&self.role)
+    }
     pub fn verifying_key(&self) -> Result<VerifyingKey> {
         let b: [u8; 32] = hex::decode(&self.ed25519)?
             .try_into()
@@ -250,23 +258,8 @@ impl Fleet {
     pub fn by_ed25519(&self, key_hex: &str) -> Option<&DevicePublic> {
         self.devices.iter().find(|d| d.ed25519 == key_hex)
     }
-    /// 8-byte tag for LAN discovery: only devices of the same fleet connect automatically.
-    pub fn discovery_tag(&self) -> [u8; 8] {
-        if self.open {
-            return [0; 8];
-        }
-        let mut st = blake2b_simd::Params::new().hash_length(8).personal(b"ozm1-fleet-tag\0\0").to_state();
-        st.update(self.name.as_bytes());
-        let mut keys: Vec<&str> = self.devices.iter().map(|d| d.ed25519.as_str()).collect();
-        keys.sort();
-        for k in keys {
-            st.update(k.as_bytes());
-        }
-        st.finalize().as_bytes().try_into().unwrap()
-    }
-
     pub fn gateways(&self) -> impl Iterator<Item = &DevicePublic> {
-        self.devices.iter().filter(|d| d.role.contains("gateway"))
+        self.devices.iter().filter(|d| d.is_gateway())
     }
 }
 

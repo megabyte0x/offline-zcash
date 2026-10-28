@@ -87,7 +87,7 @@ class MainActivity : Activity() {
         }
         val decimal = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
 
-        label("Offline Zcash · 0.7.2", 24f).setTypeface(null, Typeface.BOLD)
+        label("Offline Zcash · 0.7.3", 24f).setTypeface(null, Typeface.BOLD)
         label("Test coins only · Regtest or public testnet. Included and mined come from the gateway; this app does not verify them independently.", 14f, muted = true)
         result = label("").apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE; textSize = 15f }
 
@@ -245,7 +245,7 @@ class MainActivity : Activity() {
             checkAddress()
             val running = s.optBoolean("running")
             status.text = if (s.optString("name").isEmpty()) "Not started · ${m.radio()}" else
-                "${s.optString("name")} · ${s.optString("role")} · $network · ${if (running) "running" else "stopped"}\n" +
+                listOf(s.optString("name"), s.optString("role"), network, if (running) "running" else "stopped").filter { it.isNotEmpty() }.joinToString(" · ") + "\n" +
                 "${zec(wallet?.optLong("spendable") ?: 0)} ZEC spendable · ${zec(wallet?.optLong("locked") ?: 0)} ZEC locked · synced to height ${wallet?.optLong("tip") ?: 0}\n${m.radio()}"
             val gateway = s.optJSONObject("selected_gateway")
             val sources = s.optJSONArray("chain_sources")?.length() ?: 0

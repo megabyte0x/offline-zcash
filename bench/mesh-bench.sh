@@ -76,7 +76,7 @@ up() {
 
   log "Creating fleet keys (A payer, R relay, B payee, D gateway)"
   "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/fleet" --name bench \
-    --device A:payer --device R:relay --device B:payee --device D:gateway
+    --device A --device R --device B --device D:gateway
   chmod 600 "$STATE"/fleet/*.json  # read-only mounts retain private modes; containers run as root
 
   log "Funding A with 10 notes of 0.1 ZEC from the ths faucet"

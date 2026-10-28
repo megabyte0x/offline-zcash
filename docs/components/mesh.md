@@ -12,7 +12,7 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   - a persisted store, and dialing that never gives up.
 
   The reasons: no radio exists in orbs, the BitChat apps are Swift-only, and Offline Protocol is an AGPL Python sidecar whose custody refuses DMs. The BitChat fork plan is archived at [../../archive/docs-2026-10-27/transport-bitchat.md](../../archive/docs-2026-10-27/transport-bitchat.md).
-- **Links:** TCP between neighbours; v0.4.0 adds an Android BLE byte-stream implementation (built, no radio validation yet). LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`, and tagged with the fleet. It works on a Wi-Fi with no internet route. Both transports share the link framing and routing.
+- **Links:** TCP between neighbours; v0.4.0 adds an Android BLE byte-stream implementation (built, no radio validation yet). LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`. Through v0.7.2 invited devices put an 8-byte fleet tag in each beacon and auto-connected only to their own fleet, open devices and gateways; since v0.7.3 every device sends a zero tag and connects to any Offline Zcash device, because every device relays and the tag authenticated nothing. v0.7.2 peers accept zero tags, so mixed versions still connect. It works on a Wi-Fi with no internet route. Both transports share the link framing and routing.
 - **App envelope `ozm1`:** every message authenticates its sender and intended recipient, and is sealed to the recipient's X25519 key (derived from the Ed25519 payment key) with ChaCha20-Poly1305. `pay`, `sub` and `rcpt` retain 4 KiB-multiple padding. v0.7.0 sync/control uses 512 B / 4 KiB / 16 KiB buckets (then 16 KiB multiples). Sender/recipient mesh IDs, size and timing remain visible; sync and payments are distinguishable by size.
 - **Messages:**
 
@@ -145,15 +145,15 @@ The Hello frame identifies the peer, and the existing rule keeps one link per pa
 
 Each side treats its direction as an ordered byte stream: the length-prefixed frames are cut into chunks of (ATT MTU − 3) bytes and joined on the other side, with no extra header. The sender waits for the platform's flow-control callback before the next chunk (Android `onCharacteristicWrite` / `onNotificationSent`; iOS `peripheralIsReady(toSendWriteWithoutResponse:)` / `isReady(toUpdateSubscribers:)`). These callbacks mean **local queue readiness, not remote/application delivery**; write-without-response and notify provide no application ack. Rust's end-to-end ack and inventory repair remain necessary. A callback error or 15 s local write timeout closes the stream. Any framing error closes the link; inventory sync on the next link-up repairs whatever was in flight.
 
-Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d6e32-89f5-4a38-9761-72d1305a4f12`, standard CCCD `0x2902`. Both APK variants share them. Legacy advertisements put 128-bit service data + the four hint bytes in the primary packet, and the UUID list in the scan response: both fields together would exceed the 31-byte advertisement limit. The hint is the first four bytes of the fleet's LAN discovery tag, a filter, not authentication.
+Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d6e32-89f5-4a38-9761-72d1305a4f12`, standard CCCD `0x2902`. Both APK variants share them. Legacy advertisements put 128-bit service data + four hint bytes in the primary packet, and the UUID list in the scan response: both fields together would exceed the 31-byte advertisement limit. Through v0.7.2 the hint was the first four bytes of the fleet's LAN discovery tag, a filter, not authentication. Since v0.7.3 it is always zero, and the Android FFI `fleetHint()` is removed.
 
-**Android correction to the proposed MTU arithmetic:** actual GATT chunks are `min(ATT MTU − 3, 512)`, because Android's [`GATT_MAX_ATTR_LEN`](https://android.googlesource.com/platform/packages/modules/Bluetooth/+/refs/heads/main/framework/java/android/bluetooth/BluetoothGatt.java) rejects attribute values above 512 bytes even at MTU 517. The transport/FFI tests still cover 514-byte stream chunks. Failure to negotiate MTU does not disconnect; the link keeps its default 20-byte payload. The service UUID and full fleet hint fit without extended advertising.
+**Android correction to the proposed MTU arithmetic:** actual GATT chunks are `min(ATT MTU − 3, 512)`, because Android's [`GATT_MAX_ATTR_LEN`](https://android.googlesource.com/platform/packages/modules/Bluetooth/+/refs/heads/main/framework/java/android/bluetooth/BluetoothGatt.java) rejects attribute values above 512 bytes even at MTU 517. The transport/FFI tests still cover 514-byte stream chunks. Failure to negotiate MTU does not disconnect; the link keeps its default 20-byte payload. The service UUID and the four hint bytes fit without extended advertising.
 
 **3. MTU and speed.** Request MTU 517 and 2M PHY; if negotiation fails, keep the link at the default (23-byte ATT MTU) rather than disconnecting, as bitchat-android does. A 12.3 KB `pay` envelope is about 25 frames of 512 bytes, or about 27 ATT writes at MTU 517. Planning figure (*estimate*): 1–3 s per hop warm, up to ~15 s cold (scan, connect, MTU, Hello). Later option: an L2CAP connection-oriented channel (Android 10+, iOS 11+) is a real byte stream and likely faster; add it only if GATT measurements fall short.
 
 **4. Discovery and connections.**
 
-- Every device scans and advertises at once (central and peripheral). The advertisement carries the service UUID and a 4-byte fleet hint in service data, so devices from other fleets are skipped before connecting. The PeerId is not advertised; it is learned from Hello after connecting.
+- Every device scans and advertises at once (central and peripheral). The advertisement carries the service UUID and a 4-byte hint in service data. Through v0.7.2 the hint was a fleet filter, so devices from other fleets were skipped before connecting; since v0.7.3 it is zero and devices connect to any Offline Zcash device. The PeerId is not advertised; it is learned from Hello after connecting.
 - At most 6 BLE links per device, counting pending central and peripheral connections. Scans skip already connected device addresses and do not evict healthy links when full; a new inbound connection evicts the longest-idle link. Hello applies the existing one-link-per-PeerId rule across TCP/BLE. Transport preference for peers already reachable over LAN is not implemented (PeerIds are deliberately absent from advertisements); measure this before adding peer/address caching.
 - Both devices may connect to each other at once; the existing duplicate-link rule keeps one. Measure how often this wastes a connection slot before adding a tie-break.
 - Scan duty: continuous while the app is open, 25 % (for example 5 s on, 15 s off) when backgrounded. *Estimate*; tune against battery.
@@ -194,8 +194,8 @@ bump or new release is implied by this implementation.
 
 - **Android wire compatibility:** the exact service/stream UUIDs above, BlueZ's
   automatic CCCD, write-without-response central → peripheral and notify in the
-  reverse direction. No extra chunk header. Four fleet-hint bytes in 128-bit service
-  data are the discovery filter, not authentication. Linux omits the UUID list to
+  reverse direction. No extra chunk header. Four hint bytes in 128-bit service
+  data (zero since v0.7.3; a fleet filter before) authenticate nothing. Linux omits the UUID list to
   keep the primary advertisement within 31 bytes; Android's scan filter uses service
   data. No extended advertising is required.
 - **Per-device streams:** BlueZ `AcquireWrite`/`AcquireNotify` supply separate
@@ -237,7 +237,7 @@ job. Virtual controllers would not close the following real-hardware gates.
 
 | # | Milestone | Passes when |
 |---|---|---|
-| D1 | ozm-node Linux ↔ Linux and Linux ↔ Android | Real adapters/phone, both central/peripheral directions; same-fleet discovery and wrong-fleet skip; 12.3 KB payment/receipt/mined; default and negotiated MTU; no LAN shortcut; per-hop timings and six-slot/reconnect behaviour recorded. **Implementation present, hardware unverified** |
+| D1 | ozm-node Linux ↔ Linux and Linux ↔ Android | Real adapters/phone, both central/peripheral directions; discovery (v0.7.3 has no fleet filter); 12.3 KB payment/receipt/mined; default and negotiated MTU; no LAN shortcut; per-hop timings and six-slot/reconnect behaviour recorded. **Implementation present, hardware unverified** |
 | D2 | Basecamp module on Linux | Portable `.lgx` installed in released Basecamp, Setup Bluetooth toggle enables BLE, restart restores it, BLE/TCP labels are correct; payments to Linux CLI and Android work with LAN off at BLE endpoints, reaching a gateway through a third BLE/LAN device. **Implementation present, hardware unverified** |
 | D3 | macOS backend | `objc2-core-bluetooth` implements the same streams, discovery, chunking and lifecycle; CLI Linux/Android interop measured. **Not implemented** |
 | D4 | macOS in Basecamp | After Basecamp adds `NSBluetoothAlwaysUsageDescription` ([logos-co/logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527)), module BLE works in the distributed host and permission denial is usable. **Blocked on host support and D3** |
@@ -247,7 +247,7 @@ job. Virtual controllers would not close the following real-hardware gates.
 
 - D1/D2/D5: Linux hardware, BlueZ versions, scan/advertise coexistence, MTU/PHY, fd flow control under saturation, duplicate races and actual adapter connection limits remain unverified. D3/D4 are future macOS work, not part of this Linux backend.
 - B2–B7: nothing has run over a radio yet. The native Android UI, permissions, actual MTU fallback, 2M PHY, scan/advertise coexistence, phone LAN bridging, proving time/RAM, per-hop times, connection slots, battery cost and screen-off/vendor background limits remain unverified. No emulator was used (the orb has no Bluetooth or KVM).
-- Whether the fleet hint in BLE advertisements, or a rotating version of it, is enough to avoid tracking ([../privacy-and-threats.md](../privacy-and-threats.md)).
+- Tracking through BLE advertisements and stable peer IDs. v0.7.3 removed the fleet hint; the service UUID and peer ID stay stable ([../privacy-and-threats.md](../privacy-and-threats.md)).
 - Interoperating with BitChat's packet format, if mixed fleets are wanted.
-- Discovery beacons announce the mesh ID and fleet tag in clear on the LAN ([../privacy-and-threats.md](../privacy-and-threats.md)).
+- Discovery beacons announce the mesh ID in clear on the LAN; the fleet tag is zero since v0.7.3 ([../privacy-and-threats.md](../privacy-and-threats.md)).
 - Nullifier sharing between payees (`nf`), and the evidence messages (`evq`/`evr`).

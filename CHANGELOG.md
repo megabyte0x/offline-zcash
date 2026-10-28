@@ -9,6 +9,25 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+### Added
+- **Leave session** in the wallet, Organiser and Gateway apps (module method `leave`), behind a confirmation. It stops the node and moves the device folder `ozm` to `ozm-backup-YYYYMMDD-HHMMSS` (UTC) in the same persistence folder; nothing is deleted. The device can then start without an invite or join another one, for example to switch from Regtest to testnet. New Organiser exports go to `sessions/` beside `ozm`, and Leave moves older `ozm/sessions` exports there, so their invites stay reachable.
+
+### Changed
+- The Organiser has one **"This device is the gateway"** option per device instead of payer/payee/relay/gateway checkboxes, and requires at least one gateway. Every device could already pay, receive and relay; those roles had no effect. `ozm-node fleet-init` takes `--device NAME` or `--device NAME:gateway`. Existing invites, fleet files and legacy `NAME:payer+payee` input keep working; every role except gateway is ignored. Status `role` is now `gateway` or empty.
+- Regtest gateways reject `https://` chain URLs (such as testnet lightwalletd) with an explanation that the device is on a Regtest session and that testnet needs Leave session and a testnet invite. A server that does not answer Zakura JSON-RPC (for example lightwalletd on 9067) gets a message naming the `ths endpoints` RPC URL instead of "is ths running?".
+- On a testnet session the Gateway hides the RPC field, the mining switch and the `ths faucet` command, and shows the session's TLS lightwalletd servers instead.
+- Workspace, four Logos packages and Android version are 0.7.3; Android version code is 12.
+
+### Fixed
+- A long wallet sync no longer blocks the Basecamp service. On a testnet session with birthday 0, the Gateway's first sync scanned from 4,465,026 inside `sync_now` on the module's call thread, so every other call failed ("Module source unavailable", then "timeout") and badges stayed on a stale "stopped". `sync_now` now starts the sync in the background and returns at once; `status` reports `syncing`, `sync_error` and `chain_tip`, and the apps show `syncing · height X of Y`. Payments, Prepare for offline and Leave are refused while a sync runs instead of waiting on the call thread. An online device resumes a background sync when Basecamp restarts.
+- The apps show Basecamp's error detail (for example the CallError message) instead of only "Module source unavailable", say "service not answering" instead of a stale state, and only suggest reinstalling when the service is not loaded.
+- The Organiser fills a testnet session's birthday with the current tip (new module method `testnet_tip`) and refuses a testnet birthday before 4,465,026, so wallets do not scan from NU7 activation.
+- The recipient field placeholder follows the session network (`utest1…` on testnet) in the web UI, and the Basecamp wallet no longer falls back to `uregtest1…` while the network is unknown.
+- The Organiser suggests a new export folder after each session, and the Gateway clears the mining switch after Leave.
+
+### Removed
+- The LAN fleet tag and BLE fleet hint. Invited devices advertised them so they only auto-connected within their fleet, but every device relays and the tag authenticated nothing. All devices now advertise zero, which v0.7.2 peers already accept, and this removes a fleet-membership marker from beacons. The FFI `fleetHint()` is removed.
+
 ## [0.7.2] - 2026-10-28
 
 ### Security
