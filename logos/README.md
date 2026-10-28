@@ -176,7 +176,7 @@ QML file URL. A second UI payment of 0.0137 ZEC mined at height 135 on both
 wallets after reinstalling those packages, with the same gateway identity.
 
 The owner tested **v0.5.1 successfully on three real Macs**. Later versions,
-including v0.7.4, need retesting on those machines. Local Network permission
+including this v0.7.5 candidate, need retesting on those machines. Local Network permission
 support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527));
 the fallback is **Dial address** = `<operator-ip>:7777`. Linux verification does
 not establish macOS discovery, sandbox permissions or BLE support.

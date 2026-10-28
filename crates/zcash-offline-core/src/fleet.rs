@@ -142,7 +142,7 @@ pub struct DeviceSecret {
     pub role: String,
     pub ironwood_sk: String,
     pub ed25519_sk: String,
-    /// Key creation time in Unix seconds; zero identifies pre-v0.7.4 devices.
+    /// Key creation time in Unix seconds; zero identifies legacy devices.
     #[serde(default)]
     pub created_at: u64,
 }

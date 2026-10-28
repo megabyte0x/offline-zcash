@@ -1,4 +1,4 @@
-# Android test app (v0.7.4, not released)
+# Android test app (v0.7.5, not released)
 
 **Public testnet TAZ / Regtest coins only.** Android 10+ (API 29), **arm64-v8a**, Bluetooth LE central and peripheral support. This is an experimental test shell, not a mainnet wallet. The APK builds and the Kotlin↔Rust link contract is tested on a host JVM; **no real phone, radio, screen-off behaviour or phone proving cost has been verified**. B2–B7 in [mesh.md](components/mesh.md#milestones-and-gating-tests) are hardware gates, not passed tests.
 
@@ -91,7 +91,7 @@ is blocked by the documented [faucet errors](components/offline-builder.md#v070-
 Native Android screens, permissions, radios and phone proving remain unverified;
 host-JVM checks are not phone tests.
 
-Releases: workspace, Logos metadata/module and Android `versionName` are `0.7.4`, `versionCode` is `13`. Releases from v0.7.4 do not publish the APK for now; v0.7.3 is the newest released APK. CI builds the APK and checksum on pushes and pull requests that change `android/` or `crates/ozm-ffi`. Hardware gates remain open. Use `offline-zcash-0.7.3-arm64-v8a.apk` and its checksum instead of the older filenames in the historical setup examples above.
+Versions: workspace, Logos metadata/module and Android `versionName` are `0.7.5`, `versionCode` is `14`. Releases from v0.7.4 do not publish the APK for now; v0.7.3 is the newest released APK. CI builds the APK and checksum on pushes and pull requests that change `android/` or `crates/ozm-ffi`. Hardware gates remain open. Use `offline-zcash-0.7.3-arm64-v8a.apk` and its checksum instead of the older filenames in the historical setup examples above.
 
 v0.7.2 disables Android's platform cleartext opt-in; native Rust mesh TCP and BLE
 remain plaintext at the link layer. Inventory sync needs v0.7.2 on both peers;

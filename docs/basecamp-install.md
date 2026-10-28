@@ -2,7 +2,7 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. v0.7.4 targets Basecamp on **macOS (Apple silicon)
+mesh nodes or listening ports. v0.7.5 targets Basecamp on **macOS (Apple silicon)
 and Linux (x86_64, arm64)**, on NU7 public testnet (TAZ) or the local Regtest
 chain, with **test coins only**, never real ZEC.
 

@@ -79,6 +79,15 @@ failed witness suppression and restart. No public-testnet funds/faucet were used
 The LAN/open benches account for actual mined preparation fees rather than
 assuming the funded balance stays fee-free.
 
+**Final integration:** rebased on v0.7.4, with package versions 0.7.5 and Android
+code 14. Strict workspace Clippy and all 55 tests pass, including `ozm-ffi`.
+The real Regtest mesh, LAN and invite-free benches pass (23, 11 and 25 checks).
+All four portable LGX packages build sequentially; installing them in the real
+Linux Basecamp AppImage preserves the wallets and resumes sync automatically.
+macOS paths were checked in code, not executed; no Android UI/build or funded
+public-testnet payment is claimed. Screenshots and interaction recordings are
+under `.amp/in/artifacts/v074/` (the original artifact directory name).
+
 **Security after readiness:** [G3/G6/L3 and remaining work](privacy-and-threats.md#v075-readiness-unresolved-security-work)
 cover history-leaf/frontier proofs, the single reachable testnet operator,
 birthday/range privacy and the automatic split fingerprint. None is implemented
@@ -136,7 +145,7 @@ packages built on Linux x86_64. Android release Kotlin compilation and lint
 passed; no arm64 APK/device or macOS run is implied. Web screenshots use the live
 testnet wallet; QML screenshots/interaction use a fixture bridge, not Basecamp.
 
-The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (now v0.7.4)
+The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (including this v0.7.5 candidate)
 still needs real-Mac retesting. Basecamp Local Network
 permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
 fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs do not verify macOS or radios.

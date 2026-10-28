@@ -17,7 +17,8 @@ It is not security reviewed and does not support real funds.
 - Catch-up builds tree fragments and retained roots in parallel. An 85,000-block live-testnet CLI scan fell from a 41.80-second median to 14.12 seconds on an 8-core orb. Online ranges download only from the primary; each applied root is checked against reachable secondary tree states. All 200 checkpoints remain. Sync snapshots persist every five seconds and on completion/stop, with an unconditional durable write before payments or receipts leave; interruption can replay the last uncommitted batches. Mesh batches and wire formats are unchanged.
 - Deep reorgs recover from a conservative sparse common ancestor and the earliest note height, floored at the device's stored scan start. First-note metadata and reservations survive reset; empty runs retain 1,000-block hash samples without changing the mesh schema.
 - Offline preparation is automatic while connected: wallets with fewer than four spendable notes make 8, 4 or 2 smaller notes, keep roughly half as change and cap the split fee at 2% of the funding note. Each external funding transaction is attempted once across failures/restarts; own change and split outputs do not trigger a loop. Other mined notes stay usable; a single-note wallet waits for its split to mine. The wallet/web show progress and tuck manual splitting under Advanced.
-- Workspace, four Logos packages and Android version are 0.7.4; Android version code is 13.
+- Workspace, four Logos packages and Android version are 0.7.5; Android version code is 14. Releases remain macOS/Linux Basecamp only.
+- Non-release CI validates the latest released changelog section while candidate notes remain under Unreleased. Tagged releases still require the exact tagged section before publishing.
 
 ## [0.7.4] - 2026-10-28
 

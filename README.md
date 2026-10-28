@@ -10,6 +10,11 @@ It runs in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line
 
 **Status:** experimental v0.7.4, for NU7 public testnet (TAZ) and the local Regtest harness, never real ZEC. The gateway uses configurable TLS lightwalletd, not a full node. Chain state and inclusion are explicitly gateway-reported, not independently proved. Funded public split/payment testing is blocked by faucet failures; see [testnet setup and limits](docs/install.md#public-testnet-v070). It has not been security reviewed.
 
+This branch builds the **v0.7.5 candidate**: fresh wallets choose their scan start,
+sync automatically, show mesh receipts immediately and prepare mined funds for
+offline use. Pay remains available during catch-up. See [the measurements and
+remaining gates](docs/open-work.md#built); v0.7.5 is not tagged or released yet.
+
 ## Try it
 
 - **[Install by name in Basecamp](docs/basecamp-install.md#install-by-name-recommended):** add the public catalogue in Settings → Package Repositories, search `zcash` in Manage Packages, and install the service and apps. No GitHub token needed.
