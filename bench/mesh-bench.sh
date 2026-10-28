@@ -77,7 +77,7 @@ up() {
   log "Creating fleet keys (A payer, R relay, B payee, D gateway)"
   "$ROOT/target/release/ozm-node" fleet-init --out "$STATE/fleet" --name bench \
     --device A:payer --device R:relay --device B:payee --device D:gateway
-  chmod 644 "$STATE"/fleet/*.json  # containers run as root; bench keys are disposable
+  chmod 600 "$STATE"/fleet/*.json  # read-only mounts retain private modes; containers run as root
 
   log "Funding A with 10 notes of 0.1 ZEC from the ths faucet"
   local addr_a; addr_a=$(jq -r '.devices[] | select(.name=="A") | .address' "$STATE/fleet/fleet.json")
@@ -132,7 +132,7 @@ test_all() {
   [[ "$hops" == "2" ]] && ok "1 pay crossed 2 hops (A→R→B)" || fail "1 pay hops = $hops"
   timeline "$tx1" "$t0"
 
-  log "Test 6: packet capture on relay R shows no plaintext"
+  log "Test 6: payment bodies stay sealed; P12 nonce/status broadcasts expose txids"
   local txhex; txhex=$(payments A | jq -r --arg t "$tx1" '.payments[] | select(.txid==$t) | .tx_hex')
   local addr_b; addr_b=$(jq -r '.devices[] | select(.name=="B") | .address' "$STATE/fleet/fleet.json")
   if python3 - "$STATE/R/cap.pcap" "$txhex" "$tx1" "$addr_b" "$AMOUNT" <<'PY'
@@ -142,14 +142,14 @@ tx = bytes.fromhex(sys.argv[2]); txid = sys.argv[3]; addr = sys.argv[4]; amount 
 assert len(cap) > len(tx), f"capture too small ({len(cap)} bytes)"
 chunks = [tx[i:i+24] for i in range(0, len(tx) - 24, 24)]
 hits = sum(1 for c in chunks if c in cap)
-needles = {"txid (display hex)": txid.encode(), "txid bytes": bytes.fromhex(txid)[::-1], "txid bytes rev": bytes.fromhex(txid),
-           "payee address": addr.encode(), "tx hex": sys.argv[2][:64].encode(), "amount text": amount.encode(),
+needles = {"payee address": addr.encode(), "tx hex": sys.argv[2][:64].encode(), "amount text": amount.encode(),
            "amount zat LE": int(round(float(amount) * 1e8)).to_bytes(8, 'little')}
 found = [k for k, v in needles.items() if v in cap]
+assert b"ozm1-result:" in cap and txid.encode() in cap, "expected public P12 result not captured"
 print(f"  capture {len(cap)} bytes; {hits}/{len(chunks)} 24-byte tx chunks found; plaintext needles found: {found}")
 sys.exit(1 if hits or found else 0)
 PY
-  then ok "6 no transaction bytes, txid, address or amount on the wire"; else fail "6 plaintext found on the wire"; fi
+  then ok "6 no raw transaction, address or amount; txid/status intentionally public (P12)"; else fail "6 payment-body leak or missing P12 result"; fi
 
   # ---------------- Test 2 ----------------
   log "Test 2: B is offline when A pays; B comes back later"

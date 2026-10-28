@@ -93,6 +93,10 @@ pub struct GatewayEntry {
     pub expiry_height: u32,
     #[serde(default)]
     pub last_submit_height: u32,
+    #[serde(default)]
+    pub submitter: String,
+    #[serde(default)]
+    pub enrolled: bool,
 }
 
 /// Everything this device persists besides the wallet.
@@ -101,12 +105,26 @@ pub struct Book {
     pub payments: BTreeMap<String, Payment>,
     pub refusals: Vec<Refusal>,
     pub gateway: BTreeMap<String, GatewayEntry>,
+    #[serde(default)]
+    pub request_nonces: BTreeMap<String, String>,
     pub seq_out: u64,
     pub last_seq_in: BTreeMap<String, u64>,
     #[serde(default)]
     pub gw_seq: u64,
     #[serde(default)]
     pub faucet_last: BTreeMap<String, u64>,
+}
+
+const RESULT_MAGIC: &[u8] = b"ozm1-result:";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct GatewayNotice {
+    request_nonce: String,
+    result: Signed<GatewayResult>,
+}
+
+impl zcash_offline_core::messages::Domain for GatewayNotice {
+    const DOMAIN: &'static [u8] = b"ozm1-gateway-notice-v1";
 }
 
 pub struct Config {
@@ -147,6 +165,7 @@ pub struct App {
     pub(crate) chain_view: Mutex<(u32, String)>,
     last_tip_push: Mutex<(u64, u32, String)>,
     gateway_apply: tokio::sync::Mutex<()>,
+    sub_rates: Mutex<BTreeMap<String, (f64, std::time::Instant)>>,
     /// Optional observer of every app event (the Basecamp module turns them into Logos events).
     pub on_event: std::sync::OnceLock<EventHook>,
 }
@@ -161,10 +180,17 @@ fn book_path(cfg: &Config) -> PathBuf {
 impl App {
     pub fn new(cfg: Config, mesh: Mesh) -> Result<Arc<Self>> {
         std::fs::create_dir_all(&cfg.data)?;
+        #[cfg(unix)]
+        for name in ["payments.json", "events.jsonl", "trust.json"] {
+            use std::os::unix::fs::PermissionsExt;
+            let path = cfg.data.join(name);
+            if path.exists() { std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?; }
+        }
         let mut wallet = WalletState::load(&wallet_path(&cfg))?;
         let mut book: Book = match std::fs::read(book_path(&cfg)) {
             Ok(b) => serde_json::from_slice(&b)?,
-            Err(_) => Book::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Book::default(),
+            Err(e) => return Err(e.into()),
         };
         for p in book.payments.values_mut().filter(|p| p.direction == "sent" && p.receipt_peer.is_none()) {
             if cfg.fleet.by_name(&p.counterparty).is_ok() {
@@ -199,6 +225,7 @@ impl App {
             chain_view: Default::default(),
             last_tip_push: Default::default(),
             gateway_apply: Default::default(),
+            sub_rates: Default::default(),
             on_event: Default::default(),
         }))
     }
@@ -234,7 +261,11 @@ impl App {
         let line = json!({"ms": now_ms(), "node": self.name(), "event": event, "detail": detail});
         info!(target: "ozm", "{line}");
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.cfg.data.join("events.jsonl")) {
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        if let Ok(mut f) = options.open(self.cfg.data.join("events.jsonl")) {
             let _ = writeln!(f, "{line}");
         }
     }
@@ -631,7 +662,7 @@ impl App {
             self.on_sub(self.name(), built.raw, built.txid, vec![]).await?;
         } else {
             for gateway in self.gateways() {
-                self.send_to(&gateway, Body::Sub { tx: built.raw.clone(), txid: built.txid.clone(), notify: vec![self.name().into()] }).await?;
+                self.send_to(&gateway, self.submission(&built.txid, built.raw.clone())?).await?;
             }
         }
         Ok(self.payment(&payment.txid).unwrap())
@@ -732,7 +763,7 @@ impl App {
             }
         }
         for g in self.gateways() {
-            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: std::iter::once(self.name().into()).chain(p.receipt_peer.clone()).collect() }).await?;
+            self.send_to(&g, self.submission(&p.txid, tx.clone())?).await?;
         }
         Ok(())
     }
@@ -751,7 +782,7 @@ impl App {
             }
         }
         for g in self.gateways().into_iter().filter(|_| p.test_tamper.is_none()) {
-            self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: std::iter::once(self.name().into()).chain(p.receipt_peer.clone()).collect() }).await?;
+            self.send_to(&g, self.submission(&p.txid, tx.clone())?).await?;
         }
         self.update(txid, |p| {
             if p.state == "built" {
@@ -764,6 +795,15 @@ impl App {
     }
 
     // ---------- shared ----------
+
+    fn submission(&self, txid: &str, tx: Vec<u8>) -> Result<Body> {
+        let mut st = self.state.lock().unwrap();
+        if !st.1.request_nonces.contains_key(txid) {
+            st.1.request_nonces.insert(txid.into(), ozm_mesh::MsgId::random().to_string());
+            self.persist(&st.0, &st.1)?;
+        }
+        Ok(Body::Sub { tx, txid: txid.into(), notify: vec![format!("nonce:{}", st.1.request_nonces[txid])] })
+    }
 
     pub fn payment(&self, txid: &str) -> Option<Payment> {
         self.state.lock().unwrap().1.payments.get(txid).cloned()
@@ -781,7 +821,19 @@ impl App {
         match ev {
             MeshEvent::Message { from, payload, hops, msg_id, broadcast } => {
                 if broadcast {
-                    let _ = self.on_key(from, &payload).await;
+                    if let Some(bytes) = payload.strip_prefix(RESULT_MAGIC) {
+                        let result = async {
+                            let notice: Signed<GatewayNotice> = serde_json::from_slice(bytes)?;
+                            let dev = self.device(&from.to_string())?;
+                            notice.verify_key(&dev)?;
+                            let txid = &notice.body.result.body.txid;
+                            anyhow::ensure!(self.state.lock().unwrap().1.request_nonces.get(txid) == Some(&notice.body.request_nonce), "unknown result nonce");
+                            self.handle_result(&self.route_name(&dev), notice.body.result).await
+                        }.await;
+                        if let Err(e) = result { warn!("dropping gateway notice: {e}"); }
+                    } else {
+                        let _ = self.on_key(from, &payload).await;
+                    }
                     return;
                 }
                 let mut inner = match envelope::open(&payload, &self.x25519) {
@@ -827,23 +879,7 @@ impl App {
                     Body::Pay { tx, statement } => self.on_pay(&from_name, tx, statement).await,
                     Body::Rcpt(r) => self.on_receipt(&from_name, r),
                     Body::Sub { tx, txid, notify } => self.on_sub(&from_name, tx, txid, notify).await,
-                    Body::Res(r) => {
-                        let included = matches!(r.body.status, TxStatus::Included { .. } | TxStatus::Mined { .. });
-                        let txid = r.body.txid.clone();
-                        let out = self.on_result(&from_name, r);
-                        if included && out.is_ok() {
-                            if let Some(p) = self.payment(&txid).filter(|p| p.direction == "received") {
-                                if let (Some(peer), Some(receipt)) = (p.receipt_peer, p.receipt) {
-                                    let _ = self.send_to(&peer, Body::Rcpt(receipt)).await;
-                                }
-                            }
-                        }
-                        // Inclusion changes balances; an earlier request must not suppress this refresh.
-                        if included && out.is_ok() && self.gateway_options().0.is_none() {
-                            let _ = self.request_mesh_sync(true).await;
-                        }
-                        out
-                    }
+                    Body::Res(r) => self.handle_result(&from_name, r).await,
                     Body::SyncReq { have_height, have_hash } => self.on_sync_req(&from_name, have_height, have_hash).await,
                     Body::SyncRes { reset, prev_hash, blocks, chain_tip } => self.on_sync_res(&from_name, reset, prev_hash, blocks, chain_tip).await,
                     Body::CompactReq { have_height, have_hash, checkpoints, birthday } => self.on_compact_req(&from_name, have_height, have_hash, checkpoints, birthday).await,
@@ -905,6 +941,7 @@ impl App {
     }
 
     async fn on_pay(self: &Arc<Self>, from: &str, tx: Vec<u8>, statement: Signed<Statement>) -> Result<()> {
+        let _guard = self.pay_lock.lock().await;
         let s = &statement.body;
         // Duplicate (same txid): one payment; answer again with the stored receipt.
         if let Some(p) = self.payment(&s.txid) {
@@ -917,7 +954,16 @@ impl App {
         let t = std::time::Instant::now();
         let payer = self.device(from)?;
         let pending = !self.cfg.fleet.open && self.cfg.fleet.by_peer(&payer.peer_id).is_some();
-        let mut checked = self.verify_offline(&tx, pending).await?;
+        let exposure = if pending {
+            let st = self.state.lock().unwrap();
+            let outstanding: Vec<_> = st.1.payments.values().filter(|p| p.direction == "received" && p.state != "mined" && p.receipt.is_some()).collect();
+            let same: Vec<_> = outstanding.iter().filter(|p| p.statement.as_ref().is_some_and(|s| s.signer == payer.ed25519)).collect();
+            // Provisional test-coin limits from pending-tier.md. Expiry does not erase debt.
+            (same.len() >= 3 || same.iter().map(|p| p.amount as u128).sum::<u128>() + s.amount as u128 > 100_000_000
+                || outstanding.iter().map(|p| p.amount as u128).sum::<u128>() + s.amount as u128 > 300_000_000)
+                .then(|| Reject { code: code::EXPOSURE, reason: "pending exposure cap (3 payments / 1 ZEC per payer; 3 ZEC total); wait for mined".into() })
+        } else { None };
+        let mut checked = match exposure { Some(r) => Err(r), None => self.verify_offline(&tx, pending).await? };
         // The payer may have synced past this payee's view. An offline payee refreshes its
         // chain view from a gateway over the mesh and checks once more before refusing.
         if self.gateway_options().0.is_none() && matches!(&checked, Err(r) if r.code == code::ANCHOR) {
@@ -1009,7 +1055,7 @@ impl App {
                 self.event(if pending { "accepted" } else { "awaiting-inclusion" }, json!({"txid": v.tx.txid, "amount": v.amount, "from": from, "verify_ms": verify_ms}));
                 if let Some(receipt) = receipt { self.send_to(from, Body::Rcpt(receipt)).await?; }
                 for g in self.gateways() {
-                    self.send_to(&g, Body::Sub { tx: tx.clone(), txid: v.tx.txid.clone(), notify: vec![from.to_string(), self.name().into()] }).await?;
+                    self.send_to(&g, self.submission(&v.tx.txid, tx.clone())?).await?;
                 }
                 self.update(&v.tx.txid, |p| {
                     if pending && !p.is_final() { p.state = "submitted".into(); }
@@ -1090,9 +1136,9 @@ impl App {
         };
         self.event("gateway-result", json!({"txid": txid, "status": status, "tip": tip, "gateway_reported": true}));
         if self.payment(&txid).is_some() { self.on_result(self.name(), result.clone())?; }
-        // Push each transition. Mesh storage carries it across a disconnected payer/payee.
+        // Legacy clients keep private results; nonce requests disclose no counterpart name.
         for to in notify {
-            if let Err(e) = self.send_to(&to, Body::Res(result.clone())).await {
+            if let Err(e) = self.send_result(&to, result.clone()).await {
                 self.event("result-undelivered", json!({"txid": txid, "to": to, "error": e.to_string()}));
             }
         }
@@ -1100,35 +1146,41 @@ impl App {
     }
 
     async fn on_testnet_sub(self: &Arc<Self>, from: &str, raw: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
-        let _guard = self.gateway_apply.lock().await;
         anyhow::ensure!(self.gateway_options().0.is_some(), "not an online gateway");
-        let (_, checked) = verify::check_tx(&raw, &self.cfg.fleet.policy)?;
-        anyhow::ensure!(checked.txid == txid, "submission txid does not match transaction");
         let old = self.state.lock().unwrap().1.gateway.get(&txid).cloned();
         anyhow::ensure!(old.as_ref().is_none_or(|e| e.tx_hex == hex::encode(&raw)), "another variant of this txid is already held");
+        let expiry_height = match &old {
+            Some(entry) => entry.expiry_height,
+            None => {
+                let (_, checked) = verify::check_tx(&raw, &self.cfg.fleet.policy)?;
+                anyhow::ensure!(checked.txid == txid, "submission txid does not match transaction");
+                checked.expiry_height
+            }
+        };
         let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
-        anyhow::ensure!(checked.expiry_height > 0 && checked.expiry_height as u64 <= source.tip as u64 + 1 + self.cfg.fleet.policy.expiry_delta as u64, "expiry outside fleet policy");
+        anyhow::ensure!(expiry_height > 0 && expiry_height as u64 <= source.tip as u64 + 1 + self.cfg.fleet.policy.expiry_delta as u64, "expiry outside fleet policy");
         let mut submitted = false;
         let known = source.status(&raw, &txid).await?;
         let status = match known {
             Some(status @ (TxStatus::Included { .. } | TxStatus::Mined { .. })) => status,
-            _ if source.tip > checked.expiry_height => TxStatus::Expired,
+            _ if source.tip > expiry_height => TxStatus::Expired,
             _ if old.as_ref().is_none_or(|e| source.tip.saturating_sub(e.last_submit_height) >= 3) => {
                 submitted = true;
                 source.submit(&raw).await?
             }
             Some(status) => status,
-            None => old.as_ref().map_or(TxStatus::Submitted, |e| e.result.body.status.clone()),
+            None => TxStatus::Submitted,
         };
         *self.sync_sources.lock().unwrap() = source.sources;
         let mut entry = match old {
             Some(entry) => entry,
-            None => GatewayEntry { txid: txid.clone(), tx_hex: hex::encode(&raw), expiry_height: checked.expiry_height,
+            None => GatewayEntry { txid: txid.clone(), tx_hex: hex::encode(&raw), expiry_height,
+                submitter: from.into(), enrolled: self.enrolled_sender(from),
                 submissions: 0, last_submit_height: 0, notify: vec![],
                 result: Signed::sign(GatewayResult { txid, status: status.clone(), tip_height: source.tip,
                     gateway: self.name().into(), seq: 0, created_ms: now_ms() }, &self.cfg.me)? },
         };
-        entry.notify.extend(notify.into_iter().chain(std::iter::once(from.to_string())).filter(|n| n != self.name()));
+        entry.notify.extend(notify_targets(from, notify).into_iter().filter(|n| n != self.name()));
         entry.notify.sort();
         entry.notify.dedup();
         self.publish_gateway(entry, status, source.tip, submitted).await
@@ -1163,6 +1215,12 @@ impl App {
             }
         }
         *self.chain_view.lock().unwrap() = (source.tip, source.hash.clone());
+        {
+            let mut st = self.state.lock().unwrap();
+            let before = st.1.gateway.len();
+            st.1.gateway.retain(|_, e| e.expiry_height == 0 || source.tip as u64 <= e.expiry_height as u64 + self.cfg.fleet.policy.expiry_margin as u64);
+            if before != st.1.gateway.len() { self.persist(&st.0, &st.1)?; }
+        }
         let announce = {
             let mut last = self.last_tip_push.lock().unwrap();
             let due = zcash_offline_core::sync::announce_due(last.0, last.1, now_ms(), source.tip)
@@ -1182,7 +1240,46 @@ impl App {
         Ok(())
     }
 
+    fn enrolled_sender(&self, from: &str) -> bool {
+        self.cfg.fleet.devices.iter().any(|d| d.peer_id == from || d.name.eq_ignore_ascii_case(from))
+    }
+
+    fn admit_sub(&self, from: &str, txid: &str, raw: &[u8], notify: &[String]) -> Result<()> {
+        anyhow::ensure!(raw.len() <= 2 * 1024 * 1024 && txid.len() == 64 && hex::decode(txid).is_ok(), "invalid submission size or txid");
+        anyhow::ensure!(notify_targets(from, notify.to_vec()).len() <= 16 && notify.iter().all(|n| n.len() <= 128
+            && n.strip_prefix("nonce:").is_none_or(|s| s.len() == 32 && hex::decode(s).is_ok())), "invalid notification targets");
+        let now = std::time::Instant::now();
+        let mut rates = self.sub_rates.lock().unwrap();
+        rates.retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(5));
+        anyhow::ensure!(rates.contains_key(from) || rates.len() < 4096, "gateway sender quota exceeded");
+        let (tokens, at) = rates.entry(from.into()).or_insert((4.0, now));
+        *tokens = (*tokens + now.duration_since(*at).as_secs_f64()).min(4.0);
+        *at = now;
+        anyhow::ensure!(*tokens >= 1.0, "gateway rate limit; retry submission");
+        *tokens -= 1.0;
+        drop(rates);
+        let st = self.state.lock().unwrap();
+        if let Some(entry) = st.1.gateway.get(txid) {
+            let targets = notify_targets(from, notify.to_vec());
+            anyhow::ensure!(entry.notify.len() + targets.iter().filter(|n| !entry.notify.contains(n)).count() <= 16, "notification quota exceeded");
+            return Ok(());
+        }
+        let entries = &st.1.gateway;
+        anyhow::ensure!(entries.len() < 4096 && entries.values().map(|e| e.tx_hex.len() / 2).sum::<usize>() + raw.len() <= 128 * 1024 * 1024,
+            "gateway global queue quota exceeded");
+        anyhow::ensure!(entries.values().filter(|e| e.submitter == from || (e.submitter.is_empty() && e.notify.iter().any(|n| n == from))).count() < 256,
+            "gateway per-sender queue quota exceeded");
+        if !self.enrolled_sender(from) {
+            let strangers: Vec<_> = entries.values().filter(|e| !e.enrolled).collect();
+            anyhow::ensure!(strangers.len() < 1024 && strangers.iter().map(|e| e.tx_hex.len() / 2).sum::<usize>() + raw.len() <= 32 * 1024 * 1024,
+                "gateway stranger queue quota exceeded");
+        }
+        Ok(())
+    }
+
     async fn on_sub(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
+        let _guard = self.gateway_apply.try_lock().map_err(|_| anyhow!("gateway busy; retry submission"))?;
+        self.admit_sub(from, &txid, &tx, &notify)?;
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
             return self.on_testnet_sub(from, tx, txid, notify).await;
         }
@@ -1191,16 +1288,21 @@ impl App {
         let policy = self.cfg.fleet.policy.clone();
         let raw = tx.clone();
         let expected_txid = txid.clone();
+        let cached = self.state.lock().unwrap().1.gateway.get(&txid).cloned();
+        anyhow::ensure!(cached.as_ref().is_none_or(|e| e.tx_hex == hex::encode(&tx)), "another variant of this txid is already held");
         let t = std::time::Instant::now();
-        let status = tokio::task::spawn_blocking(move || -> Result<(TxStatus, u32)> {
-            let (_, checked) = verify::check_tx(&raw, &policy)?;
-            anyhow::ensure!(checked.txid == expected_txid, "submission txid does not match transaction");
+        let (status, expiry_height) = tokio::task::spawn_blocking(move || -> Result<((TxStatus, u32), u32)> {
+            let expiry = if let Some(entry) = cached { entry.expiry_height } else {
+                let (_, checked) = verify::check_tx(&raw, &policy)?;
+                anyhow::ensure!(checked.txid == expected_txid, "submission txid does not match transaction");
+                checked.expiry_height
+            };
             let rpc = Rpc::new(&url);
-            submit_and_mine(&rpc, &raw, &checked.txid, mine)
+            Ok((submit_and_mine(&rpc, &raw, &expected_txid, mine)?, expiry))
         })
         .await??;
         let elapsed = t.elapsed().as_millis();
-        let mut to: Vec<String> = notify.into_iter().chain(std::iter::once(from.to_string())).filter(|n| n != self.name()).collect();
+        let mut to: Vec<String> = notify_targets(from, notify).into_iter().filter(|n| n != self.name()).collect();
         to.sort();
         to.dedup();
         let res = {
@@ -1212,7 +1314,8 @@ impl App {
                 &self.cfg.me,
             )?;
             let entry = st.1.gateway.entry(txid.clone()).or_insert_with(|| GatewayEntry { txid: txid.clone(), notify: to.clone(), result: res.clone(), submissions: 0,
-                tx_hex: hex::encode(&tx), expiry_height: 0, last_submit_height: status.1 });
+                submitter: from.into(), enrolled: self.enrolled_sender(from),
+                tx_hex: hex::encode(&tx), expiry_height, last_submit_height: status.1 });
             entry.submissions += 1;
             entry.result = res.clone();
             for n in &to {
@@ -1226,7 +1329,7 @@ impl App {
         self.event("gateway-result", json!({"txid": txid, "from": from, "status": status.0, "tip": status.1, "ms": elapsed}));
         if self.payment(&txid).is_some() { self.on_result(self.name(), res.clone())?; }
         for n in to {
-            if let Err(e) = self.send_to(&n, Body::Res(res.clone())).await {
+            if let Err(e) = self.send_result(&n, res.clone()).await {
                 self.event("result-undelivered", json!({"txid": txid, "to": n, "error": e.to_string()}));
             }
         }
@@ -1234,6 +1337,34 @@ impl App {
     }
 
     // ---------- payer and payee: results ----------
+
+    async fn send_result(&self, target: &str, result: Signed<GatewayResult>) -> Result<()> {
+        if let Some(nonce) = target.strip_prefix("nonce:") {
+            anyhow::ensure!(nonce.len() == 32 && hex::decode(nonce).is_ok(), "invalid request nonce");
+            let notice = Signed::sign(GatewayNotice { request_nonce: nonce.into(), result }, &self.cfg.me)?;
+            let mut bytes = RESULT_MAGIC.to_vec();
+            bytes.extend(serde_json::to_vec(&notice)?);
+            self.mesh.broadcast(bytes).await?;
+            Ok(())
+        } else {
+            self.send_to(target, Body::Res(result)).await
+        }
+    }
+
+    async fn handle_result(self: &Arc<Self>, from: &str, r: Signed<GatewayResult>) -> Result<()> {
+        let included = matches!(r.body.status, TxStatus::Included { .. } | TxStatus::Mined { .. });
+        let txid = r.body.txid.clone();
+        self.on_result(from, r)?;
+        if included {
+            if let Some(p) = self.payment(&txid).filter(|p| p.direction == "received") {
+                if let (Some(peer), Some(receipt)) = (p.receipt_peer, p.receipt) {
+                    let _ = self.send_to(&peer, Body::Rcpt(receipt)).await;
+                }
+            }
+            if self.gateway_options().0.is_none() { let _ = self.request_mesh_sync(true).await; }
+        }
+        Ok(())
+    }
 
     fn on_result(&self, from: &str, r: Signed<GatewayResult>) -> Result<()> {
         r.verify_key(&self.device(from)?)?;
@@ -1289,7 +1420,10 @@ impl App {
                 let tx = hex::decode(&p.tx_hex).unwrap_or_default();
                 let mut r = Ok(());
                 for g in self.gateways() {
-                    r = r.and(self.send_to(&g, Body::Sub { tx: tx.clone(), txid: p.txid.clone(), notify: vec![p.receipt_peer.clone().unwrap_or(p.counterparty.clone()), self.name().into()] }).await);
+                    r = match self.submission(&p.txid, tx.clone()) {
+                        Ok(body) => r.and(self.send_to(&g, body).await),
+                        Err(e) => Err(e),
+                    };
                 }
                 let _ = self.update(&p.txid, |p| {
                     p.attempts += 1;
@@ -1341,6 +1475,13 @@ impl App {
             "policy": self.cfg.fleet.policy,
         })
     }
+}
+
+fn notify_targets(from: &str, mut notify: Vec<String>) -> Vec<String> {
+    if !notify.iter().any(|n| n.starts_with("nonce:")) { notify.push(from.into()); }
+    notify.sort();
+    notify.dedup();
+    notify
 }
 
 /// Submits raw bytes (idempotent: "already in mempool" and "already mined" are

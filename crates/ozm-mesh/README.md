@@ -33,10 +33,18 @@ All integers are big-endian.
 Data chunks are joined in index order into one **link message**. `frag_id` is the packet's msg_id
 (random for inventories). Incomplete reassemblies are dropped after 30 s; at most 4,096 fragments.
 
-**Link message:** first byte `0x10` = packet, `0x11` = inventory.
+**Link message:** first byte `0x10` = packet, `0x11` = inventory,
+`0x12` = challenge, `0x13` = identity proof (v0.7.2).
 
 - Inventory: `n: u32`, `n × msg_id` (ids already seen), `m: u32`, `m × msg_id` (message ids
   known to be acked).
+- Challenge: fresh random 32-byte nonce. Proof: Ed25519 public key (32) and signature
+  (64) over `ozm1-link-proof-v1 || challenger PeerId || signer PeerId || nonce`.
+  The key must hash to the claimed peer ID and pass strict verification. With
+  `ack_signer` set, neither inventory nor stored replies are sent before a valid
+  proof. This proves key possession, not fleet membership or link encryption.
+  Older v0.7.x peers live-forward but cannot inventory-sync with v0.7.2;
+  upgrade offline store-and-forward peers together.
 - Packet (48-byte header + payload):
 
 | Field | Size |
@@ -80,8 +88,15 @@ tests; wallet nodes never use that mode. v0.5.x nodes drop new acks without cras
   the other side every stored packet it lacks. Stored copies already carry the decremented ttl.
   The sender gets `MeshEvent::Delivered` the first time it sees the Ack for its own message.
 - **Persistence.** If `store_path` is set, the store, seen ids and acked ids are written as JSON
-  (temp file, fsync, rename) after every change and on `shutdown`. A restarted relay keeps
+  (0600 on Unix, temp file, fsync, rename) after every change and on `shutdown`. A restarted relay keeps
   forwarding, and a restarted recipient does not deliver again.
+- **Limits.** Store at most 4,096 packets / 64 MiB, each claimed sender at most
+  512 packets / 16 MiB; refuse new work without evicting held packets. Seen/acked
+  sets hold at most 32,768 IDs each. Reject future timestamps beyond five minutes,
+  messages at/above 2 MiB, and reassembly beyond eight messages / 4 MiB per link.
+  At most 32 links, 128 queued items/link, 64 MiB queued payloads and 64 application
+  events. Large inventories resume as the bounded link queue drains. These caps
+  bound resources, not Sybils or availability; outer sender headers are spoofable.
 
 ## LAN discovery
 

@@ -238,3 +238,184 @@ async fn local_api_requires_token_and_loopback_host() {
     }).await.unwrap();
     server.abort(); app.mesh.shutdown();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn private_files_stay_private_on_write_and_upgrade() {
+    use std::os::unix::fs::PermissionsExt;
+    use zcash_offline_core::wallet::{write_atomic, WalletState};
+    let dir = tempfile::tempdir().unwrap();
+    ozm_node::join_open(dir.path()).unwrap();
+    let mut opts = RunOpts::for_home(dir.path());
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    std::fs::create_dir_all(&opts.data).unwrap();
+    let wallet = opts.data.join("wallet.json");
+    let book = opts.data.join("payments.json");
+    WalletState::default().save(&wallet).unwrap();
+    write_atomic(&book, &serde_json::to_vec(&ozm_node::app::Book::default()).unwrap()).unwrap();
+    // A crash can leave an older, world-readable temporary file.
+    std::fs::write(wallet.with_extension("tmp"), b"old").unwrap();
+    std::fs::set_permissions(wallet.with_extension("tmp"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    WalletState::default().save(&wallet).unwrap();
+    assert_eq!(std::fs::metadata(&wallet).unwrap().permissions().mode() & 0o777, 0o600);
+    let app = start(&opts).await.unwrap(); app.mesh.shutdown();
+    let files = [wallet, book, opts.data.join("mesh-store.json"), dir.path().join("secret.json"), opts.data.join("events.jsonl")];
+    for path in &files {
+        assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600, "{}", path.display());
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let app = start(&opts).await.unwrap();
+    for path in &files {
+        assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600, "upgrade {}", path.display());
+    }
+    app.mesh.shutdown();
+}
+
+#[tokio::test]
+async fn gateway_limits_unverified_submission_work_before_proof_checks() {
+    use ozm_mesh::{MeshEvent, MsgId};
+    use zcash_offline_core::{envelope::{self, Inner}, messages::Body, DeviceSecret};
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "quota".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A:payer".into(), "G:gateway".into()] }).unwrap();
+    let home = dir.path().join("G");
+    join_invite(&std::fs::read_to_string(&fleet.devices[1].invite_path).unwrap(), &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    opts.rpc = Some("http://127.0.0.1:0".into());
+    let app = start(&opts).await.unwrap();
+    let payer: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+    for i in 0..5 {
+        let inner = envelope::authenticate(Inner { from: "A".into(), from_key: payer.public().unwrap().ed25519,
+            body: Body::Sub { tx: vec![0; 20], txid: format!("{i:064x}"), notify: vec![] } }, &payer, &recipient).unwrap();
+        app.handle_mesh_event(MeshEvent::Message { from: payer.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
+            payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    }
+    let events = std::fs::read_to_string(opts.data.join("events.jsonl")).unwrap();
+    let errors: Vec<_> = events.lines().map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+        .filter(|v| v["event"] == "error").collect();
+    assert_eq!(errors.len(), 5);
+    assert!(!errors[3]["detail"]["error"].as_str().unwrap().contains("rate limit"));
+    assert!(errors[4]["detail"]["error"].as_str().unwrap().contains("rate limit"));
+    assert_eq!(app.status()["gateway_submissions"], 0);
+    app.mesh.shutdown();
+}
+
+fn recorded_payment(payer: &zcash_offline_core::DeviceSecret, txid: &str, amount: u64, state: &str) -> ozm_node::app::Payment {
+    use zcash_offline_core::messages::{Receipt, ReceiptState, Signed, Statement};
+    let statement = Signed::sign(Statement { txid: txid.into(), auth_digest: "auth".into(), amount, fee: 10_000,
+        expiry_height: 100, payer: payer.name.clone(), payee: "B".into(), seq: 1, created_ms: 1 }, payer).unwrap();
+    let receipt = Signed::sign(Receipt { txid: txid.into(), auth_digest: "auth".into(), amount,
+        payee: "B".into(), state: ReceiptState::Pending, view_height: 1, created_ms: 1 }, payer).unwrap();
+    serde_json::from_value(serde_json::json!({"txid": txid, "auth_digest": "auth", "direction": "received",
+        "counterparty": payer.public().unwrap().address, "amount": amount, "fee": 10000, "expiry_height": 100,
+        "state": state, "tx_hex": "00", "nullifiers": [], "statement": statement, "receipt": receipt,
+        "result": null, "history": [], "created_ms": 1})).unwrap()
+}
+
+#[tokio::test]
+async fn pending_caps_count_expired_debt_but_release_mined_payments() {
+    use ozm_mesh::{MeshEvent, MsgId};
+    use zcash_offline_core::{envelope::{self, Inner}, messages::{Body, Signed, Statement}, DeviceSecret};
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "exposure".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A:payer".into(), "B:payee".into(), "C:payer".into()] }).unwrap();
+    let a: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let c: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[2].secret_path).unwrap()).unwrap();
+    for (i, (payer, count, value, state, amount, capped)) in [
+        (&a, 3, 10_000_000, "submitted", 1, true),
+        (&a, 2, 40_000_000, "submitted", 20_000_000, false),
+        (&a, 2, 40_000_000, "submitted", 20_000_001, true),
+        (&c, 6, 50_000_000, "submitted", 1, true),
+        (&c, 6, 49_999_999, "submitted", 6, false),
+        (&a, 3, 10_000_000, "expired", 1, true),
+        (&a, 3, 10_000_000, "mined", 1, false),
+    ].into_iter().enumerate() {
+        let home = dir.path().join(i.to_string());
+        join_invite(&std::fs::read_to_string(&fleet.devices[1].invite_path).unwrap(), &home).unwrap();
+        let mut opts = RunOpts::for_home(&home);
+        opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+        std::fs::create_dir_all(&opts.data).unwrap();
+        let mut book = ozm_node::app::Book::default();
+        for n in 0..count {
+            let txid = format!("{n:064x}");
+            book.payments.insert(txid.clone(), recorded_payment(payer, &txid, value, state));
+        }
+        std::fs::write(opts.data.join("payments.json"), serde_json::to_vec(&book).unwrap()).unwrap();
+        let app = start(&opts).await.unwrap();
+        let txid = "new-payment";
+        let mut statement = recorded_payment(&a, txid, amount, "sent").statement.unwrap();
+        statement.body.seq = 10;
+        let statement: Signed<Statement> = Signed::sign(statement.body, &a).unwrap();
+        let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+        let inner = envelope::authenticate(Inner { from: "A".into(), from_key: a.public().unwrap().ed25519,
+            body: Body::Pay { tx: vec![0; 20], statement } }, &a, &recipient).unwrap();
+        app.handle_mesh_event(MeshEvent::Message { from: a.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
+            payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+        let book: ozm_node::app::Book = serde_json::from_slice(&std::fs::read(opts.data.join("payments.json")).unwrap()).unwrap();
+        assert_eq!(book.refusals.last().unwrap().reject.reason.contains("exposure cap"), capped, "case {i}");
+        app.mesh.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn submission_hides_counterparty_and_nonce_results_survive_restart_and_reorg() {
+    use ozm_mesh::{Mesh, MeshConfig, MeshEvent, MsgId};
+    use serde::{Deserialize, Serialize};
+    use zcash_offline_core::{envelope, messages::{Body, Domain, GatewayResult, Signed, TxStatus}, DeviceSecret};
+    #[derive(Serialize, Deserialize)]
+    struct Notice { request_nonce: String, result: Signed<GatewayResult> }
+    impl Domain for Notice { const DOMAIN: &'static [u8] = b"ozm1-gateway-notice-v1"; }
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "nonce".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A:payer".into(), "B:payee".into(), "G:gateway".into()] }).unwrap();
+    let a: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let g: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[2].secret_path).unwrap()).unwrap();
+    let home = dir.path().join("A");
+    join_invite(&std::fs::read_to_string(&fleet.devices[0].invite_path).unwrap(), &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    std::fs::create_dir_all(&opts.data).unwrap();
+    let txid = "payment";
+    let mut book = ozm_node::app::Book::default();
+    book.payments.insert(txid.into(), recorded_payment(&a, txid, 7, "submitted"));
+    std::fs::write(opts.data.join("payments.json"), serde_json::to_vec(&book).unwrap()).unwrap();
+    let app = start(&opts).await.unwrap();
+    let (gateway, mut events) = Mesh::start(MeshConfig { peer_id: g.public().unwrap().peer_id.parse().unwrap(),
+        ack_signer: Some(g.signing_key().unwrap()), ..Default::default() }).await.unwrap();
+    let (left, right) = tokio::io::duplex(65536);
+    let mesh = app.mesh.clone(); tokio::spawn(async move { mesh.attach(left, true).await });
+    let mesh = gateway.clone(); tokio::spawn(async move { mesh.attach(right, false).await });
+    app.resend(txid).await.unwrap();
+    let nonce = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(MeshEvent::Message { payload, broadcast: false, .. }) = events.recv().await {
+                let inner = envelope::open(&payload, &g.x25519_secret().unwrap()).unwrap();
+                if let Body::Sub { notify, .. } = envelope::authenticated_body(&inner, &a.public().unwrap(), &g.public().unwrap().x25519().unwrap()).unwrap() {
+                    assert_eq!(notify.len(), 1);
+                    let nonce = notify[0].strip_prefix("nonce:").unwrap().to_string();
+                    assert_eq!(nonce.len(), 32);
+                    break nonce;
+                }
+            }
+        }
+    }).await.unwrap();
+    app.mesh.shutdown(); gateway.shutdown();
+    let app = start(&opts).await.unwrap();
+    for (seq, request_nonce, signer, status, expected) in [
+        (1, "wrong".to_string(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted"),
+        (2, nonce.clone(), &a, TxStatus::Mined { height: 2, block_hash: "block".into() }, "submitted"),
+        (3, nonce.clone(), &g, TxStatus::Mined { height: 2, block_hash: "block".into() }, "mined"),
+        (4, nonce, &g, TxStatus::Submitted, "submitted"),
+    ] {
+        let result = Signed::sign(GatewayResult { txid: txid.into(), status, tip_height: 2,
+            gateway: "G".into(), seq, created_ms: 1 }, &g).unwrap();
+        let notice = Signed::sign(Notice { request_nonce, result }, signer).unwrap();
+        let mut payload = b"ozm1-result:".to_vec(); payload.extend(serde_json::to_vec(&notice).unwrap());
+        app.handle_mesh_event(MeshEvent::Message { from: g.public().unwrap().peer_id.parse().unwrap(),
+            msg_id: MsgId::random(), payload, hops: 1, broadcast: true }).await;
+        assert_eq!(app.payment(txid).unwrap().state, expected);
+    }
+    app.mesh.shutdown();
+}

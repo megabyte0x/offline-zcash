@@ -136,11 +136,15 @@ pub(crate) enum LinkMsg {
     Packet(Packet),
     /// Sent once when a link comes up: ids this node has already seen, and message ids it knows were acked.
     Inventory { held: Vec<MsgId>, acked: Vec<MsgId> },
+    Challenge([u8; 32]),
+    Proof { key: [u8; 32], signature: [u8; 64] },
 }
 
 impl LinkMsg {
     pub fn encode(&self) -> Vec<u8> {
         match self {
+            LinkMsg::Challenge(nonce) => [vec![0x12], nonce.to_vec()].concat(),
+            LinkMsg::Proof { key, signature } => [vec![0x13], key.to_vec(), signature.to_vec()].concat(),
             LinkMsg::Packet(p) => {
                 let mut b = vec![LINK_PACKET];
                 b.extend(p.encode());
@@ -162,6 +166,17 @@ impl LinkMsg {
     pub fn decode(b: &[u8]) -> Result<Self> {
         let mut r = Reader(b);
         match r.u8()? {
+            0x12 => {
+                let nonce = r.array()?;
+                ensure!(r.0.is_empty(), "trailing challenge bytes");
+                Ok(LinkMsg::Challenge(nonce))
+            }
+            0x13 => {
+                let key = r.array()?;
+                let signature = r.array()?;
+                ensure!(r.0.is_empty(), "trailing proof bytes");
+                Ok(LinkMsg::Proof { key, signature })
+            }
             LINK_PACKET => Ok(LinkMsg::Packet(Packet::decode(r.0)?)),
             LINK_INVENTORY => {
                 let mut lists = [Vec::new(), Vec::new()];

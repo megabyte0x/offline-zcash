@@ -1,11 +1,19 @@
 //! The store-and-forward cache and seen/acked ids, optionally persisted as one JSON file.
 
-use std::{collections::HashMap, fs, io::Write, path::Path};
+use std::{collections::HashMap, fs, io::{Read, Write}, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{packet::Packet, MsgId};
+
+pub(crate) const MAX_PACKETS: usize = 4096;
+pub(crate) const MAX_STORE_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_SENDER_PACKETS: usize = 512;
+pub(crate) const MAX_SENDER_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_IDS: usize = 32768;
+pub(crate) const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct Db {
@@ -25,6 +33,44 @@ pub(crate) struct Stored {
 }
 
 impl Db {
+    pub fn can_store(&self, p: &Packet) -> bool {
+        if self.store.contains_key(&p.msg_id) { return false; }
+        let bytes = p.payload.len() + crate::packet::HEADER_LEN;
+        let mut total = bytes;
+        let mut sender_bytes = bytes;
+        let mut sender_count = 1;
+        for s in self.store.values() {
+            let len = s.packet.payload.len() + crate::packet::HEADER_LEN;
+            total += len;
+            if s.packet.sender == p.sender { sender_count += 1; sender_bytes += len; }
+        }
+        bytes < MAX_MESSAGE_BYTES && self.store.len() < MAX_PACKETS && total <= MAX_STORE_BYTES
+            && sender_count <= MAX_SENDER_PACKETS && sender_bytes <= MAX_SENDER_BYTES
+    }
+
+    pub fn remember(map: &mut HashMap<MsgId, u64>, id: MsgId, expiry: u64) {
+        if map.len() >= MAX_IDS && !map.contains_key(&id) {
+            if let Some(old) = map.iter().min_by_key(|(_, e)| **e).map(|(k, _)| *k) { map.remove(&old); }
+        }
+        map.insert(id, expiry);
+    }
+
+    /// Old caches are transport data, not wallet history. Keep only bounded, live entries.
+    pub fn constrain(&mut self, now: u64, ttl: u64) {
+        self.prune(now);
+        let old = std::mem::take(&mut self.store);
+        for (id, mut stored) in old {
+            if stored.packet.created_ms > now.saturating_add(CLOCK_SKEW_MS)
+                || stored.packet.created_ms.saturating_add(ttl) < now { continue; }
+            stored.expires_ms = stored.expires_ms.min(now.saturating_add(ttl));
+            if self.can_store(&stored.packet) { self.store.insert(id, stored); }
+        }
+        for map in [&mut self.seen, &mut self.acked] {
+            let old = std::mem::take(map);
+            for (id, expiry) in old { Self::remember(map, id, expiry.min(now.saturating_add(ttl))); }
+        }
+    }
+
     /// Drops expired entries; returns whether anything changed.
     pub fn prune(&mut self, now_ms: u64) -> bool {
         let before = self.store.len() + self.seen.len() + self.acked.len();
@@ -36,8 +82,19 @@ impl Db {
 }
 
 pub(crate) fn load(path: &Path) -> Result<Db> {
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display())),
+    match fs::File::open(path) {
+        Ok(file) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            }
+            let mut bytes = Vec::new();
+            let limit = (MAX_STORE_BYTES * 2 + 16 * 1024 * 1024) as u64;
+            file.take(limit + 1).read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() as u64 <= limit, "mesh cache exceeds disk limit; move it aside to rebuild the transport cache");
+            serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Db::default()),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
@@ -51,7 +108,19 @@ pub(crate) fn save(path: &Path, db: &Db) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let json = serde_json::to_vec(db)?;
-    let mut f = fs::File::create(&tmp)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut f = options.open(&tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
     f.write_all(&json)?;
     f.sync_all()?;
     fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))

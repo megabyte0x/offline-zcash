@@ -50,18 +50,23 @@ struct LinkEntry {
     outbound: bool,
     kind: LinkKind,
     tx: LinkTx,
+    challenge: [u8; 32],
+    authenticated: bool,
+    pending_inventory: Vec<MsgId>,
 }
 
 struct State {
     links: HashMap<PeerId, LinkEntry>,
     db: Db,
-    events: Option<mpsc::UnboundedSender<MeshEvent>>,
+    events: Option<mpsc::Sender<MeshEvent>>,
 }
 
 pub(crate) struct Node {
     pub cfg: MeshConfig,
     pub me: PeerId,
     pub stats: Counters,
+    pub link_slots: Arc<tokio::sync::Semaphore>,
+    outgoing_bytes: Arc<tokio::sync::Semaphore>,
     closed: AtomicBool,
     state: Mutex<State>,
     tasks: Mutex<Vec<AbortHandle>>,
@@ -79,12 +84,14 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Node {
-    pub fn new(cfg: MeshConfig, mut db: Db, events: mpsc::UnboundedSender<MeshEvent>) -> Self {
-        db.prune(now_ms());
+    pub fn new(cfg: MeshConfig, mut db: Db, events: mpsc::Sender<MeshEvent>) -> Self {
+        db.constrain(now_ms(), cfg.store_ttl.as_millis().min(u64::MAX as u128) as u64);
         Node {
             me: cfg.peer_id,
             cfg,
             stats: Counters::default(),
+            link_slots: Arc::new(tokio::sync::Semaphore::new(32)),
+            outgoing_bytes: Arc::new(tokio::sync::Semaphore::new(persist::MAX_STORE_BYTES)),
             closed: AtomicBool::new(false),
             state: Mutex::new(State { links: HashMap::new(), db, events: Some(events) }),
             tasks: Mutex::new(Vec::new()),
@@ -145,7 +152,9 @@ impl Node {
 
     /// Records a same-fleet discovery beacon.
     pub fn heard(&self, peer: PeerId, addr: SocketAddr) {
-        lock(&self.discovered).insert(peer, (addr, Instant::now()));
+        let mut peers = lock(&self.discovered);
+        peers.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(60));
+        if peers.len() < 256 || peers.contains_key(&peer) { peers.insert(peer, (addr, Instant::now())); }
     }
 
     /// Peers heard in the last 3 discovery intervals, sorted.
@@ -192,6 +201,8 @@ impl Node {
         }
         let dialer = |out: bool| if out { self.me } else { peer };
         let id = self.next_link_id.fetch_add(1, Ordering::Relaxed);
+        let challenge = rand::random();
+        let authenticated = self.cfg.ack_signer.is_none(); // Explicit transport-only test mode.
         if let Some(old) = st.links.get(&peer) {
             let new_dialer = dialer(outbound);
             if new_dialer != dialer(old.outbound) && new_dialer != self.me.min(peer) {
@@ -199,19 +210,33 @@ impl Node {
                 return None;
             }
             info!(%peer, outbound, "link replaced");
-            st.links.insert(peer, LinkEntry { id, outbound, kind, tx });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![] });
         } else {
             info!(%peer, outbound, "link up");
-            st.links.insert(peer, LinkEntry { id, outbound, kind, tx });
+            st.links.insert(peer, LinkEntry { id, outbound, kind, tx, challenge, authenticated, pending_inventory: vec![] });
             emit(&st, MeshEvent::NeighborUp(peer));
         }
-        // Inventory: everything we have already seen, plus message ids known to be acked.
+        if authenticated { self.inventory(&st, peer); }
+        else { self.queue(&st.links[&peer].tx, LinkMsg::Challenge(challenge), rand::random()); }
+        Some(id)
+    }
+
+    fn queue(&self, tx: &LinkTx, msg: LinkMsg, frag_id: [u8; 16]) {
+        if let Some(out) = self.outgoing(msg, frag_id) { let _ = tx.try_send(out); }
+    }
+
+    fn outgoing(&self, msg: LinkMsg, frag_id: [u8; 16]) -> Option<Outgoing> {
+        let body = msg.encode();
+        let budget = self.outgoing_bytes.clone().try_acquire_many_owned(body.len().max(256).try_into().ok()?).ok()?;
+        Some(Outgoing { frag_id, body: Arc::new(body), _budget: Arc::new(budget) })
+    }
+
+    fn inventory(&self, st: &State, peer: PeerId) {
         let inv = LinkMsg::Inventory {
             held: st.db.seen.keys().copied().collect(),
             acked: st.db.acked.keys().copied().collect(),
         };
-        let _ = st.links[&peer].tx.send(Outgoing { frag_id: rand::random(), body: Arc::new(inv.encode()) });
-        Some(id)
+        self.queue(&st.links[&peer].tx, inv, rand::random());
     }
 
     pub fn link_down(&self, peer: PeerId, link_id: u64, err: Option<anyhow::Error>) {
@@ -235,7 +260,22 @@ impl Node {
         }
         match msg {
             LinkMsg::Packet(p) => self.handle_packet(&mut st, from, p),
-            LinkMsg::Inventory { held, acked } => self.handle_inventory(&st, from, held, acked),
+            LinkMsg::Inventory { held, acked } => self.handle_inventory(&mut st, from, held, acked),
+            LinkMsg::Challenge(nonce) => {
+                use ed25519_dalek::Signer;
+                if let (Some(key), Some(link)) = (&self.cfg.ack_signer, st.links.get(&from)) {
+                    let signature = key.sign(&link_proof(from, self.me, nonce)).to_bytes();
+                    self.queue(&link.tx, LinkMsg::Proof { key: key.verifying_key().to_bytes(), signature }, rand::random());
+                }
+            }
+            LinkMsg::Proof { key, signature } => {
+                let Some(link) = st.links.get_mut(&from) else { return };
+                let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&key) else { return };
+                if link.authenticated || crate::packet::peer_for(&key) != from
+                    || key.verify_strict(&link_proof(self.me, from, link.challenge), &ed25519_dalek::Signature::from_bytes(&signature)).is_err() { return; }
+                link.authenticated = true;
+                self.inventory(&st, from);
+            }
         }
     }
 
@@ -257,6 +297,7 @@ impl Node {
             payload,
         };
         let id = p.msg_id;
+        ensure!(st.db.can_store(&p), "mesh store quota exceeded");
         info!(msg_id = %id, to = %recipient, kind = ?kind, bytes = p.payload.len(), "sending");
         self.mark_seen(&mut st, &p);
         self.flood(&st, None, &p);
@@ -270,27 +311,30 @@ impl Node {
         if !self.is_closed() && st.db.prune(now_ms()) {
             self.persist(&st);
         }
+        let peers: Vec<_> = st.links.keys().copied().collect();
+        for peer in peers { self.flush_inventory(&mut st, peer); }
     }
 
     fn expiry(&self, p: &Packet) -> u64 {
-        p.created_ms.max(now_ms()).saturating_add(self.store_ttl_ms())
+        p.created_ms.min(now_ms()).saturating_add(self.store_ttl_ms())
     }
 
     fn mark_seen(&self, st: &mut State, p: &Packet) {
         let exp = self.expiry(p);
-        st.db.seen.insert(p.msg_id, exp);
+        Db::remember(&mut st.db.seen, p.msg_id, exp);
     }
 
     fn store(&self, st: &mut State, p: Packet) {
+        if !st.db.can_store(&p) { return; }
         let expires_ms = p.created_ms.saturating_add(self.store_ttl_ms());
         st.db.store.insert(p.msg_id, Stored { packet: p, expires_ms });
     }
 
     fn flood(&self, st: &State, except: Option<PeerId>, p: &Packet) {
-        let body = Arc::new(LinkMsg::Packet(p.clone()).encode());
+        let Some(out) = self.outgoing(LinkMsg::Packet(p.clone()), p.msg_id.0) else { return };
         for (peer, link) in &st.links {
             if Some(*peer) != except {
-                let _ = link.tx.send(Outgoing { frag_id: p.msg_id.0, body: body.clone() });
+                let _ = link.tx.try_send(out.clone());
             }
         }
     }
@@ -304,6 +348,10 @@ impl Node {
     }
 
     fn handle_packet(&self, st: &mut State, from: PeerId, p: Packet) {
+        if p.created_ms > now_ms().saturating_add(persist::CLOCK_SKEW_MS)
+            || p.payload.len() + HEADER_LEN >= persist::MAX_MESSAGE_BYTES
+            || (p.kind != Kind::Ack && !st.db.can_store(&p)) { return; }
+        if (p.recipient == self.me || p.kind == Kind::Broadcast) && st.events.as_ref().is_none_or(|tx| tx.capacity() == 0) { return; }
         if p.created_ms.saturating_add(self.store_ttl_ms()) < now_ms() {
             debug!(msg_id = %p.msg_id, "expired packet dropped");
             return;
@@ -322,7 +370,7 @@ impl Node {
             Kind::Message if p.recipient == self.me => {
                 info!(msg_id = %p.msg_id, from = %p.sender, hops = p.hops, bytes = p.payload.len(), "delivered");
                 self.stats.messages_delivered.fetch_add(1, Ordering::Relaxed);
-                st.db.acked.insert(p.msg_id, exp);
+                Db::remember(&mut st.db.acked, p.msg_id, exp);
                 let mut ack = Packet {
                     kind: Kind::Ack,
                     ttl: self.cfg.default_ttl,
@@ -392,7 +440,8 @@ impl Node {
                     // Without the original, a signature cannot establish its destination.
                     return;
                 }
-                let first = st.db.acked.insert(acked, exp).is_none();
+                let first = !st.db.acked.contains_key(&acked);
+                Db::remember(&mut st.db.acked, acked, exp);
                 if st.db.store.remove(&acked).is_some() {
                     debug!(msg_id = %acked, "acked packet removed from store");
                 }
@@ -420,16 +469,29 @@ impl Node {
         self.store(st, p);
     }
 
-    fn handle_inventory(&self, st: &State, from: PeerId, held: Vec<MsgId>, acked: Vec<MsgId>) {
-        let Some(link) = st.links.get(&from) else { return };
+    fn handle_inventory(&self, st: &mut State, from: PeerId, held: Vec<MsgId>, acked: Vec<MsgId>) {
+        let Some(link) = st.links.get_mut(&from) else { return };
+        if !link.authenticated { return; }
         let skip: HashSet<MsgId> = held.into_iter().chain(acked).collect();
+        link.pending_inventory = st.db.store.keys().filter(|id| !skip.contains(id)).copied().collect();
+        self.flush_inventory(st, from);
+    }
+
+    pub fn link_flushed(&self, peer: PeerId) {
+        self.flush_inventory(&mut lock(&self.state), peer);
+    }
+
+    fn flush_inventory(&self, st: &mut State, from: PeerId) {
+        let Some(link) = st.links.get_mut(&from) else { return };
         let mut sent = 0;
-        for (id, s) in &st.db.store {
-            if skip.contains(id) {
+        while let Some(id) = link.pending_inventory.last().copied() {
+            let Some(s) = st.db.store.get(&id) else {
+                link.pending_inventory.pop();
                 continue;
-            }
-            let body = Arc::new(LinkMsg::Packet(s.packet.clone()).encode());
-            let _ = link.tx.send(Outgoing { frag_id: id.0, body });
+            };
+            let Some(out) = self.outgoing(LinkMsg::Packet(s.packet.clone()), id.0) else { break };
+            if link.tx.try_send(out).is_err() { break; }
+            link.pending_inventory.pop();
             sent += 1;
         }
         if sent > 0 {
@@ -439,9 +501,13 @@ impl Node {
     }
 }
 
+fn link_proof(challenger: PeerId, signer: PeerId, nonce: [u8; 32]) -> Vec<u8> {
+    [b"ozm1-link-proof-v1".as_slice(), &challenger.0, &signer.0, &nonce].concat()
+}
+
 fn emit(st: &State, ev: MeshEvent) {
     if let Some(tx) = &st.events {
-        let _ = tx.send(ev);
+        let _ = tx.try_send(ev);
     }
 }
 
@@ -456,7 +522,7 @@ mod tests {
         let a = SigningKey::from_bytes(&[1; 32]);
         let b = SigningKey::from_bytes(&[2; 32]);
         let thief = SigningKey::from_bytes(&[3; 32]);
-        let (events, mut rx) = mpsc::unbounded_channel();
+        let (events, mut rx) = mpsc::channel(64);
         let node = Node::new(MeshConfig { peer_id: peer_for(&a.verifying_key()), ack_signer: Some(a), ..Default::default() }, Db::default(), events);
         let id = node.originate(Kind::Message, peer_for(&b.verifying_key()), b"sealed".to_vec()).unwrap();
         let mut ack = Packet { kind: Kind::Ack, ttl: 7, hops: 1, msg_id: MsgId::random(),
@@ -479,19 +545,29 @@ mod tests {
         assert!(rx.try_recv().is_err());
         // A relay must not advertise an unknown ID as acknowledged just because someone signed it.
         let relay_key = SigningKey::from_bytes(&[4; 32]);
-        let (events, _) = mpsc::unbounded_channel();
+        let (events, _) = mpsc::channel(64);
         let relay = Node::new(MeshConfig { peer_id: peer_for(&relay_key.verifying_key()), ack_signer: Some(relay_key), ..Default::default() }, Db::default(), events);
         let mut premature = ack.clone();
         premature.sender = peer_for(&thief.verifying_key());
         premature.payload = body.clone(); premature.sign_ack(&thief);
         relay.on_link_msg(premature.sender, LinkMsg::Packet(premature));
-        let (link, mut wire) = mpsc::unbounded_channel();
-        relay.link_up(node.me, true, LinkKind::Tcp, link);
-        let inventory = LinkMsg::decode(&wire.try_recv().unwrap().body).unwrap();
-        assert!(matches!(inventory, LinkMsg::Inventory { acked, .. } if !acked.contains(&id)));
+        assert!(!lock(&relay.state).db.acked.contains_key(&id));
         // The real destination still confirms the same queued message, through a relay.
         ack.payload = body; ack.sign_ack(&b); ack.ttl = 3; ack.hops = 5;
         node.on_link_msg(peer_for(&thief.verifying_key()), LinkMsg::Packet(ack));
         assert_eq!(rx.try_recv().unwrap(), MeshEvent::Delivered { msg_id: id, by: peer_for(&b.verifying_key()) });
+    }
+
+    #[test]
+    fn future_packets_cannot_pin_the_cache_or_poison_dedup() {
+        let (tx, _rx) = mpsc::channel(64);
+        let node = Node::new(MeshConfig::default(), Db::default(), tx);
+        let mut packet = Packet { kind: Kind::Message, ttl: 7, hops: 1, msg_id: MsgId::random(), sender: PeerId([8; 8]),
+            recipient: PeerId([9; 8]), created_ms: now_ms() + 301_000, payload: vec![1, 3, 7] };
+        node.on_link_msg(packet.sender, LinkMsg::Packet(packet.clone()));
+        assert_eq!(node.stats().stored, 0);
+        packet.created_ms = now_ms() + 299_000;
+        node.on_link_msg(packet.sender, LinkMsg::Packet(packet));
+        assert_eq!(node.stats().stored, 1);
     }
 }

@@ -9,6 +9,27 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-28
+
+### Security
+- Rechecked every trust-assumption row against v0.7.1. Keep the existing strict Ed25519 verification, signed envelopes/acks, text-only UI, API token/Host check, address proofs, gateway pins, no open-mode pending acceptance, action-count fees, exact error classification and rollback-aware expiry locks.
+- Enforce Unix 0600 on wallet, payments, mesh cache, keys, trust pins and event files, including upgrades and atomic temporary replacements. This is not encryption or protection from same-user malware; Windows still relies on account ACLs.
+- Bound mesh packet/byte storage globally and per claimed sender, dedup sets, fragment reassembly, links, queued bytes and application handlers. Reject packets more than five minutes in the future before they can poison dedup. Refuse new work rather than evict held packets; sender headers remain spoofable and quotas do not defeat Sybils or guarantee availability.
+- Require a fresh Ed25519 key-possession proof before sending or serving link inventory. **Compatibility:** adds link messages 0x12/0x13; older v0.7.x peers can live-forward but cannot inventory-sync with v0.7.2. Upgrade offline store-and-forward peers together. Authentication proves a key, not trusted fleet membership.
+- Bound gateway submissions before expensive proof checks: per-sender rate/queue limits, global and stranger byte/entry caps, bounded notification targets and one active submission worker; reuse proof checks for exact held bytes. Preserve enrolled capacity and never evict held transactions for new work.
+- Replace explicit payer/payee notification lists with persisted random request nonces and signed nonce/result broadcasts; retain legacy private results and the existing `Sub` schema. **Privacy tradeoff (P12):** txid/status/nonce are now plaintext mesh-wide, while amounts and payment statements remain sealed. The gateway still sees each submitter and can correlate identical txids and timing; this is not anonymity.
+- Bound invited pending acceptance at three outstanding payments / 1 ZEC per payer and 3 ZEC per payee, serialized with payment construction. Expired debt still counts; mined debt releases the cap and a reorg downgrade counts again. These are provisional test-coin limits, not double-spend prevention.
+- Remove the cached-mined fallback when a testnet transaction disappears after a reorg. Submit unchanged bytes concurrently to every connected configured lightwalletd server, including when the primary fails. Strict HTTPS certificate/hostname validation already shipped; TLS and source agreement remain trusted, not chain proofs.
+- Pin all external GitHub Actions to full commit SHAs; tagged builds do not restore branch Rust/Gradle caches. Disable Android platform cleartext opt-in; native mesh TCP/BLE metadata is still plaintext.
+
+### Changed
+- Workspace, four Logos packages and Android version are 0.7.2; Android version code is 11.
+
+### Known limitations
+- **Funded public-testnet payment to mined is unverified for v0.7.2.** No funded wallet exists and faucets keep failing; the owner directed this release to use local checks and Regtest benches instead. No testnet wallet state was transferred.
+- Deferred: Tor, PoW/MMR/inclusion proofs (tasks 7–9), nullifier sharing/co-signers, on-device fleet keys and signed enrollment, package/private APK signing, keystores, forward secrecy, diversified receipt routing, host-enforced Basecamp caller isolation, SPKI key/rotation policy, and coordinated BLE/beacon identity rotation. Rotating only a fleet hint would leave stable peer IDs visible. These are not contained compatible fixes; see the row-specific reasons in `docs/privacy-and-threats.md`.
+- Real Macs, native Android screens and physical radios remain unverified. Ten testnet confirmations are not finality; first-contact Sybils, malicious pinned gateways and unverified chain views remain risks.
+
 ## [0.7.1] - 2026-10-27
 
 User-interface release: no changes to the core, mesh, wire formats, module API or node behaviour.
@@ -152,7 +173,8 @@ User-interface release: no changes to the core, mesh, wire formats, module API o
 - Offline payee checks, signed pending receipts, idempotent gateway submission/mining and signed gateway-reported results.
 - Four-container benchmarks for multi-hop delivery, restart recovery and payment handling.
 
-[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/megabyte0x/offline-zcash/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/megabyte0x/offline-zcash/compare/v0.5.1...v0.6.0

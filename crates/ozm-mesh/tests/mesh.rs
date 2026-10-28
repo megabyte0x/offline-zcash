@@ -321,3 +321,80 @@ async fn attached_streams_chunked_stalled_multihop_and_acked() {
         for node in [&a, &r, &b] { node.mesh.shutdown(); }
     }
 }
+
+#[tokio::test]
+async fn store_bounds_reject_new_work_without_evicting_held_packets() {
+    let a = start(pid(1), false, &[], None).await;
+    for _ in 0..512 { a.mesh.send(pid(9), vec![1]).await.unwrap(); }
+    assert!(a.mesh.send(pid(9), vec![2]).await.unwrap_err().to_string().contains("quota"));
+    assert_eq!(a.mesh.stats().stored, 512);
+    a.mesh.shutdown();
+    let a = start(pid(1), false, &[], None).await;
+    for _ in 0..8 { a.mesh.send(pid(9), vec![1; 2 * 1024 * 1024 - 49]).await.unwrap(); }
+    assert!(a.mesh.send(pid(9), vec![2; 2 * 1024 * 1024 - 49]).await.is_err());
+    assert_eq!(a.mesh.stats().stored, 8);
+    a.mesh.shutdown();
+}
+
+#[tokio::test]
+async fn store_inventory_larger_than_a_link_queue_finishes_without_reconnecting() {
+    let a = start(pid(1), true, &[], None).await;
+    for i in 0..400u32 { a.mesh.send(pid(9), i.to_be_bytes().to_vec()).await.unwrap(); }
+    let b = start(pid(2), false, &[a.addr()], None).await;
+    timeout(WAIT, async {
+        while b.mesh.stats().stored != 400 { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    assert_eq!(a.mesh.stats().packets_synced, 400);
+    a.mesh.shutdown(); b.mesh.shutdown();
+}
+
+#[tokio::test]
+async fn stored_traffic_requires_a_fresh_identity_proof_not_a_claimed_hello() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn read(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let n = stream.read_u32().await.unwrap();
+        let mut b = vec![0; n as usize]; stream.read_exact(&mut b).await.unwrap(); b
+    }
+    async fn write(stream: &mut tokio::net::TcpStream, b: &[u8]) {
+        stream.write_u32(b.len() as u32).await.unwrap(); stream.write_all(b).await.unwrap();
+    }
+    async fn data(stream: &mut tokio::net::TcpStream, b: &[u8]) {
+        let mut f = vec![2]; f.extend([0; 16]); f.extend([0, 0, 0, 1]); f.extend(b); write(stream, &f).await;
+    }
+    fn peer(key: &SigningKey) -> PeerId {
+        let hash = blake2b_simd::Params::new().hash_length(8).personal(b"ozm1-peer-id\0\0\0\0").hash(key.verifying_key().as_bytes());
+        PeerId(hash.as_bytes().try_into().unwrap())
+    }
+    let a = SigningKey::from_bytes(&[31; 32]); let b = SigningKey::from_bytes(&[42; 32]);
+    let (mesh, _events) = Mesh::start(MeshConfig { peer_id: peer(&a), ack_signer: Some(a.clone()),
+        listen: Some("127.0.0.1:0".parse().unwrap()), ..Default::default() }).await.unwrap();
+    mesh.send(pid(9), b"held secret traffic".to_vec()).await.unwrap();
+    let hello = [b"\x01OZM\x01".as_slice(), &peer(&b).0].concat();
+    let inventory = [0x11, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut stream = tokio::net::TcpStream::connect(mesh.listen_addr().unwrap()).await.unwrap();
+    write(&mut stream, &hello).await; let _ = read(&mut stream).await;
+    let challenge = read(&mut stream).await;
+    assert_eq!(challenge[21], 0x12, "no inventory before authentication");
+    data(&mut stream, &inventory).await;
+    assert!(timeout(Duration::from_millis(100), read(&mut stream)).await.is_err());
+    let signed = [b"ozm1-link-proof-v1".as_slice(), &peer(&a).0, &peer(&b).0, &challenge[22..]].concat();
+    let proof = [vec![0x13], b.verifying_key().to_bytes().to_vec(), b.sign(&signed).to_bytes().to_vec()].concat();
+    let mut forged = proof.clone(); forged[40] ^= 1;
+    data(&mut stream, &forged).await;
+    assert!(timeout(Duration::from_millis(100), read(&mut stream)).await.is_err());
+    data(&mut stream, &proof).await;
+    assert_eq!(read(&mut stream).await[21], 0x11);
+    data(&mut stream, &inventory).await;
+    let stored = read(&mut stream).await;
+    assert!(stored.windows(19).any(|w| w == b"held secret traffic"));
+    drop(stream);
+    timeout(WAIT, async { while !mesh.neighbors().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await; } }).await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(mesh.listen_addr().unwrap()).await.unwrap();
+    write(&mut stream, &hello).await; let _ = read(&mut stream).await;
+    let fresh = read(&mut stream).await;
+    assert_ne!(&fresh[22..], &challenge[22..]);
+    data(&mut stream, &proof).await; data(&mut stream, &inventory).await;
+    assert!(timeout(Duration::from_millis(100), read(&mut stream)).await.is_err(), "old proofs must not unlock a new link");
+    mesh.shutdown();
+}

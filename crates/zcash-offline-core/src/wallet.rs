@@ -90,6 +90,11 @@ impl WalletState {
         if !path.exists() {
             return Ok(Self::default());
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
     }
 
@@ -385,7 +390,19 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
     {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
         f.write_all(bytes)?;
         f.sync_all()?;
     }

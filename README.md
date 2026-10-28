@@ -8,7 +8,7 @@ More diagrams, inside the mesh and at the gateway: [docs/how-it-works.md](docs/h
 
 It runs in [Logos Basecamp](https://docs.logos.co/basecamp) or as a command-line node, and both kinds of device can be in the same session. Basecamp has three apps: **Offline Zcash** (wallet/pay/mesh), **Organiser** (sessions and invites) and **Gateway** (chain RPC and submissions). Install any combination; they share one service, identity, wallet and mesh per device. The operator's `ths start` Docker chain stays outside Basecamp.
 
-**Status:** experimental v0.7.1, for NU7 public testnet (TAZ) and the local Regtest harness, never real ZEC. The gateway uses configurable TLS lightwalletd, not a full node. Chain state and inclusion are explicitly gateway-reported, not independently proved. Funded public split/payment testing is blocked by faucet failures; see [testnet setup and limits](docs/install.md#public-testnet-v070). It has not been security reviewed.
+**Status:** experimental v0.7.2, for NU7 public testnet (TAZ) and the local Regtest harness, never real ZEC. The gateway uses configurable TLS lightwalletd, not a full node. Chain state and inclusion are explicitly gateway-reported, not independently proved. Funded public split/payment testing is blocked by faucet failures; see [testnet setup and limits](docs/install.md#public-testnet-v070). It has not been security reviewed.
 
 ## Try it
 
@@ -31,7 +31,7 @@ Packages are unsigned; install only if you trust this test build.
 Manual `.lgx` downloads remain a [fallback](docs/basecamp-install.md#manual-lgx-fallback)
 on the [releases page](https://github.com/megabyte0x/offline-zcash/releases/latest).
 
-v0.7.1 ships **four merged catalogue packages and four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. See [CHANGELOG.md](CHANGELOG.md) for release notes. The owner tested v0.5.1 successfully on three real Macs; v0.7.0 has not been tested there. Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
+v0.7.2 ships **four merged catalogue packages and four `.lgx` packages per platform** (service + three apps), CLI tarballs and the Android APK. See [CHANGELOG.md](CHANGELOG.md) for release notes. The owner tested v0.5.1 successfully on three real Macs; v0.7.2 has not been tested there. Basecamp Local Network permission support is pending [upstream #527](https://github.com/logos-co/logos-basecamp/issues/527). Dial `<operator-ip>:7777` if discovery fails.
 
 Paste a unified address for the fleet's network with an Ironwood receiver; exchange addresses
 outside the app. Max quotes the builder's actual ZIP 317 action fee. A destination

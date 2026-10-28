@@ -198,18 +198,34 @@ impl Lightwallet {
     }
 
     pub async fn submit(&mut self, raw: &[u8]) -> Result<TxStatus> {
-        let response = match self.clients[0].1.send_transaction(service::RawTransaction { data: raw.to_vec(), height: 0 }).await {
-            Ok(r) => r.into_inner(),
-            Err(e) if matches!(e.code(), Code::Unavailable | Code::DeadlineExceeded | Code::ResourceExhausted | Code::Unknown | Code::Internal) =>
-                return Ok(TxStatus::Retryable { reason: e.to_string() }),
-            Err(e) => return Err(e).context("SendTransaction"),
-        };
-        Ok(match classify_submit(response.error_code as i64, &response.error_message) {
-            SubmitDisposition::Accepted | SubmitDisposition::Duplicate => TxStatus::Submitted,
-            SubmitDisposition::Retryable => TxStatus::Retryable { reason: response.error_message },
-            SubmitDisposition::Conflict => TxStatus::Conflict { reason: response.error_message },
-            SubmitDisposition::Rejected => TxStatus::Rejected { reason: format!("{}: {}", response.error_code, response.error_message) },
-        })
+        let mut calls = tokio::task::JoinSet::new();
+        for (_, client, _) in &self.clients {
+            let mut client = client.clone();
+            let tx = service::RawTransaction { data: raw.to_vec(), height: 0 };
+            calls.spawn(async move { client.send_transaction(tx).await });
+        }
+        let mut results = Vec::new();
+        while let Some(call) = calls.join_next().await {
+            let result = match call? {
+                Ok(r) => {
+                    let response = r.into_inner();
+                    Ok(match classify_submit(response.error_code as i64, &response.error_message) {
+                        SubmitDisposition::Accepted | SubmitDisposition::Duplicate => TxStatus::Submitted,
+                        SubmitDisposition::Retryable => TxStatus::Retryable { reason: response.error_message },
+                        SubmitDisposition::Conflict => TxStatus::Conflict { reason: response.error_message },
+                        SubmitDisposition::Rejected => TxStatus::Rejected { reason: format!("{}: {}", response.error_code, response.error_message) },
+                    })
+                }
+                Err(e) if matches!(e.code(), Code::Unavailable | Code::DeadlineExceeded | Code::ResourceExhausted | Code::Unknown | Code::Internal) =>
+                    Ok(TxStatus::Retryable { reason: e.to_string() }),
+                Err(e) => Err(e).context("SendTransaction"),
+            };
+            results.push(result);
+        }
+        // Any accepting server may mine it. A failed peer must not hide that possibility.
+        if results.iter().any(|r| matches!(r, Ok(TxStatus::Submitted))) { return Ok(TxStatus::Submitted); }
+        if let Some(Ok(status)) = results.iter().find(|r| matches!(r, Ok(TxStatus::Retryable { .. }))) { return Ok(status.clone()); }
+        results.into_iter().next().ok_or_else(|| anyhow!("no submission servers"))?
     }
 }
 
@@ -221,5 +237,27 @@ mod tests {
     async fn unavailable_tls_server_returns_an_error_instead_of_panicking() {
         let result = Lightwallet::connect(&["https://127.0.0.1:0".into()]).await;
         assert!(result.err().unwrap().to_string().starts_with("no testnet lightwallet server reachable:"));
+        let result = Lightwallet::connect(&["http://127.0.0.1:0".into()]).await;
+        assert!(result.err().unwrap().to_string().contains("requires TLS"));
+    }
+
+    #[tokio::test]
+    async fn submission_reaches_the_other_server_when_primary_fails() {
+        let mut clients = Vec::new();
+        let mut servers = Vec::new();
+        for status in ["14", "0"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let router = axum::Router::new().fallback(move || async move {
+                axum::http::Response::builder().header("content-type", "application/grpc").header("grpc-status", status)
+                    .body(axum::body::Body::from(vec![0u8; 5])).unwrap()
+            });
+            servers.push(tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); }));
+            let channel = Endpoint::from_shared(url.clone()).unwrap().connect().await.unwrap();
+            clients.push((url, Client::new(channel), 4_465_026));
+        }
+        let mut source = Lightwallet { clients, tip: 4_465_026, hash: String::new(), sources: vec![] };
+        assert!(matches!(source.submit(b"unchanged transaction bytes").await.unwrap(), TxStatus::Submitted));
+        for server in servers { server.abort(); }
     }
 }

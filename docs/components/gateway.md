@@ -33,6 +33,25 @@ TLS lightwalletd chain state and signed gateway reports are trusted in this
 release. The remaining sections specify the eventual untrusted-gateway mainnet
 design; they must not be read as implemented security guarantees.
 
+### v0.7.2 contained hardening
+
+New `Sub` requests preserve the schema but set `notify` to one
+`nonce:<128-bit random hex>` string, durably saved before sending and reused on
+retries. `ozm1-result:` broadcasts carry a signed nonce/result binding under the
+`ozm1-gateway-notice-v1` domain. Recipients verify the stored nonce, both signatures,
+the gateway role/pin and result sequence. Legacy name-addressed requests/results
+still work. This implements the request-nonce idea below, **not** the future
+binary `ozc1` bundle format. Plaintext txid/status/nonce is the accepted P12
+testnet leak; submitter identity, duplicate txids and timing remain correlatable.
+
+Admission before proofs enforces 1 request/s (burst 4), 256 held transactions per
+sender, 4,096 / 128 MiB globally and 1,024 / 32 MiB for strangers; notification
+targets and active workers are bounded. Exact held-byte retries reuse proof
+verification. A missing testnet transaction no longer inherits cached `mined`.
+Submission sends unchanged bytes concurrently to every connected configured
+server, not only the first. Strict HTTPS/WebPKI remains mandatory; no SPKI pin,
+Tor, chain proof or funded public payment-to-mined is established by this release.
+
 ## Decided
 
 | Item | Rule | Status |

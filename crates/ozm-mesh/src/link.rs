@@ -42,12 +42,14 @@ const MIN_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(3);
 
 /// One link message queued for a link; `frag_id` is the packet's msg_id (or random).
+#[derive(Clone)]
 pub(crate) struct Outgoing {
     pub frag_id: [u8; 16],
     pub body: Arc<Vec<u8>>,
+    pub _budget: Arc<tokio::sync::OwnedSemaphorePermit>,
 }
 
-pub(crate) type LinkTx = mpsc::UnboundedSender<Outgoing>;
+pub(crate) type LinkTx = mpsc::Sender<Outgoing>;
 
 pub(crate) async fn listen(listener: TcpListener, node: Arc<Node>) {
     loop {
@@ -128,6 +130,9 @@ pub(crate) async fn run_link<S>(stream: S, outbound: bool, kind: LinkKind, node:
 where
     S: AsyncRead + AsyncWrite + Send + Unpin,
 {
+    let Ok(_slot) = node.link_slots.clone().try_acquire_owned() else {
+        return Outcome { peer: None, accepted: false };
+    };
     let (mut rd, mut wr) = tokio::io::split(stream);
     let peer = match handshake(&mut rd, &mut wr, node).await {
         Ok(p) => p,
@@ -140,7 +145,7 @@ where
         debug!("connected to ourselves, dropping link");
         return Outcome { peer: None, accepted: false };
     }
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx, rx) = mpsc::channel(128);
     let Some(link_id) = node.link_up(peer, outbound, kind, tx) else {
         return Outcome { peer: Some(peer), accepted: false };
     };
@@ -148,7 +153,7 @@ where
     let (ping, idle) = kind.timers();
     let res = tokio::select! {
         r = read_loop(&mut rd, peer, node, idle) => r,
-        r = write_loop(&mut wr, rx, node, ping) => r,
+        r = write_loop(&mut wr, rx, node, peer, ping) => r,
     };
     node.link_down(peer, link_id, res.err());
     Outcome { peer: Some(peer), accepted: true }
@@ -200,8 +205,9 @@ async fn read_frame<R: AsyncRead + Unpin>(rd: &mut R, stats: &Counters) -> Resul
 
 async fn write_loop<W: AsyncWrite + Unpin>(
     wr: &mut W,
-    mut rx: mpsc::UnboundedReceiver<Outgoing>,
+    mut rx: mpsc::Receiver<Outgoing>,
     node: &Node,
+    peer: PeerId,
     ping_interval: Duration,
 ) -> Result<()> {
     let mut ping = time::interval(ping_interval);
@@ -210,7 +216,11 @@ async fn write_loop<W: AsyncWrite + Unpin>(
     loop {
         tokio::select! {
             out = rx.recv() => match out {
-                Some(out) => send_fragmented(wr, &out, node).await?,
+                Some(out) => {
+                    send_fragmented(wr, &out, node).await?;
+                    drop(out);
+                    node.link_flushed(peer);
+                }
                 // The node dropped this link (duplicate replaced, or shutdown).
                 None => return Ok(()),
             },
@@ -266,6 +276,7 @@ async fn read_loop<R: AsyncRead + Unpin>(rd: &mut R, peer: PeerId, node: &Node, 
 struct Partial {
     count: usize,
     have: usize,
+    bytes: usize,
     parts: Vec<Option<Vec<u8>>>,
     started: Instant,
 }
@@ -277,6 +288,7 @@ fn reassemble(partial: &mut HashMap<[u8; 16], Partial>, b: &[u8]) -> Result<Opti
     let count = u16::from_be_bytes([b[18], b[19]]) as usize;
     let chunk = &b[20..];
     ensure!(count > 0 && idx < count && count <= MAX_FRAGMENTS, "bad fragment header {idx}/{count}");
+    ensure!(chunk.len() <= crate::persist::MAX_MESSAGE_BYTES, "oversized fragment");
     partial.retain(|id, p| {
         let keep = p.started.elapsed() < REASSEMBLY_TIMEOUT;
         if !keep {
@@ -287,7 +299,10 @@ fn reassemble(partial: &mut HashMap<[u8; 16], Partial>, b: &[u8]) -> Result<Opti
     if count == 1 {
         return Ok(Some(chunk.to_vec()));
     }
-    let new = || Partial { count, have: 0, parts: vec![None; count], started: Instant::now() };
+    ensure!(partial.contains_key(&id) || partial.len() < 8, "too many incomplete messages");
+    let held: usize = partial.values().map(|p| p.bytes).sum();
+    ensure!(held + chunk.len() <= 4 * 1024 * 1024, "reassembly byte quota exceeded");
+    let new = || Partial { count, have: 0, bytes: 0, parts: vec![None; count], started: Instant::now() };
     let p = partial.entry(id).or_insert_with(new);
     if p.count != count {
         *p = new();
@@ -295,6 +310,9 @@ fn reassemble(partial: &mut HashMap<[u8; 16], Partial>, b: &[u8]) -> Result<Opti
     if p.parts[idx].is_none() {
         p.have += 1;
     }
+    p.bytes -= p.parts[idx].as_ref().map_or(0, Vec::len);
+    p.bytes += chunk.len();
+    ensure!(p.bytes <= crate::persist::MAX_MESSAGE_BYTES, "message byte quota exceeded");
     p.parts[idx] = Some(chunk.to_vec());
     if p.have < p.count {
         return Ok(None);
@@ -311,7 +329,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn link_kind_controls_ping_and_silent_peer_timeout() {
         for (kind, ping, idle) in [(LinkKind::Tcp, 5, 20), (LinkKind::Ble, 15, 60)] {
-            let (tx, _events) = mpsc::unbounded_channel();
+            let (tx, _events) = mpsc::channel(64);
             let node = Arc::new(Node::new(MeshConfig::default(), Db::default(), tx));
             let (stream, mut remote) = tokio::io::duplex(4096);
             let n = node.clone();
@@ -330,5 +348,18 @@ mod tests {
             time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
             assert!(node.neighbors().is_empty());
         }
+    }
+
+    #[test]
+    fn fragmented_messages_have_count_and_byte_limits() {
+        let frame = |id: u8, idx: u16, len: usize| {
+            let mut b = vec![id; 16]; b.extend(idx.to_be_bytes()); b.extend(128u16.to_be_bytes()); b.resize(20 + len, 1); b
+        };
+        let mut partial = HashMap::new();
+        for id in 0..8 { assert!(reassemble(&mut partial, &frame(id, 0, 3)).unwrap().is_none()); }
+        assert!(reassemble(&mut partial, &frame(8, 0, 3)).is_err());
+        let mut partial = HashMap::new();
+        for idx in 0..32 { assert!(reassemble(&mut partial, &frame(0, idx, 65535)).unwrap().is_none()); }
+        assert!(reassemble(&mut partial, &frame(0, 32, 65535)).is_err());
     }
 }

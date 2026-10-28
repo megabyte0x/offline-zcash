@@ -44,6 +44,7 @@ pub mod code {
     pub const FEE: u8 = 9;
     pub const OVER_FLOOR: u8 = 10;
     pub const STATEMENT: u8 = 11;
+    pub const EXPOSURE: u8 = 12;
 }
 
 fn rej(code: u8, reason: impl Into<String>) -> Reject {

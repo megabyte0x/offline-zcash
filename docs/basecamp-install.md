@@ -109,7 +109,7 @@ logosctl call zcash_offline_module status
 
 `logosctl` installs into its own session, **not Basecamp's data directory**.
 Use Basecamp's Package Repositories screen for Basecamp installs. The catalogue
-selects the newest release; add `--version 0.7.1` to pin a CLI install.
+selects the newest release; add `--version 0.7.2` to pin a CLI install.
 Its identity card points to `releases/latest/download/index.json`; every release
 also attaches its own index, merged packages and `catalogue.sha256`. Content
 roots bind the index to the downloaded packages, but do not authenticate the
@@ -117,13 +117,18 @@ publisher. Packages are unsigned (`trustedSigners` is empty).
 
 ### Manual LGX fallback
 
-From [Offline Zcash v0.7.1](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.7.1),
+From [Offline Zcash v0.7.2](https://github.com/megabyte0x/offline-zcash/releases/tag/v0.7.2),
 download the `.lgx` files for `darwin-arm64`, `linux-amd64` or `linux-arm64`
-(or the merged `<name>-0.7.1.lgx` files, which contain all three):
+(or the merged `<name>-0.7.2.lgx` files, which contain all three):
 
-1. `zcash_offline_module-0.7.1-<platform>.lgx` — **Offline Zcash service**, always needed.
+1. `zcash_offline_module-0.7.2-<platform>.lgx` — **Offline Zcash service**, always needed.
 2. The apps from the table above: `zcash_offline_ui`,
    `zcash_offline_organiser`, `zcash_offline_gateway`, with the same version/platform suffix.
+
+Upgrade store-and-forward peers together: v0.7.2 authenticates inventory with new
+link proof messages. Older v0.7.x peers can live-forward but cannot inventory-sync
+with it. Nonce-addressed gateway results expose txid/status in plaintext broadcasts
+(P12), not explicit payer/payee notification lists. See the [v0.7.2 trust audit](privacy-and-threats.md#trust-assumptions-at-v070).
 
 In Basecamp, open **Manage Packages → Install Local Package**. Install the service
 first, then each chosen app. Accept the unsigned-package warning for these test

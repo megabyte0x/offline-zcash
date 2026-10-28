@@ -200,13 +200,7 @@ pub fn home_dir(home: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    std::fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    zcash_offline_core::wallet::write_atomic(path, bytes)
 }
 
 /// Installs an invite (fleet plus this device's keys) into `home`. Returns a one-line summary.
@@ -256,6 +250,13 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         join_open_on(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?, o.network, o.birthday)?;
     }
     let fleet = Fleet::load(&o.fleet)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(&o.secret)?.permissions().mode() & 0o777 != 0o600 {
+            std::fs::set_permissions(&o.secret, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
     let me: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(&o.secret).context("read secret")?)?;
     let pubme = fleet.by_name(&me.name)?.clone();
     anyhow::ensure!(pubme == me.public_on(fleet.network)?, "secret for {} does not match the fleet file", me.name);
@@ -304,10 +305,11 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
 
     let a = app.clone();
     tokio::spawn(async move {
+        let handlers = Arc::new(tokio::sync::Semaphore::new(16));
         while let Some(ev) = events.recv().await {
+            let Ok(permit) = handlers.clone().acquire_owned().await else { break };
             let a = a.clone();
-            // Handle each message in its own task so a slow gateway submit never blocks relaying.
-            tokio::spawn(async move { a.handle_mesh_event(ev).await });
+            tokio::spawn(async move { let _permit = permit; a.handle_mesh_event(ev).await });
         }
     });
     let a = app.clone();

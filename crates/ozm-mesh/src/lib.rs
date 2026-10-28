@@ -156,20 +156,10 @@ impl Mesh {
         };
         let listen_addr = listener.as_ref().map(|l| l.local_addr()).transpose()?;
 
-        // Unbounded internally so the node never blocks; a forwarder feeds the bounded receiver.
-        let (utx, mut urx) = mpsc::unbounded_channel();
-        let (tx, rx) = mpsc::channel(1024);
-        tokio::spawn(async move {
-            while let Some(ev) = urx.recv().await {
-                if tx.send(ev).await.is_err() {
-                    break;
-                }
-            }
-        });
-
+        let (tx, rx) = mpsc::channel(64);
         let dial = cfg.dial.clone();
         let discovery = cfg.discovery.clone();
-        let node = Arc::new(Node::new(cfg, db, utx));
+        let node = Arc::new(Node::new(cfg, db, tx));
         info!(peer = %node.me, listen = ?listen_addr, ?dial, "mesh started");
         if let Some(l) = listener {
             node.spawn(link::listen(l, node.clone()));

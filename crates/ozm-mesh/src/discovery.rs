@@ -285,6 +285,7 @@ async fn recv_loop(sock: Arc<UdpSocket>, tag: [u8; 8], node: Arc<Node>) {
                 continue;
             }
             d.last.retain(|_, t| t.elapsed() < REDIAL);
+            if d.active.len() >= 32 || d.last.len() >= 256 { continue; }
             d.last.insert(b.peer, Instant::now());
             d.active.insert(b.peer);
         }
