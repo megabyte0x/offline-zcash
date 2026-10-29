@@ -102,6 +102,8 @@ impl App {
     async fn send_presence(&self, to: &DevicePublic) -> Result<()> {
         let body = Presence {
             device: self.cfg.me.public_on(self.cfg.fleet.network)?,
+            // Only the invited gateway role: wallets pin the first gateway they hear, so a wallet in
+            // online mode must never claim it.
             gateway: self.gateway_options().0.is_some(),
             tip: if self.gateway_options().0.is_some() { self.reported_tip.load(std::sync::atomic::Ordering::Relaxed) }
                 else { self.state.lock().unwrap().0.tip_height },

@@ -49,6 +49,7 @@ Bundled scenarios:
 | File | Flow |
 |---|---|
 | `scenarios/wallet-new-wallet.json` | Syncing wallet → Debug → Start a new wallet… → confirm; expect `leave` then `start {"network":"testnet","new_wallet":true}` |
+| `scenarios/wallet-online-mode.json` | Mesh wallet → click **Online mode** (`onlineModeSwitch`); expect `start {"direct":true}`, header pill `online · direct`, then the fallback state with `direct_error` shown (`onlineModeError`) and pill `online mode unavailable · gateway via mesh` |
 | `scenarios/organiser-gateway-session.json` | Organiser without device names → Create gateway session; expect `fleet_init` with `devices:["Gateway:gateway"]` and `join_device:"Gateway"` |
 
 ## Time rules

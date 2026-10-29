@@ -108,6 +108,24 @@ keeps the payment for verification, including across restart; that is neither
 acceptance nor a refund. If a signed payment is waiting for submission, let it
 retry—do not pay again. A refused payment may still be mined until it expires.
 
+### Online mode (testnet wallets with internet)
+
+A testnet wallet with internet can turn on **Online mode** in the Wallet card
+(module `start` option `direct`, `ozm-node run --direct`, or `POST /api/direct`
+`{"direct":true}`). It then syncs from the session's testnet lightwalletd servers
+and submits its own and received payments itself, tracking them to included and
+mined without a mesh gateway. The header shows **online · direct**. The setting
+survives restarts but not Leave session.
+
+- It does **not** make the wallet a gateway: it never announces a gateway role,
+  serves chain data or accepts peers' submissions, and cannot be pinned.
+- The servers see this computer's IP address and its transactions; their reports
+  are trusted like a gateway's.
+- Only mined, scanned notes are spendable.
+- If no server answers, the wallet shows the error, falls back to the mesh
+  gateway and retries the servers every minute.
+- Testnet only; Regtest wallets and session gateways cannot turn it on.
+
 ## Run a gateway
 
 The gateway needs chain access and a **gateway invite**. Installing the Gateway
@@ -209,6 +227,8 @@ wallet after `ths` creates a new chain.
   not an automatic switch. Leave session to change operators.
 - Invited wallets trust the named gateway; the organiser also holds their keys.
 - Sync and confirmation reports trust the gateway, not independent chain proofs.
+  A wallet in [online mode](#online-mode-testnet-wallets-with-internet) trusts the
+  testnet servers instead, and they see its IP address.
 - Address bindings prove receiving, not spending, authority. The address you
   enter determines where the money goes.
 - The Regtest faucet allows one request per device per 60 seconds, at most ten

@@ -62,6 +62,10 @@ pub struct RunOpts {
     /// Zakura JSON-RPC URL. Only online devices (gateway) set this.
     #[arg(long, env = "OZM_RPC")]
     pub rpc: Option<String>,
+    /// Online mode (testnet wallets): sync from and submit to the public testnet servers directly
+    /// instead of through a mesh gateway. Persists until switched off (POST /api/direct).
+    #[arg(long, env = "OZM_DIRECT")]
+    pub direct: bool,
     /// Gateway: mine a block after each submission and serve test funds (Regtest only).
     #[arg(long, env = "OZM_MINE")]
     pub mine: bool,
@@ -108,6 +112,7 @@ impl RunOpts {
             ble: false,
             discovery_port: 7778,
             rpc: None,
+            direct: false,
             mine: false,
             faucet_max: "1".into(),
             api: "127.0.0.1:7780".parse().unwrap(),
@@ -446,6 +451,9 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
         }
         st.0.save(&o.data.join("wallet.json"))?;
     }
+    if o.direct {
+        if let Err(e) = app.set_direct(true) { app.mesh.shutdown(); return Err(e); }
+    }
     if o.ble {
         match ozm_ble::Ble::start(app.mesh.clone(), [0; 4]).await {
             Ok(ble) => { let _ = app.ble.set(ble); }
@@ -488,7 +496,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
             if auto_sync > 0 {
                 if let Err(e) = a.auto_prepare_tick().await { a.event("auto-prepare-error", json!({"error": format!("{e:#}")})); }
             }
-            if auto_sync > 0 && ticks % 5 == 3 && a.gateway_options().0.is_none() && !a.mesh.neighbors().is_empty() {
+            if auto_sync > 0 && ticks % 5 == 3 && !a.chain_access() && !a.mesh.neighbors().is_empty() {
                 a.fallback_sync(auto_sync).await;
             }
         }
@@ -527,6 +535,9 @@ pub fn router(app: Arc<App>, debug_api: bool) -> Router {
             a.prepare_offline(r.notes, amount).await.map(Json).map_err(err)
         }))
         .route("/api/max", get(|State(a): State<Arc<App>>| async move { a.max_payment().map(Json).map_err(err) }))
+        .route("/api/direct", post(|State(a): State<Arc<App>>, Json(r): Json<DirectReq>| async move {
+            a.set_direct(r.direct).map(|_| Json(a.status())).map_err(err)
+        }))
         .route("/api/sync", post(|State(a): State<Arc<App>>| async move { a.sync().await.map(Json).map_err(err) }))
         .route(
             "/api/fund",
@@ -581,6 +592,11 @@ struct FundReq {
 }
 fn five() -> u32 {
     5
+}
+
+#[derive(Deserialize)]
+struct DirectReq {
+    direct: bool,
 }
 
 #[derive(Deserialize)]

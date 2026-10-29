@@ -13,7 +13,7 @@ pub trait ZcashOfflineModule: Send + Sync + 'static {
     /// Installs an invite file's JSON (fleet plus this device's keys). Returns `{"ok":true,"message":...}`.
     fn join(&self, invite_json: String) -> String;
 
-    /// Starts the device. Options JSON: listen, dial, rpc, mine, discover, ble (Linux only), discovery_port, api. Existing mesh is reused; explicit rpc/mine update the gateway.
+    /// Starts the device. Options JSON: listen, dial, rpc, mine, direct, discover, ble (Linux only), discovery_port, api. Existing mesh is reused; explicit rpc/mine update the gateway and explicit direct switches online mode in place.
     fn start(&self, options_json: String) -> String;
 
     /// Device status (GET /api/status) plus joined, running and home. Works before join and start.
@@ -94,6 +94,8 @@ struct StartOptions {
     dial: Option<Vec<String>>,
     rpc: Option<String>,
     mine: Option<bool>,
+    /// Online mode (testnet wallets): sync and submit through the public testnet servers.
+    direct: Option<bool>,
     discover: Option<bool>,
     ble: Option<bool>,
     discovery_port: Option<u16>,
@@ -175,6 +177,7 @@ impl Node {
             let o = saved_options(&home);
             v["rpc"] = json!(o.rpc);
             v["mine"] = json!(o.mine.unwrap_or(false));
+            v["direct"] = json!(o.direct.unwrap_or(false));
         }
         Ok(v)
     }
@@ -191,6 +194,14 @@ impl Node {
                 let mut saved = saved_options(&h);
                 saved.rpc = Some(rpc);
                 saved.mine = Some(mine);
+                std::fs::write(h.join(OPTIONS_FILE), serde_json::to_vec_pretty(&saved)?)?;
+            }
+            if let Some(direct) = o.direct {
+                let _runtime = rt().enter();
+                app.set_direct(direct)?;
+                let h = home()?;
+                let mut saved = saved_options(&h);
+                saved.direct = Some(direct);
                 std::fs::write(h.join(OPTIONS_FILE), serde_json::to_vec_pretty(&saved)?)?;
             }
             return self.status_value();
@@ -229,6 +240,9 @@ impl Node {
                 None => None,
             };
             let app = ozm_node::start(&opts).await?;
+            if let Some(direct) = o.direct {
+                if let Err(e) = app.set_direct(direct) { app.stop().await; return Err(e); }
+            }
             let api = listener.map(|listener| {
                 let router = ozm_node::router(app.clone(), false);
                 tokio::spawn(async move {
@@ -400,7 +414,7 @@ impl ZcashOfflineModule for Node {
         let o = saved_options(&h);
         if let Err(e) = self.start_with(o) {
             eprintln!("zcash_offline_module: auto-start failed: {e:#}");
-        } else if self.current().is_some_and(|a| a.gateway_options().0.is_some()) {
+        } else if self.current().is_some_and(|a| a.gateway_options().0.is_some() || a.direct_enabled()) {
             // Resume a sync a restart interrupted; never on the call thread.
             let _ = self.start_sync();
         }

@@ -183,6 +183,11 @@ pub struct App {
     pub mesh: Mesh,
     // Shared by every Basecamp app; changing RPC settings must not start another mesh.
     online: Mutex<(Option<String>, bool)>,
+    /// Online mode: this wallet syncs and submits its own transactions through the public testnet
+    /// servers. It never serves the mesh or advertises itself as a gateway.
+    direct: std::sync::atomic::AtomicBool,
+    /// Last online-mode failure and when (ms). While set, the wallet falls back to the mesh gateway.
+    direct_error: Mutex<Option<(String, u64)>>,
     pub(crate) ble: std::sync::OnceLock<ozm_ble::Ble>,
     pub x25519: x25519_dalek::StaticSecret,
     pub state: Mutex<(WalletState, Book)>,
@@ -230,6 +235,17 @@ fn wallet_path(cfg: &Config) -> PathBuf {
 fn book_path(cfg: &Config) -> PathBuf {
     cfg.data.join("payments.json")
 }
+/// Kept apart from payments.json, which a restored wallet carries into new sessions: online mode
+/// reveals this computer's IP address to the servers and must be chosen again.
+fn direct_path(cfg: &Config) -> PathBuf {
+    cfg.data.join("online-mode.json")
+}
+fn direct_allowed(cfg: &Config) -> Result<()> {
+    anyhow::ensure!(cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet, "online mode is testnet-only");
+    anyhow::ensure!(!cfg.fleet.by_name(&cfg.me.name).is_ok_and(|d| d.is_gateway()),
+        "this device is the session gateway; it already uses the chain servers");
+    Ok(())
+}
 
 impl App {
     pub fn new(cfg: Config, mesh: Mesh) -> Result<Arc<Self>> {
@@ -265,12 +281,14 @@ impl App {
         }
         let x25519 = cfg.me.x25519_secret()?;
         let online = Mutex::new((cfg.rpc.clone(), cfg.mine));
+        let direct = std::fs::read(direct_path(&cfg)).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .is_some_and(|v| v["direct"] == true) && direct_allowed(&cfg).is_ok();
         let trust = match std::fs::read(cfg.data.join("trust.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(e) => return Err(e.into()),
         };
-        Ok(Arc::new(App { cfg, mesh, online, x25519, state: Mutex::new((wallet, book)),
+        Ok(Arc::new(App { cfg, mesh, online, direct: direct.into(), direct_error: Default::default(), x25519, state: Mutex::new((wallet, book)),
             peers: Default::default(),
             trust: Mutex::new(trust),
             reported_tip: Default::default(),
@@ -316,6 +334,61 @@ impl App {
         anyhow::ensure!(!rpc.trim().is_empty(), "chain RPC URL is required");
         if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest { crate::regtest_rpc_url(&rpc)?; }
         *self.online.lock().unwrap() = (Some(rpc), mine);
+        Ok(())
+    }
+
+    /// Online mode is switched on (it may be falling back to the mesh; see [`App::direct_active`]).
+    pub fn direct_enabled(&self) -> bool {
+        self.direct.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Online mode is on and the servers answered: sync and own submissions go over the internet.
+    pub fn direct_active(&self) -> bool {
+        self.direct_enabled() && self.direct_error.lock().unwrap().is_none()
+    }
+
+    /// This device reads the chain itself: as the gateway, or as a wallet in online mode.
+    pub(crate) fn chain_access(&self) -> bool {
+        self.gateway_options().0.is_some() || self.direct_active()
+    }
+
+    fn submit_via(&self) -> &'static str {
+        if self.gateway_options().0.is_none() && self.direct_active() { "the testnet servers" } else { "gateway" }
+    }
+
+    fn direct_failed(&self, e: &anyhow::Error) {
+        let error = format!("{e:#}");
+        if self.direct_error.lock().unwrap().replace((error.clone(), now_ms())).is_none() {
+            self.event("online-mode-fallback", json!({"error": error}));
+        }
+    }
+
+    fn direct_ok(&self) {
+        if self.direct_error.lock().unwrap().take().is_some() { self.event("online-mode-restored", json!({})); }
+    }
+
+    /// Switches online mode and persists the choice. On: sync from and submit to the public testnet
+    /// servers. Off: sync through the pinned mesh gateway again; its checkpoint challenge reconciles
+    /// any difference between the two chain views.
+    pub fn set_direct(self: &Arc<Self>, on: bool) -> Result<()> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if on { direct_allowed(&self.cfg)?; }
+        anyhow::ensure!(!self.is_stopped(), "device stopped");
+        write_atomic(&direct_path(&self.cfg), &serde_json::to_vec(&json!({"direct": on}))?)?;
+        let was = self.direct.swap(on, SeqCst);
+        *self.direct_error.lock().unwrap() = None;
+        if was == on { return Ok(()); }
+        self.event("online-mode", json!({"direct": on}));
+        if on {
+            self.start_sync();
+        } else {
+            // Do not let a running server scan install after the switch.
+            if let Some(task) = self.sync_task.lock().unwrap().take() { task.abort(); }
+            self.sync_running.store(false, SeqCst);
+            self.sync_sources.lock().unwrap().clear();
+            let app = self.clone();
+            tokio::spawn(async move { let _ = app.request_mesh_sync(true).await; });
+        }
         Ok(())
     }
 
@@ -412,7 +485,8 @@ impl App {
     }
 
     fn require_gateway(&self, from: &str) -> Result<()> {
-        if from == self.name() && self.gateway_options().0.is_some() { return Ok(()); }
+        // A wallet in online mode reports its own submissions to itself, never to others.
+        if from == self.name() && (self.gateway_options().0.is_some() || self.direct_enabled()) { return Ok(()); }
         let d = self.device(from)?;
         let allowed = if self.cfg.fleet.open {
             self.trust.lock().unwrap().gateway.as_ref().is_some_and(|g| g.ed25519 == d.ed25519)
@@ -441,7 +515,7 @@ impl App {
             if let Err(e) = app.sync().await {
                 let error = format!("{e:#}");
                 // A wallet opened offline is usable immediately; discovery will retry the sync.
-                if app.gateway_options().0.is_some() || app.selected_gateway().is_some() {
+                if app.gateway_options().0.is_some() || app.direct_enabled() || app.selected_gateway().is_some() {
                     *app.sync_error.lock().unwrap() = Some(error.clone());
                     app.event("sync-error", json!({"error": error}));
                 }
@@ -496,54 +570,74 @@ impl App {
         Ok((spendable, locked, st.0.tip_height))
     }
 
-    /// Online devices sync from Zakura RPC; offline devices ask a gateway over the mesh.
+    /// Gateways and wallets in online mode sync from the chain servers; other devices ask a gateway
+    /// over the mesh, as does an online-mode wallet whose servers failed.
     pub async fn sync(self: &Arc<Self>) -> Result<serde_json::Value> {
-        let Some(url) = self.gateway_options().0 else {
+        let gateway = self.gateway_options().0;
+        if gateway.is_none() && self.direct_active() {
+            match self.sync_lightwalletd().await {
+                Ok(out) => { self.direct_ok(); return Ok(out); }
+                Err(e) => self.direct_failed(&e),
+            }
+        }
+        let Some(url) = gateway else {
             let gw = self.request_mesh_sync(true).await?;
             return Ok(json!({"requested_from": gw, "tip": self.state.lock().unwrap().0.tip_height}));
         };
+        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
+            return self.sync_lightwalletd().await;
+        }
+        self.sync_regtest(url).await
+    }
+
+    /// Scans compact blocks from the configured testnet lightwalletd servers.
+    async fn sync_lightwalletd(self: &Arc<Self>) -> Result<serde_json::Value> {
         let _run = self.sync_run.lock().await;
         let fvk = self.cfg.me.fvk()?;
-        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
-            let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
-            let birthday = self.resolve_birthday(source.tip, source.tip_time().await?)?;
-            let mut wallet = self.state.lock().unwrap().0.clone();
-            let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &wallet.checkpoints(), birthday, SCAN_BLOCKS).await?;
-            loop {
-                if let Some(start) = wallet.recovery_start(&next) {
-                    self.event("resync-start", json!({"from": start, "ancestor": next.prev_height}));
-                    next = source.batch(0, "", &[], start, SCAN_BLOCKS).await?;
-                }
-                // Fetch the next range while this one applies off the async runtime.
-                let (height, hash) = next.blocks.last().map_or((wallet.tip_height, wallet.tip_hash.clone()), |b| (b.height, b.hash.clone()));
-                let known = wallet.checkpoints();
-                let (batch, fvk) = (next, fvk.clone());
-                let apply = async {
-                    let _guard = self.sync_apply.lock().await;
-                    let (wallet, _) = tokio::task::spawn_blocking(move || wallet.into_batch(&batch, &fvk)).await??;
-                    Ok::<_, anyhow::Error>(wallet)
-                };
-                let fetch = async {
-                    if height >= source.tip { return Ok(None); }
-                    source.batch(height, &hash, &known, birthday, SCAN_BLOCKS).await.map(Some)
-                };
-                let (applied, fetched) = tokio::join!(apply, fetch);
-                wallet = applied?;
-                if let Some(root) = wallet.roots.get(&wallet.tip_height) {
-                    source.check_root(wallet.tip_height, &wallet.tip_hash, root).await?;
-                }
-                {
-                    let _guard = self.sync_apply.lock().await;
-                    self.install_wallet(wallet.clone(), wallet.tip_height >= source.tip)?;
-                }
-                match fetched? { Some(batch) => next = batch, None => break }
+        let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+        let birthday = self.resolve_birthday(source.tip, source.tip_time().await?)?;
+        let mut wallet = self.state.lock().unwrap().0.clone();
+        let mut next = source.batch(wallet.tip_height, &wallet.tip_hash, &wallet.checkpoints(), birthday, SCAN_BLOCKS).await?;
+        loop {
+            if let Some(start) = wallet.recovery_start(&next) {
+                self.event("resync-start", json!({"from": start, "ancestor": next.prev_height}));
+                next = source.batch(0, "", &[], start, SCAN_BLOCKS).await?;
             }
-            *self.sync_sources.lock().unwrap() = source.sources;
-            let (spendable, locked) = self.state.lock().unwrap().0.balance();
-            let out = json!({"tip": wallet.tip_height, "spendable": spendable, "locked": locked});
-            self.event("synced", out.clone());
-            return Ok(out);
+            // Fetch the next range while this one applies off the async runtime.
+            let (height, hash) = next.blocks.last().map_or((wallet.tip_height, wallet.tip_hash.clone()), |b| (b.height, b.hash.clone()));
+            let known = wallet.checkpoints();
+            let (batch, fvk) = (next, fvk.clone());
+            let apply = async {
+                let _guard = self.sync_apply.lock().await;
+                let (wallet, _) = tokio::task::spawn_blocking(move || wallet.into_batch(&batch, &fvk)).await??;
+                Ok::<_, anyhow::Error>(wallet)
+            };
+            let fetch = async {
+                if height >= source.tip { return Ok(None); }
+                source.batch(height, &hash, &known, birthday, SCAN_BLOCKS).await.map(Some)
+            };
+            let (applied, fetched) = tokio::join!(apply, fetch);
+            wallet = applied?;
+            if let Some(root) = wallet.roots.get(&wallet.tip_height) {
+                source.check_root(wallet.tip_height, &wallet.tip_hash, root).await?;
+            }
+            {
+                let _guard = self.sync_apply.lock().await;
+                self.install_wallet(wallet.clone(), wallet.tip_height >= source.tip)?;
+            }
+            match fetched? { Some(batch) => next = batch, None => break }
         }
+        *self.sync_sources.lock().unwrap() = source.sources;
+        let (spendable, locked) = self.state.lock().unwrap().0.balance();
+        let out = json!({"tip": wallet.tip_height, "spendable": spendable, "locked": locked});
+        self.event("synced", out.clone());
+        Ok(out)
+    }
+
+    /// Scans full blocks from a Regtest gateway's Zakura JSON-RPC.
+    async fn sync_regtest(self: &Arc<Self>, url: String) -> Result<serde_json::Value> {
+        let _run = self.sync_run.lock().await;
+        let fvk = self.cfg.me.fvk()?;
         let rpc = Rpc::new(&url);
         let tip = tokio::task::spawn_blocking(move || rpc.tip()).await??;
         self.resolve_birthday(tip, 0)?;
@@ -580,6 +674,8 @@ impl App {
     /// Sends `syncq` to the first gateway (at most every 5 s unless forced). Returns its name.
     pub async fn request_mesh_sync(self: &Arc<Self>, force: bool) -> Result<String> {
         use std::sync::atomic::Ordering;
+        // Two chain sources must not interleave; this also leaves the gateway unpinned.
+        anyhow::ensure!(!self.direct_active(), "online mode syncs from the chain servers, not the mesh");
         let gw = self.gateways().into_iter().next().ok_or_else(|| anyhow!("no gateway in the fleet"))?;
         if let Some(gateway) = self.selected_gateway() {
             let _ = self.reported_tip.compare_exchange(0, gateway.announcement.body.tip, Ordering::Relaxed, Ordering::Relaxed);
@@ -884,7 +980,7 @@ impl App {
     /// Background preparation yields to a payment/receipt already being handled, and only
     /// attempts each external funding transaction once, including across failure/restart.
     pub async fn auto_prepare_tick(self: &Arc<Self>) -> Result<()> {
-        if self.gateway_options().0.is_none() && (self.selected_gateway().is_none() || self.mesh.neighbors().is_empty()) { return Ok(()); }
+        if !self.chain_access() && (self.selected_gateway().is_none() || self.mesh.neighbors().is_empty()) { return Ok(()); }
         let Ok(_guard) = self.pay_lock.try_lock() else { return Ok(()); };
         let plan = {
             let mut st = self.state.lock().unwrap();
@@ -1090,7 +1186,7 @@ impl App {
             }
             p.attempts += 1;
             p.last_send_ms = now_ms();
-            p.note(format!("{} (attempt {})", if submitted { "submitted to gateway" } else { "queued for gateway" }, p.attempts));
+            p.note(format!("{} {} (attempt {})", if submitted { "submitted to" } else { "queued for" }, self.submit_via(), p.attempts));
         })
     }
 
@@ -1101,7 +1197,14 @@ impl App {
             self.on_sub(self.name(), tx, txid.into(), vec![]).await?;
             return Ok(true);
         }
+        let mut direct = Ok(());
+        if self.direct_active() {
+            direct = self.on_sub(self.name(), tx.clone(), txid.into(), vec![]).await;
+            // Busy or slow servers: the retry loop submits again. Unreachable ones: use the mesh.
+            if direct.is_ok() || self.direct_active() { return direct.map(|_| true); }
+        }
         let gateways = self.gateways();
+        if gateways.is_empty() { direct?; }
         for g in &gateways {
             self.send_to(g, self.submission(txid, tx.clone())?).await?;
         }
@@ -1195,6 +1298,9 @@ impl App {
                 self.event("mesh-recv", json!({"kind": inner.body.kind(), "from": inner.from, "hops": hops, "bytes": payload.len(), "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
                 let from_name = self.route_name(&dev.unwrap());
                 let r = match inner.body {
+                    // Online mode reads the chain from the servers; mesh chain data would interleave.
+                    Body::SyncRes { .. } | Body::CompactPart(_) | Body::Tip { .. } | Body::CheckpointReq { .. } | Body::ChainClock { .. }
+                        if self.direct_active() => Ok(()),
                     Body::Pay { tx, statement } => self.on_pay(&from_name, tx, statement).await,
                     Body::Rcpt(r) => self.on_receipt(&from_name, r),
                     Body::Sub { tx, txid, notify } => self.on_sub(&from_name, tx, txid, notify).await,
@@ -1308,7 +1414,7 @@ impl App {
         };
         let checked = match exposure { Some(r) => Err(r), None => self.verify_offline(&tx, pending).await? };
         if matches!(&checked, Err(r) if r.code == code::ANCHOR) {
-            if self.gateway_options().0.is_some() { self.start_sync(); }
+            if self.chain_access() { self.start_sync(); }
             else { let _ = self.request_mesh_sync(false).await; }
             let mut st = self.state.lock().unwrap();
             let height = st.0.tip_height;
@@ -1407,7 +1513,7 @@ impl App {
                 self.submit_payment(&v.tx.txid, tx).await?;
                 self.update(&v.tx.txid, |p| {
                     if pending && p.result.is_none() { p.state = "submitted".into(); }
-                    p.note("forwarded to gateway");
+                    p.note(format!("forwarded to {}", self.submit_via()));
                 })?;
             }
             Err(reject) => {
@@ -1484,7 +1590,8 @@ impl App {
             (result, notify)
         };
         self.event("gateway-result", json!({"txid": txid, "status": status, "tip": tip, "gateway_reported": true}));
-        if self.payment(&txid).is_some() { self.on_result(self.name(), result.clone())?; }
+        // As payee, also send the payer the included receipt a mesh gateway's result would trigger.
+        if self.payment(&txid).is_some() { self.handle_result(self.name(), result.clone()).await?; }
         // Legacy clients keep private results; nonce requests disclose no counterpart name.
         for to in notify {
             if let Err(e) = self.send_result(&to, result.clone()).await {
@@ -1495,7 +1602,8 @@ impl App {
     }
 
     async fn on_testnet_sub(self: &Arc<Self>, from: &str, raw: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
-        anyhow::ensure!(self.gateway_options().0.is_some(), "not an online gateway");
+        let direct = self.gateway_options().0.is_none();
+        anyhow::ensure!(!direct || (from == self.name() && self.direct_active()), "not an online gateway");
         let old = self.state.lock().unwrap().1.gateway.get(&txid).cloned();
         anyhow::ensure!(old.as_ref().is_none_or(|e| e.tx_hex == hex::encode(&raw)), "another variant of this txid is already held");
         let expiry_height = match &old {
@@ -1506,7 +1614,10 @@ impl App {
                 checked.expiry_height
             }
         };
-        let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+        let mut source = match crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await {
+            Ok(source) => source,
+            Err(e) => { if direct { self.direct_failed(&e); } return Err(e); }
+        };
         anyhow::ensure!(expiry_height > 0 && expiry_height as u64 <= source.tip as u64 + 1 + self.cfg.fleet.policy.expiry_delta as u64, "expiry outside fleet policy");
         let mut submitted = false;
         let known = source.status(&raw, &txid).await?;
@@ -1535,11 +1646,16 @@ impl App {
         self.publish_gateway(entry, status, source.tip, submitted).await
     }
 
-    /// Internet-only polling; mesh wallets sync on the pushed tip, not a 30 s timer.
+    /// Internet-only polling; mesh wallets sync on the pushed tip, not a 30 s timer. A wallet in
+    /// online mode polls too, for its own sync and submissions, but pushes nothing to the mesh.
     pub(crate) async fn gateway_tick(self: &Arc<Self>) -> Result<()> {
-        let Some(url) = self.gateway_options().0 else { return Ok(()); };
+        let url = self.gateway_options().0;
+        let direct = url.is_none() && self.direct_enabled();
+        if url.is_none() && !direct { return Ok(()); }
+        // After a failure the wallet uses the mesh; try the servers again once a minute.
+        if direct && self.direct_error.lock().unwrap().as_ref().is_some_and(|(_, at)| now_ms().saturating_sub(*at) < 60_000) { return Ok(()); }
         let Ok(_guard) = self.gateway_apply.try_lock() else { return Ok(()); };
-        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest {
+        if let Some(url) = url.filter(|_| self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest) {
             let (height, hash) = tokio::task::spawn_blocking(move || -> Result<_> {
                 let rpc = Rpc::new(&url);
                 let tip = rpc.tip()?;
@@ -1552,7 +1668,12 @@ impl App {
             if changed { self.push_tip(height, &hash).await?; }
             return Ok(());
         }
-        let mut source = crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await?;
+        let mut source = match crate::lightwallet::Lightwallet::connect(&self.testnet_servers()).await {
+            Ok(source) => source,
+            Err(e) if direct => { self.direct_failed(&e); return Ok(()); }
+            Err(e) => return Err(e),
+        };
+        if direct { self.direct_ok(); }
         let old = self.chain_view.lock().unwrap().clone();
         let changed = old != (source.tip, source.hash.clone());
         self.reported_tip.store(source.tip, std::sync::atomic::Ordering::Relaxed);
@@ -1587,7 +1708,7 @@ impl App {
             if before != st.1.gateway.len() { self.persist(&st.0, &st.1)?; }
         }
         if changed || self.state.lock().unwrap().0.tip_height != source.tip { self.start_sync(); }
-        if changed { self.push_tip(source.tip, &source.hash).await?; }
+        if changed && !direct { self.push_tip(source.tip, &source.hash).await?; }
         Ok(())
     }
 
@@ -1642,6 +1763,8 @@ impl App {
     }
 
     async fn on_sub(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
+        // Online mode submits only this wallet's own transactions; it is never a gateway for others.
+        anyhow::ensure!(self.gateway_options().0.is_some() || (from == self.name() && self.direct_active()), "this device is not a gateway");
         let _guard = match self.gateway_apply.try_lock() {
             Ok(guard) => guard,
             Err(_) => {
@@ -1775,9 +1898,11 @@ impl App {
                 payee: self.name().into(), amount: p.amount, state: ReceiptState::Included,
                 view_height: r.body.tip_height, created_ms: now_ms() }, &self.cfg.me)?)
         } else { None };
+        // In online mode the wallet's own server lookups report its transactions, not a gateway.
+        let from = if from == self.name() && self.gateway_options().0.is_none() { "the testnet servers in online mode" } else { from };
         let (state, text) = match &r.body.status {
             TxStatus::Mined { height, block_hash } => ("mined", format!("mined at height {height} in block {block_hash} (gateway-reported by {from})")),
-            TxStatus::Mempool => ("in-mempool", format!("in {from}'s mempool")),
+            TxStatus::Mempool => ("in-mempool", format!("in the mempool of {from}")),
             TxStatus::Rejected { reason } => ("gateway-rejected", format!("rejected by {from}: {reason}")),
             TxStatus::Included { height, block_hash } => ("included", format!("included at height {height} in block {block_hash} (gateway-reported by {from}; fewer than 10 confirmations)")),
             TxStatus::Submitted => ("submitted", format!("submitted by {from}; not yet included")),
@@ -1846,7 +1971,7 @@ impl App {
                 let _ = self.update(&p.txid, |p| {
                     p.attempts += 1;
                     p.last_send_ms = now_ms();
-                    p.note(format!("re-submitted to gateway (attempt {})", p.attempts));
+                    p.note(format!("re-submitted to {} (attempt {})", self.submit_via(), p.attempts));
                 });
                 r
             };
@@ -1885,7 +2010,7 @@ impl App {
             credit.0 += note.value;
             credit.1 = credit.1.min(note.height);
         }
-        json!({
+        let mut status = json!({
             "name": self.name(),
             "role": if me.is_some_and(|d| d.is_gateway()) { "gateway" } else { "" },
             "version": env!("CARGO_PKG_VERSION"),
@@ -1926,7 +2051,12 @@ impl App {
             "refusals": st.1.refusals.len(),
             "gateway_submissions": st.1.gateway.len(),
             "policy": self.cfg.fleet.policy,
-        })
+        });
+        // Online mode: whether this wallet currently reads the chain over the internet or the mesh.
+        status["direct"] = json!(self.direct_enabled());
+        status["sync_via"] = json!(if rpc.is_some() || self.direct_active() { "internet" } else { "mesh" });
+        status["direct_error"] = json!(self.direct_error.lock().unwrap().as_ref().map(|e| e.0.clone()));
+        status
     }
 }
 

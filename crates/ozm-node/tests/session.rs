@@ -815,3 +815,142 @@ fn leave_keeps_a_backup_and_session_exports() {
     ozm_node::join_open_with(&home, zcash_offline_core::fleet::Network::Regtest, 0, false).unwrap();
     assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), own, "a new wallet was requested");
 }
+
+/// An invite-free testnet wallet whose chain server accepts connections and never answers, so
+/// online mode stays active (no fallback) for the 15 s connection bound.
+async fn silent_server_wallet(dir: &std::path::Path) -> (RunOpts, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("https://{}", listener.local_addr().unwrap());
+    let silent = tokio::spawn(async move {
+        let mut held = vec![];
+        while let Ok((socket, _)) = listener.accept().await { held.push(socket); }
+    });
+    let home = dir.join("wallet");
+    ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 4_465_026).unwrap();
+    let mut fleet: serde_json::Value = serde_json::from_slice(&std::fs::read(home.join("fleet.json")).unwrap()).unwrap();
+    fleet["servers"] = serde_json::json!([server]);
+    std::fs::write(home.join("fleet.json"), serde_json::to_vec(&fleet).unwrap()).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap();
+    opts.discover = false;
+    opts.auto_sync_secs = 0;
+    opts.birthday = 4_465_026;
+    (opts, silent)
+}
+
+/// An invite-free identity, named by its mesh ID as `join_open` names them.
+fn open_key(role: &str) -> zcash_offline_core::DeviceSecret {
+    let mut key = zcash_offline_core::DeviceSecret::generate("", role);
+    key.name = key.public().unwrap().peer_id;
+    key
+}
+
+async fn deliver(app: &std::sync::Arc<ozm_node::App>, sender: &zcash_offline_core::DeviceSecret, body: zcash_offline_core::messages::Body) {
+    use zcash_offline_core::envelope::{self, Inner};
+    let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
+    let inner = envelope::authenticate(Inner { from: sender.name.clone(), from_key: sender.public().unwrap().ed25519, body }, sender, &recipient).unwrap();
+    app.handle_mesh_event(ozm_mesh::MeshEvent::Message { from: sender.public().unwrap().peer_id.parse().unwrap(),
+        msg_id: ozm_mesh::MsgId::random(), payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+}
+
+fn presence(key: &zcash_offline_core::DeviceSecret, gateway: bool) -> zcash_offline_core::messages::Body {
+    use zcash_offline_core::{fleet::Network, messages::{now_ms, Body, Presence, Signed}};
+    Body::Presence(Signed::sign(Presence { device: key.public_on(Network::Testnet).unwrap(), gateway, tip: 4_500_000, created_ms: now_ms(),
+        address_proof: zcash_offline_core::binding::prove_on(key, Network::Testnet).unwrap() }, key).unwrap())
+}
+
+fn events(app: &ozm_node::App) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(app.cfg.data.join("events.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+#[tokio::test]
+async fn online_mode_wallet_never_announces_or_serves_as_a_gateway() {
+    use std::time::Duration;
+    use zcash_offline_core::{envelope, messages::Body};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut opts, silent) = silent_server_wallet(dir.path()).await;
+    opts.direct = true;
+    let app = start(&opts).await.unwrap();
+    assert_eq!(app.status()["direct"], true);
+    assert_eq!(app.status()["sync_via"], "internet");
+    // A neighbour that announces its key receives the wallet's sealed presence: no gateway claim.
+    let observer = open_key("");
+    let (mesh, mut inbox) = ozm_mesh::Mesh::start(ozm_mesh::MeshConfig {
+        peer_id: observer.public().unwrap().peer_id.parse().unwrap(), ack_signer: Some(observer.signing_key().unwrap()),
+        listen: Some("127.0.0.1:0".parse().unwrap()), dial: vec![app.mesh.listen_addr().unwrap().to_string()], ..Default::default()
+    }).await.unwrap();
+    let mut key = b"ozmk".to_vec();
+    key.extend_from_slice(observer.signing_key().unwrap().verifying_key().as_bytes());
+    mesh.broadcast(key).await.unwrap();
+    let me = app.cfg.me.public_on(app.cfg.fleet.network).unwrap();
+    let observer_x = x25519_dalek::PublicKey::from(&observer.x25519_secret().unwrap()).to_bytes();
+    let announced = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let Some(ozm_mesh::MeshEvent::Message { payload, broadcast: false, .. }) = inbox.recv().await else { continue };
+            let inner = envelope::open(&payload, &observer.x25519_secret().unwrap()).unwrap();
+            if let Body::Presence(p) = envelope::authenticated_body(&inner, &me, &observer_x).unwrap() { break p; }
+        }
+    }).await.expect("no presence from the online-mode wallet");
+    assert_eq!(announced.body.device.peer_id, me.peer_id);
+    assert!(!announced.body.gateway, "an online-mode wallet must never advertise itself as a gateway");
+    mesh.shutdown();
+    // Known to the wallet, a peer still gets no chain data, clock, faucet or submission service.
+    deliver(&app, &observer, presence(&observer, false)).await;
+    let tx = vec![0; 100];
+    for body in [
+        Body::CompactReq { have_height: 0, have_hash: String::new(), checkpoints: vec![], birthday: 4_465_026 },
+        Body::SyncReq { have_height: 0, have_hash: String::new() },
+        Body::ChainClockReq,
+        Body::Sub { tx, txid: "ab".repeat(32), notify: vec![] },
+    ] {
+        deliver(&app, &observer, body).await;
+    }
+    let log = events(&app);
+    let refused = log.iter().filter(|e| e["event"] == "error" && e["detail"]["from"] == observer.public().unwrap().peer_id).count();
+    assert_eq!(refused, 4, "{log:#?}");
+    assert!(!log.iter().any(|e| e["event"] == "sync-served" || e["event"] == "gateway-result"
+        || (e["event"] == "mesh-send" && e["detail"]["kind"] != "presence")), "{log:#?}");
+    assert_eq!(app.status()["gateway_submissions"], 0);
+    assert_eq!(app.status()["direct"], true);
+    app.stop().await;
+    silent.abort();
+}
+
+#[tokio::test]
+async fn online_mode_switch_persists_and_moves_sync_between_servers_and_mesh() {
+    use std::time::Duration;
+    use zcash_offline_core::messages::Body;
+    let dir = tempfile::tempdir().unwrap();
+    let (opts, silent) = silent_server_wallet(dir.path()).await;
+    let syncq = |app: &ozm_node::App| events(app).iter().filter(|e| e["event"] == "mesh-send" && e["detail"]["kind"] == "syncq").count();
+    let app = start(&opts).await.unwrap();
+    assert_eq!(app.status()["sync_via"], "mesh");
+    let gateway = open_key("gateway");
+    deliver(&app, &gateway, presence(&gateway, true)).await;
+    assert_eq!(syncq(&app), 1, "a mesh wallet asks the gateway it hears for compact blocks");
+    app.set_direct(true).unwrap();
+    assert_eq!(app.status()["direct"], true);
+    assert_eq!(app.status()["sync_via"], "internet");
+    // The gateway's next tip is ignored instead of starting a second, interleaved mesh sync.
+    deliver(&app, &gateway, Body::Tip { height: 4_500_001, hash: "cd".repeat(32) }).await;
+    assert!(app.request_mesh_sync(true).await.is_err());
+    assert_eq!(syncq(&app), 1);
+    app.stop().await;
+    let restarted = start(&opts).await.unwrap();
+    assert_eq!(restarted.status()["direct"], true, "online mode survives a restart");
+    assert_eq!(restarted.status()["sync_via"], "internet");
+    deliver(&restarted, &gateway, presence(&gateway, true)).await;
+    let before = syncq(&restarted);
+    // Switching off resumes mesh sync through the pinned gateway at once.
+    restarted.set_direct(false).unwrap();
+    assert_eq!(restarted.status()["sync_via"], "mesh");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while syncq(&restarted) == before { tokio::time::sleep(Duration::from_millis(20)).await; }
+    }).await.expect("no mesh sync after switching online mode off");
+    restarted.stop().await;
+    let off = start(&opts).await.unwrap();
+    assert_eq!(off.status()["direct"], false);
+    assert!(off.set_direct(true).is_ok());
+    off.stop().await;
+    silent.abort();
+}

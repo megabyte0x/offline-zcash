@@ -1,0 +1,256 @@
+{
+ "qml": "logos/zcash_offline_ui/qml/Main.qml",
+ "size": [
+  1000,
+  1000
+ ],
+ "replies": {
+  "status": [
+   {
+    "joined": true,
+    "running": true,
+    "network": "testnet",
+    "name": "6705144da77e073f",
+    "role": "",
+    "version": "0.7.7",
+    "peer_id": "6705144da77e073f",
+    "address": "utest1examplexampleexample",
+    "online": false,
+    "direct": false,
+    "sync_via": "mesh",
+    "direct_error": null,
+    "syncing": false,
+    "chain_tip": 4554660,
+    "ready": true,
+    "preparing": false,
+    "pending_checks": 0,
+    "chain_sources": [
+     "https://testnet.zec.rocks:443"
+    ],
+    "single_source": true,
+    "selected_gateway": {
+     "name": "G",
+     "peer_id": "96b2c56d49e403a7",
+     "hops": 1,
+     "tip": 4554660
+    },
+    "wallet": {
+     "tip": 4554660,
+     "notes": 2,
+     "spendable": 12500000,
+     "locked": 0,
+     "pending_incoming": 0
+    },
+    "mesh": {
+     "discovered": 2,
+     "stored": 3,
+     "packets_relayed": 0,
+     "frames_sent": 10,
+     "frames_received": 40
+    },
+    "neighbor_links": []
+   },
+   {
+    "joined": true,
+    "running": true,
+    "network": "testnet",
+    "name": "6705144da77e073f",
+    "role": "",
+    "version": "0.7.7",
+    "peer_id": "6705144da77e073f",
+    "address": "utest1examplexampleexample",
+    "online": false,
+    "direct": true,
+    "sync_via": "internet",
+    "direct_error": null,
+    "syncing": false,
+    "chain_tip": 4554660,
+    "ready": true,
+    "preparing": false,
+    "pending_checks": 0,
+    "chain_sources": [
+     "https://testnet.zec.rocks:443"
+    ],
+    "single_source": true,
+    "selected_gateway": {
+     "name": "G",
+     "peer_id": "96b2c56d49e403a7",
+     "hops": 1,
+     "tip": 4554660
+    },
+    "wallet": {
+     "tip": 4554660,
+     "notes": 2,
+     "spendable": 12500000,
+     "locked": 0,
+     "pending_incoming": 0
+    },
+    "mesh": {
+     "discovered": 2,
+     "stored": 3,
+     "packets_relayed": 0,
+     "frames_sent": 10,
+     "frames_received": 40
+    },
+    "neighbor_links": []
+   },
+   {
+    "joined": true,
+    "running": true,
+    "network": "testnet",
+    "name": "6705144da77e073f",
+    "role": "",
+    "version": "0.7.7",
+    "peer_id": "6705144da77e073f",
+    "address": "utest1examplexampleexample",
+    "online": false,
+    "direct": true,
+    "sync_via": "internet",
+    "direct_error": null,
+    "syncing": false,
+    "chain_tip": 4554660,
+    "ready": true,
+    "preparing": false,
+    "pending_checks": 0,
+    "chain_sources": [
+     "https://testnet.zec.rocks:443"
+    ],
+    "single_source": true,
+    "selected_gateway": {
+     "name": "G",
+     "peer_id": "96b2c56d49e403a7",
+     "hops": 1,
+     "tip": 4554660
+    },
+    "wallet": {
+     "tip": 4554660,
+     "notes": 2,
+     "spendable": 12500000,
+     "locked": 0,
+     "pending_incoming": 0
+    },
+    "mesh": {
+     "discovered": 2,
+     "stored": 3,
+     "packets_relayed": 0,
+     "frames_sent": 10,
+     "frames_received": 40
+    },
+    "neighbor_links": []
+   },
+   {
+    "joined": true,
+    "running": true,
+    "network": "testnet",
+    "name": "6705144da77e073f",
+    "role": "",
+    "version": "0.7.7",
+    "peer_id": "6705144da77e073f",
+    "address": "utest1examplexampleexample",
+    "online": false,
+    "direct": true,
+    "sync_via": "mesh",
+    "direct_error": "no testnet lightwallet server reachable: https://testnet.zec.rocks:443: did not answer within 15 s",
+    "syncing": false,
+    "chain_tip": 4554660,
+    "ready": true,
+    "preparing": false,
+    "pending_checks": 0,
+    "chain_sources": [
+     "https://testnet.zec.rocks:443"
+    ],
+    "single_source": true,
+    "selected_gateway": {
+     "name": "G",
+     "peer_id": "96b2c56d49e403a7",
+     "hops": 1,
+     "tip": 4554660
+    },
+    "wallet": {
+     "tip": 4554660,
+     "notes": 2,
+     "spendable": 12500000,
+     "locked": 0,
+     "pending_incoming": 0
+    },
+    "mesh": {
+     "discovered": 2,
+     "stored": 3,
+     "packets_relayed": 0,
+     "frames_sent": 10,
+     "frames_received": 40
+    },
+    "neighbor_links": []
+   }
+  ],
+  "list_payments": {
+   "payments": [],
+   "refusals": [],
+   "gateway": []
+  },
+  "start": {
+   "joined": true,
+   "running": true,
+   "network": "testnet",
+   "name": "6705144da77e073f",
+   "role": "",
+   "version": "0.7.7",
+   "peer_id": "6705144da77e073f",
+   "address": "utest1examplexampleexample",
+   "online": false,
+   "direct": true,
+   "sync_via": "internet",
+   "direct_error": null,
+   "syncing": false,
+   "chain_tip": 4554660,
+   "ready": true,
+   "preparing": false,
+   "pending_checks": 0,
+   "chain_sources": [
+    "https://testnet.zec.rocks:443"
+   ],
+   "single_source": true,
+   "selected_gateway": {
+    "name": "G",
+    "peer_id": "96b2c56d49e403a7",
+    "hops": 1,
+    "tip": 4554660
+   },
+   "wallet": {
+    "tip": 4554660,
+    "notes": 2,
+    "spendable": 12500000,
+    "locked": 0,
+    "pending_incoming": 0
+   },
+   "mesh": {
+    "discovered": 2,
+    "stored": 3,
+    "packets_relayed": 0,
+    "frames_sent": 10,
+    "frames_received": 40
+   },
+   "neighbor_links": []
+  }
+ },
+ "steps": [
+  {
+   "shot": "online-mode-off"
+  },
+  {
+   "click": "onlineModeSwitch"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "shot": "online-mode-on"
+  },
+  {
+   "wait": 4500
+  },
+  {
+   "shot": "online-mode-fallback"
+  }
+ ]
+}

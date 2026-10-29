@@ -12,6 +12,7 @@ It is not security reviewed and does not support real funds.
 ### Added
 - The homepage at [offlinezcash.com](https://offlinezcash.com) (source in `site/`, deployed as a Cloudflare Worker) explains why offline payments matter, how they work and how to install Offline Zcash as a user or a gateway, with an FAQ, social preview images, a favicon and cookieless Cloudflare Web Analytics.
 - `https://offlinezcash.com/basecamp` redirects to the package catalogue, so it can be pasted into Basecamp → Settings → Package Repositories instead of the long GitHub URL. The README and install guides now show it.
+- **Online mode** for testnet wallets with internet: a switch in the wallet's Wallet card (module `start` option `direct`, `ozm-node run --direct`, `POST /api/direct`) makes the wallet sync from the public testnet lightwalletd servers and submit its own and received payments directly, tracking them to included and mined without a mesh gateway. It never becomes a gateway for others: it does not announce a gateway role, serve chain data or accept peers' submissions, so invite-free wallets cannot pin it. The header shows **online · direct**; if no server answers, the wallet shows the error and falls back to the mesh gateway, retrying every minute. The servers see the computer's IP address; only mined, scanned notes are spendable. Status adds `direct`, `sync_via` and `direct_error`.
 
 ### Changed
 - Shortened the README to the product proposition and documentation links; refreshed the guides, architecture, component status and roadmap for v0.7.7. Regenerated the three hand-drawn payment/mesh/gateway diagrams for the current testnet light-client flow. Documentation distinguishes implemented controls from mainnet plans and preserves dated test evidence.
@@ -29,6 +30,7 @@ It is not security reviewed and does not support real funds.
 - A payment is marked delivered only when the payee acknowledges that payment's own message, not any message from the payee.
 - Notes from a received payment that expired (local scan past its expiry) no longer block a new payment from the same notes as a conflict.
 - Very large typed amounts are refused instead of wrapping to a small value.
+- A gateway that is the payee of a mesh payment now sends the payer the included receipt when its own chain check reports the payment included, as a payee does after a mesh gateway's result.
 
 ## [0.7.7] - 2026-10-29
 

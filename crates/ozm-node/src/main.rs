@@ -63,6 +63,9 @@ enum Cmd {
         /// Gateway on Regtest: mine a block after each submission and serve test funds.
         #[arg(long, env = "OZM_MINE")]
         mine: bool,
+        /// Online mode (testnet wallets): sync and submit through the public testnet servers, not a mesh gateway.
+        #[arg(long, env = "OZM_DIRECT")]
+        direct: bool,
         /// Enable Bluetooth LE scanning and advertising (Linux / BlueZ only).
         #[arg(long, env = "OZM_BLE")]
         ble: bool,
@@ -172,9 +175,9 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Join { invite, home } => join(&invite, home),
-        Cmd::Start { home, dial, rpc, network, birthday, mine, ble, api, listen, no_open } => {
+        Cmd::Start { home, dial, rpc, network, birthday, mine, direct, ble, api, listen, no_open } => {
             let home = home_dir(home)?;
-            run(RunOpts { listen, dial, rpc, network, birthday, mine, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
+            run(RunOpts { listen, dial, rpc, network, birthday, mine, direct, ble, api, open: !no_open, ..RunOpts::for_home(&home) })
             .await
         }
         Cmd::Run(o) => run(o).await,

@@ -333,11 +333,15 @@ Rectangle {
                     textColor: root.warn
                 }
                 Pill {
+                    objectName: "chainPill"
                     visible: root.st !== null
-                    text: !root.running ? "stopped" : root.st.syncing ? (root.debug ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "Syncing…")
+                    text: !root.running ? "stopped" : root.st.direct && root.st.sync_via === "internet" ? (root.st.syncing ? "online · direct · syncing…" : "online · direct")
+                          : root.st.direct && root.st.direct_error ? "online mode unavailable · gateway via mesh"
+                          : root.st.syncing ? (root.debug ? "syncing · height " + (root.st.wallet ? root.st.wallet.tip : 0) + (root.st.chain_tip ? " of " + root.st.chain_tip : "") : "Syncing…")
                           : root.st.ready ? "ready · " + (root.st.online ? "gateway / online" : "gateway via mesh") : root.st.online ? "gateway / online"
                           : root.st.selected_gateway ? "offline · gateway via mesh" : "offline · no gateway yet"
-                    textColor: !root.running ? root.mut : (root.st.online || root.st.selected_gateway) ? root.ok : root.warn
+                    textColor: !root.running ? root.mut : root.st.direct && root.st.direct_error ? root.warn
+                               : (root.st.online || root.st.direct || root.st.selected_gateway) ? root.ok : root.warn
                 }
                 Pill {
                     visible: root.running && root.debug
@@ -542,6 +546,42 @@ Rectangle {
                         Msg { text: root.st && root.st.syncing ? "Syncing in the background. Your balance may change." : root.st && root.st.sync_error ? (root.debug ? "Last sync failed: " + root.st.sync_error : "Sync interrupted. Open Debug for details.") : ""
                               failed: !!(root.st && !root.st.syncing && root.st.sync_error) }
                         Msg { text: root.st && root.st.pending_checks ? "Checking " + root.st.pending_checks + " incoming payment(s) as the wallet syncs…" : "" }
+                        // Online mode: a wallet with internet syncs and submits by itself, never as a gateway.
+                        Switch {
+                            id: onlineMode
+                            objectName: "onlineModeSwitch"
+                            visible: root.network === "testnet" && !!root.st && !root.st.online && root.st.role !== "gateway"
+                            property bool busy: false
+                            enabled: !busy
+                            text: "Online mode"
+                            checked: !!(root.st && root.st.direct)
+                            palette.windowText: root.fg
+                            palette.text: root.fg
+                            Accessible.name: "Online mode: sync and send directly over the internet"
+                            onToggled: {
+                                var on = checked
+                                busy = true; onlineModeMsg.failed = false; onlineModeMsg.text = on ? "Connecting to the testnet servers…" : "Switching back to the mesh gateway…"
+                                root.call("start", [JSON.stringify({ direct: on })], function (r) {
+                                    onlineMode.busy = false
+                                    onlineModeMsg.failed = !!r.error
+                                    onlineModeMsg.text = r.error ? "Online mode not changed: " + r.error : ""
+                                    onlineMode.checked = Qt.binding(function () { return !!(root.st && root.st.direct) })
+                                    root.refresh()
+                                }, 30000)
+                            }
+                        }
+                        Muted {
+                            visible: onlineMode.visible
+                            font.pixelSize: 12
+                            text: "Syncs and sends through public testnet servers instead of a mesh gateway. Those servers see this computer's IP address. Only mined funds are spendable."
+                        }
+                        Msg { id: onlineModeMsg; objectName: "onlineModeMessage" }
+                        Msg {
+                            objectName: "onlineModeError"
+                            visible: onlineMode.visible && !!(root.st && root.st.direct && root.st.direct_error)
+                            failed: true
+                            text: visible ? "Online mode unavailable, using the mesh gateway: " + root.st.direct_error + ". Retrying every minute." : ""
+                        }
                         Rectangle {
                             visible: root.debug
                             Layout.fillWidth: true; Layout.topMargin: 4
@@ -554,7 +594,8 @@ Rectangle {
                                 Muted { font.pixelSize: 12; text: "Chain view (gateway-reported, not independently proved)" }
                                 Text {
                                     Layout.fillWidth: true; wrapMode: Text.Wrap; color: root.fg; font.pixelSize: 13; textFormat: Text.PlainText
-                                    text: root.st && root.st.selected_gateway
+                                    text: root.st && root.st.direct && root.st.sync_via === "internet" ? "Online mode: this wallet reads the public testnet servers directly."
+                                          : root.st && root.st.selected_gateway
                                           ? "Gateway " + root.st.selected_gateway.name + " · " + root.st.selected_gateway.hops + " hops · tip " + root.st.selected_gateway.tip + " · mesh ID " + root.st.selected_gateway.peer_id
                                           : root.st && root.st.online ? "This device is the gateway (chain service)." : "Finding a gateway over the mesh…"
                                 }
@@ -569,7 +610,7 @@ Rectangle {
                             visible: text !== "" && (root.debug || !root.st.selected_gateway)
                             text: root.st ? root.st.gateway_warning || "" : ""
                         }
-                        Muted { text: (root.network === "testnet" ? "Testnet only" : "Test coins only") + " · confirmations reported by gateway, not independently verified"; font.pixelSize: 12 }
+                        Muted { text: (root.network === "testnet" ? "Testnet only" : "Test coins only") + " · confirmations reported by " + (root.st && root.st.direct && root.st.sync_via === "internet" ? "the testnet servers" : "gateway") + ", not independently verified"; font.pixelSize: 12 }
                         Btn {
                             visible: root.debug
                             secondary: true
