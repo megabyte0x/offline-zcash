@@ -45,8 +45,11 @@ Repositories**. Add this public URL, Refresh, then search `zcash` in **Manage
 Packages** and install the service and your chosen apps:
 
 ```text copy Copy Catalogue URL
-https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+https://offlinezcash.com/basecamp
 ```
+
+It redirects to `https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json`;
+the downloader follows redirects, and the full URL works too.
 
 For released `logosctl` (its own session, separate from Basecamp):
 

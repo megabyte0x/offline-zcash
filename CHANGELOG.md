@@ -11,7 +11,7 @@ It is not security reviewed and does not support real funds.
 
 ### Added
 - The homepage at [offlinezcash.com](https://offlinezcash.com) (source in `site/`, deployed as a Cloudflare Worker) explains why offline payments matter, how they work and how to install Offline Zcash as a user or a gateway, with an FAQ, social preview images, a favicon and cookieless Cloudflare Web Analytics.
-- `https://offlinezcash.com/basecamp` redirects to the package catalogue, so it can be pasted into Basecamp → Settings → Package Repositories instead of the long GitHub URL.
+- `https://offlinezcash.com/basecamp` redirects to the package catalogue, so it can be pasted into Basecamp → Settings → Package Repositories instead of the long GitHub URL. The README and install guides now show it.
 
 ### Changed
 - Shortened the README to the product proposition and documentation links; refreshed the guides, architecture, component status and roadmap for v0.7.7. Regenerated the three hand-drawn payment/mesh/gateway diagrams for the current testnet light-client flow. Documentation distinguishes implemented controls from mainnet plans and preserves dated test evidence.

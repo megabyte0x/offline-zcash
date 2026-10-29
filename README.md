@@ -4,7 +4,9 @@
 Nearby devices carry the payment over a mesh; an internet-connected gateway
 submits it to Zcash and returns status reports. Spending keys never travel with it.
 
-Runs in **Logos Basecamp on macOS and Linux**.
+Runs in **Logos Basecamp on macOS and Linux**. In Basecamp, add
+`https://offlinezcash.com/basecamp` under **Settings → Package Repositories**,
+then search `zcash` in **Manage Packages**.
 
 **Experimental v0.7.7 · test coins only · no mainnet.** Not security reviewed;
 chain state and confirmations are gateway-reported, not independently proved.

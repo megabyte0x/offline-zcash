@@ -41,8 +41,12 @@ Open **Settings → Package Repositories**, paste this URL, click **Add**, then
 **Refresh**:
 
 ```text copy Copy Catalogue URL
-https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json
+https://offlinezcash.com/basecamp
 ```
+
+This short link redirects to [`logos-repo.json`](https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json)
+in this repository; Basecamp follows the redirect, and you can paste that full URL
+instead.
 
 Open **Manage Packages**, search `zcash`, and install **Offline Zcash service**
 and the apps from the table above. No GitHub account or token is needed. This is
