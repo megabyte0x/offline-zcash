@@ -7,8 +7,8 @@ android {
         applicationId = "org.zcash.offline.test"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.7.5"
+        versionCode = 15
+        versionName = "0.7.6"
         ndk { abiFilters += "arm64-v8a" }
     }
     sourceSets["main"].java.srcDir("../generated")

@@ -9,16 +9,27 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-29
+
 ### Changed
 - The Organiser creates a gateway-only session: no device names or per-person invites. It exports one gateway invite and can join this device as the gateway; everyone else starts the wallet without an invite. `fleet_init` and `ozm-node fleet-init` still accept named devices.
 - A wallet started without an invite no longer restores an empty backed-up wallet. Only backups with notes or payment history come back; otherwise new keys scan from near the chain tip. Before, a "new" wallet after Leave session resumed an old wallet's scan, for example from NU7 at 4,465,026, and spent a long time catching up.
+
+- Workspace, four Logos packages and Android version are 0.7.6; Android version code is 15. Upgrade **Offline Zcash Service (zcash_offline_module) first**, then the apps: Basecamp 0.3.1+ stops the running service only when its own package is upgraded. No folder needs deleting or renaming.
 
 ### Added
 - **Start a new wallet…** in the wallet's Debug session card (module `start` option `new_wallet`, `ozm-node run --new-wallet`) backs up the current wallet and starts with new keys near the chain tip. Removing the Basecamp module keeps `module_data`, so this is the way to get a fresh wallet.
 - A `previewing-basecamp-qml` skill renders the Basecamp QML apps with a mock module bridge in seconds, records the module calls a click flow makes and saves screenshots, without building `.lgx` packages.
 
 ### Fixed
+- Sync and payments no longer stall with "mesh store quota exceeded" because of presence and tip notices to devices that never come back (old peers, or invite names such as Alice and Bob that never joined). Each device kept every such notice for store-and-forward, and once 512 filled its quota, new sync requests and sync replies failed silently. Presence and tips are now replaceable: the device's newer packets evict them, while held messages (payments, sync requests) are never evicted. A gateway also keeps sending a new tip to the remaining devices when one send fails. On upgrade, this device's own unmarked messages left by v0.7.5 are dropped once from its mesh store (payments, submissions and sync requests are resent by the app); other devices' held packets are kept. A stuck v0.7.5 wallet therefore resumes syncing after the upgrade without Leave session or folder changes.
+- A queued incoming payment whose retry fails (for example "unknown mesh device") retries after the next chain response instead of every second; v0.7.5 wrote about 60 such events a minute.
+- `events.jsonl` is bounded: above 8 MiB it moves to `events.1.jsonl`, replacing the previous one.
+- An invite-free start also restores a backed-up wallet whose only history is an incoming payment waiting for its chain view.
 - A queued incoming payment can finish verification after its sender disappears from discovery or the recipient restarts, including queues saved by v0.7.5. Retries recheck the stored statement signature against its original mesh sender instead of requiring live presence. This does not grant gateway authority or pending acceptance to unknown payers, and existing wallet scan starts remain unchanged.
+
+### Security
+- Device folders (`ozm`, `ozm-backup-*`, `data`, Organiser `sessions` exports) are owner-only (0700) and are tightened on start, including folders created by older releases with 0755. Key files stay 0600. Keys remain plaintext on disk and readable by any process running as the same user, including other Basecamp modules; they are also included in Time Machine backups.
 
 ## [0.7.5] - 2026-10-28
 
