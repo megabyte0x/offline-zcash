@@ -1244,26 +1244,28 @@ impl App {
     async fn on_pay(self: &Arc<Self>, from: &str, tx: Vec<u8>, statement: Signed<Statement>) -> Result<()> {
         let _guard = self.pay_lock.lock().await;
         let s = &statement.body;
-        // Duplicate (same txid): one payment; answer again with the stored receipt.
-        if let Some(p) = self.payment(&s.txid) {
-            self.event("duplicate-pay", json!({"txid": s.txid, "from": from}));
-            if let Some(r) = p.receipt.clone() {
-                self.send_to(from, Body::Rcpt(r)).await?;
-            }
-            return Ok(());
-        }
         let t = std::time::Instant::now();
-        // A durable queued payment outlives discovery. Its signature still binds the sender's
-        // mesh ID and sealing key; it grants neither a receiving address nor a gateway role.
+        // The sender may be unknown to discovery: a queued payment outlives it, and a live Pay can
+        // arrive before presence. The envelope already authenticates `from`; the statement key
+        // must derive that mesh ID. This grants neither a receiving address, pending acceptance
+        // nor a gateway role.
         let payer = self.device(from).or_else(|_| -> Result<DevicePublic> {
             let mut payer = DevicePublic { name: from.into(), role: String::new(), peer_id: from.into(),
                 ed25519: statement.signer.clone(), x25519: String::new(), address: String::new() };
             let vk = payer.verifying_key()?;
-            anyhow::ensure!(zcash_offline_core::fleet::peer_id_for(&vk) == from, "queued payment signing key does not match mesh sender");
+            anyhow::ensure!(zcash_offline_core::fleet::peer_id_for(&vk) == from, "payment signing key does not match mesh sender");
             payer.x25519 = hex::encode(vk.to_montgomery().to_bytes());
             Ok(payer)
         })?;
         statement.verify_key(&payer)?;
+        // Duplicate (same txid): one payment; answer again with the stored receipt.
+        if let Some(p) = self.payment(&s.txid) {
+            self.event("duplicate-pay", json!({"txid": s.txid, "from": from}));
+            if let Some(r) = p.receipt.clone() {
+                self.send_device(&payer, Body::Rcpt(r)).await?;
+            }
+            return Ok(());
+        }
         anyhow::ensure!(s.payee == self.name() || s.payee == self.mesh.peer_id().to_string(), "statement names another payee");
         let pending = !self.cfg.fleet.open && self.cfg.fleet.by_peer(&payer.peer_id).is_some();
         let exposure = if pending {
