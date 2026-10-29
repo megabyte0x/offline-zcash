@@ -1,8 +1,8 @@
 # AGENTS.md
 
-This repository holds research and a working proof of concept (releases v0.1.0–v0.7.6) for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what is built and what to do next; `docs/how-it-works.md` shows the flow in diagrams. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
+This repository holds research and a working proof of concept (releases v0.1.0–v0.7.7) for offline Zcash payments. A signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet broadcasts it. Start at `docs/README.md`: `docs/design.md` is the system view, `docs/components/` holds one file per component (decided, findings, open), and `docs/open-work.md` lists what is built and what to do next; `docs/how-it-works.md` shows the flow in diagrams. `archive/` keeps the original long report, research notes and reviews as deep sources; do not edit them, and when they conflict with `docs/`, `docs/` wins.
 
-## Code (v0.7.6)
+## Code (v0.7.7)
 
 - `crates/zcash-offline-core`: wallet sync, offline builder, payee checks, `ozm1` sealing, signed messages. No transport code.
 - `crates/ozm-mesh`: BitChat-style mesh (TTL flood, 512-byte frames, store-and-forward, acks) over TCP or attached BLE streams; see its README for the wire format.
