@@ -1,14 +1,13 @@
 # Zcash community prior art
 
-Research cutoff: **25 October 2026**. Sources were fetched then, not re-verified today. External implementations were inspected, **not independently run**. “Built” below distinguishes releases, operator-reported transactions and prototypes; it does not mean production-audited. Visible licences are not a dependency-licence audit. Source: full research thread.
+**Research cutoff: 25 October 2026.** External projects were inspected, not run
+or audited; licences are as observed, not a dependency audit. Reports below are
+not current-app features or new policy. See [current architecture](design.md)
+and [accepted repair decisions](components/expiry-reissue.md#proposals-and-owner-decisions-26-october).
 
-This inventory supports the [design](design.md) and [expiry/re-issue proposals](components/expiry-reissue.md); it ratifies no new policy. A builds/proves/signs; B accepts pending; C is the v1.1 nullifier-lock co-signer; D broadcasts raw bytes.
-
-**Current-app boundary (v0.7.7):** this is dated external research, not an
-implementation inventory. The app has migrated to Common 4 and uses `ozm-mesh`,
-not a BitChat fork. Open/unknown payers cannot receive pending acceptance;
-co-signers, Tor and independent chain proofs remain unbuilt. See
-[current architecture](design.md) and [accepted repair decisions](components/expiry-reissue.md#proposals-and-owner-decisions-26-october).
+A builds/proves/signs, B accepts pending risk, C is the proposed v1.1 co-signer,
+D submits raw bytes. Current v0.7.7 uses Common 4 and `ozm-mesh`; co-signers, Tor
+and independent chain proofs are unbuilt. Open/unknown payers never get pending acceptance.
 
 ## Already built or in production: borrow instead of build
 
@@ -28,7 +27,7 @@ co-signers, Tor and independent chain proofs remain unbuilt. See
 
 ## Community said no, or found a flaw
 
-“Covered” means the intended architecture addresses the class, **not verified implementation safety**.
+“Covered” refers to design, not verified implementation safety.
 
 | Objection and source | Covered or exposed here |
 |---|---|
@@ -47,13 +46,13 @@ co-signers, Tor and independent chain proofs remain unbuilt. See
 
 ## What changes for our decisions
 
-1. **Do not derive offline expiry from the NU7 120-block default.** [ZIP 218](https://zips.z.cash/zip-0218) preserves ~50 minutes relative to target height. Better operational precedents: Zkool2 **3,456** for human FROST and ZIP 318 **30–60-day buckets** for migration; neither chooses our carriage budget. [#3317](https://github.com/zcash/zcash/issues/3317) already discussed offline height input / expiry zero in 2018; zero does not fit a bounded recovery fence.
-2. **Separate four clocks:** bundle freshness, remaining tx validity, C reservation lifetime, confirmation policy. Thirty-minute acceptance has no fetched Zcash safety basis; thirty minutes ≈72 NU7 target blocks, so stale H+20 is not a margin. Keep current values explicitly provisional pending owner review. Expiry is not debt cancellation or evidence of non-inclusion.
-3. **Preparation fixes agreed expiry.** [librustzcash #2380](https://github.com/zcash/librustzcash/issues/2380) calls for “set once at prepare, honored at sign”; C/D must not silently refresh it. [#2619](https://github.com/zcash/librustzcash/issues/2619) is adjacent long-lived pre-signing work, not evidence of a shipped general delayed-broadcast wallet.
-4. **Re-anchor versus re-issue:** [ZIP 229](https://zips.z.cash/zip-0229) / [ZIP 374](https://zips.z.cash/zip-0374): compatible re-anchor keeps txid/signatures but needs proof repair; expiry/branch changes need new authorization. Preserve exact auth digest and replacement/reservation rules. [zcash #754](https://github.com/zcash/zcash/issues/754) is same-input replacement precedent, not offline prevention.
-5. **Ten confirmations is a provisional low-value demo policy.** [ZIP 315](https://zips.z.cash/zip-0315) recommends ten for untrusted TXO **spendability**, three for trusted TXOs. [Kraken](https://support.kraken.com/articles/203325283-cryptocurrency-deposit-processing-times) listed **50**, ~62 minutes at pre-NU7 spacing. Neither establishes universal merchant finality; ZIP 218 warns against mechanical rescaling without a security model.
-6. **C needs a written failure model before v1.1 safety claims.** No conflicting still-valid authorization may escape a lock across concurrency, retry, nonce persistence, crash, backup rollback, cloning, re-issue, device loss or alternate recovery paths. Honest/non-rollbackable C is required; unavailability locks funds. Signing, derivation, backups and exclusive application state are separate security reviews.
-7. **No committed post-NU7 date established.** [NU8 framework](https://forum.zcashcommunity.com/t/nu8-decision-framework/54670) and [tracker #1281](https://github.com/zcash/zips/issues/1281) provided no activation height. Recheck authenticated upgrade configuration, not a guessed NU8 deadline.
+1. **Budget offline expiry separately.** [ZIP 218](https://zips.z.cash/zip-0218)'s 120 blocks preserve ~50 minutes after target height. Zkool2 uses 3,456 for human FROST; ZIP 318 uses 30–60-day migration buckets. None chooses our carriage budget. [#3317](https://github.com/zcash/zcash/issues/3317) discussed offline height/zero expiry in 2018; zero cannot bound recovery.
+2. **Separate four clocks:** view freshness, tx validity, C's reservation lifetime and confirmation policy. No fetched source justifies thirty-minute acceptance. That is ~72 NU7 blocks, exceeding H+20; values remain provisional. Expiry does not cancel debt or prove non-inclusion.
+3. **Fix expiry at preparation.** [#2380](https://github.com/zcash/librustzcash/issues/2380): “set once at prepare, honored at sign.” C/D must not refresh silently. [#2619](https://github.com/zcash/librustzcash/issues/2619) studies long-lived pre-signing, not a shipped general offline wallet.
+4. **Distinguish re-anchor from re-issue.** [ZIP 229](https://zips.z.cash/zip-0229) / [374](https://zips.z.cash/zip-0374): compatible re-anchoring keeps txid/signatures but needs proof repair; expiry/branch changes need new authorization. Preserve auth digest and reservations. [#754](https://github.com/zcash/zcash/issues/754) is replacement precedent, not prevention.
+5. **Ten confirmations is demo policy, not finality.** [ZIP 315](https://zips.z.cash/zip-0315) recommends ten for untrusted TXO spendability, three for trusted TXOs. [Kraken](https://support.kraken.com/articles/203325283-cryptocurrency-deposit-processing-times) listed 50 (~62 minutes before NU7). ZIP 218 warns against rescaling without a security model.
+6. **Test C's failure model.** Locks must exclude conflicting valid authorizations across concurrency, retries, nonce persistence, crashes, rollback, cloning, re-issue, loss and recovery. An honest, non-rollbackable C is required; unavailability locks funds. Signing, derivation, backups and application-state reviews are separate.
+7. **Recheck upgrades.** The [NU8 framework](https://forum.zcashcommunity.com/t/nu8-decision-framework/54670) and [tracker #1281](https://github.com/zcash/zips/issues/1281) supplied no committed activation height. Use authenticated configuration, not a guessed deadline.
 
 ## Adjacent findings to reuse later
 
@@ -67,7 +66,9 @@ co-signers, Tor and independent chain proofs remain unbuilt. See
 
 ## Searches that returned no qualifying result
 
-Bounded negative findings, **not proof of nonexistence**. Searches covered public indexed forums/grants, ZIP issues/PRs, blogs and repository discussions; private/R&D Discord was not exhaustively searchable. Librustzcash Discussions was unavailable/disabled, so issues/PRs were used.
+No qualifying result in indexed forums/grants, ZIP issues/PRs, blogs and repository
+discussions. **Not proof of nonexistence:** private/R&D Discord was not exhaustive;
+librustzcash Discussions was unavailable, so issues/PRs were used.
 
 1. Deployed offline Zcash wallet with durable exclusive nullifier locks, crash/backup rollback handling and safe expired-payment replacement matching C.
 2. Production restart-safe Zcash-over-BitChat payment queue, or equivalent goTenna/Logos durability contract.

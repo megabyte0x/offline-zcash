@@ -1,12 +1,11 @@
 # v0.2.0: install it and pay offline on a shared LAN
 
-**Historical evidence, not the recommended setup.** Results and UI labels below
-describe v0.2.0. Current v0.7.7 defaults to public testnet, needs an invite only
-for the gateway, removes the fleet discovery tag and syncs automatically. Use
-the [Basecamp guide](basecamp-install.md) or [current CLI guide](install.md).
-The invited Regtest example remains a record of the original workflow.
+**Historical results: v0.2.0, 26 October 2026, containers—not real Wi-Fi.**
+The invited Regtest workflow below is not current setup. Use
+[Basecamp](basecamp-install.md) or the [CLI guide](install.md): current wallets
+default to testnet, need no invite, use untagged discovery and sync automatically.
 
-**Status:** built and passing in containers, 26 October 2026. Not yet run on real laptops or real Wi-Fi. v0.1.0 proved the payment path on a four-container line mesh ([mvp-v0.1.0.md](mvp-v0.1.0.md)). v0.2.0 makes the same code installable by testers on their own laptops.
+v0.2.0 made the [v0.1.0 line-mesh proof](mvp-v0.1.0.md) installable on laptops.
 
 ## What v0.2.0 adds
 
@@ -20,11 +19,12 @@ The invited Regtest example remains a record of the original workflow.
 | Sync over the mesh | Offline devices ask the gateway for blocks (`syncq`/`syncr`) and rebuild their wallet from them. A payee can spend what it received once the payment is mined, without its own internet |
 | Test funds over the mesh | `ozm-node fund` (or the UI button) asks a Regtest gateway to pay test notes from its own wallet (`fundq`/`fundr`) |
 
-A Logos Basecamp core module and QML UI over the same code were added on 27 October ([../logos/README.md](../logos/README.md)). Bluetooth LE radios are not in v0.2.0 (see the archived [Logos plan](../archive/docs-2026-10-27/later/logos-v0.1.0-plan.md), milestones 5–7).
+Basecamp followed on 27 October ([developer guide](../logos/README.md)); BLE was
+deferred ([original milestones](../archive/docs-2026-10-27/later/logos-v0.1.0-plan.md)).
 
 ## Running a session
 
-The organiser, on one laptop with internet:
+Organiser laptop:
 1. Starts the local chain: `ths start --no-open`.
 2. Creates the fleet: `ozm-node fleet-init --out invites --name my-session --network regtest --device D:gateway --device Alice:payer+payee --device Bob:payer+payee …`.
 3. Starts the gateway: `ozm-node join invites/D.invite.json`, then `ozm-node start --rpc http://127.0.0.1:18232 --mine`. To run another device on the same laptop, give it its own `--home`, `--listen` port and `--api` port.
@@ -41,7 +41,8 @@ A payment shows `accepted-pending` once the payee has checked it offline and sen
 
 ## Test results
 
-`bench/lan-bench.sh all` runs the tester path: `join`, then `start` on four containers on one internal Docker network, with no `--dial`, and only D reaches the chain. All 10 checks pass:
+`bench/lan-bench.sh all`: four containers on one internal Docker network, no
+`--dial`, only D reaches the chain. All 10 checks passed:
 
 | Check | Result |
 |---|---|
@@ -56,7 +57,9 @@ A payment shows `accepted-pending` once the payee has checked it offline and sen
 
 The v0.1.0 line bench (`bench/mesh-bench.sh all`, 23 checks) still passes on the same code.
 
-Bug found and fixed by this bench: when A had synced past B's view, B refused the payment with code 6 (unknown anchor), while A's own submission still got it mined. An offline payee now syncs from the gateway over the mesh and checks once more before refusing. In the passing run B was at height 178, synced, and accepted the payment in 647 ms.
+The bench exposed a stale-view refusal: B rejected A's anchor with code 6 even
+though A's submission mined. The fix synced B over the mesh and rechecked before
+refusing. Starting at height 178, B synced and accepted in 647 ms.
 
 ## Limits
 

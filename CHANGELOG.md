@@ -15,6 +15,7 @@ It is not security reviewed and does not support real funds.
 
 ### Changed
 - Shortened the README to the product proposition and documentation links; refreshed the guides, architecture, component status and roadmap for v0.7.7. Regenerated the three hand-drawn payment/mesh/gateway diagrams for the current testnet light-client flow. Documentation distinguishes implemented controls from mainnet plans and preserves dated test evidence.
+- Cut repetition and release narration across the setup guides, component docs, threat model and roadmap. Kept commands, protocol limits, sources and dated evidence; left How it works and its diagrams unchanged.
 
 ## [0.7.7] - 2026-10-29
 

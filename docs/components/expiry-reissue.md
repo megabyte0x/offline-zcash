@@ -1,22 +1,25 @@
 # Transaction expiry and re-issue (problem #3)
 
-Status: decided 26 October for a minimal build: proposals 1 (shutdown profile), 2, 3, 5–9, 11 and 12 **accepted**; 4 accepted for A's automatic re-issue only; 10 and the B-initiated `ozc1:rq:` request **deferred**; 13 rejected. Not implemented. Proposals that name C now apply to each co-signer of the [group](double-spend.md). Problems #1 (re-decided 26 October) and #2 (chain-state trust) remain settled; their expiry-related assumptions are corrected here, not silently promoted into new decisions. Next: problem #4, [gateway protocol](gateway.md).
+**v0.7.7:** configured finite expiry (default delta 72,576), persisted/retried
+unchanged bytes, and unspent-reservation unlock only after local scan passes
+inclusive expiry—not on a gateway expiry report. Unlock is not debt cancellation.
 
-**Current implementation: v0.7.7.** The builder uses configured finite expiry
-(default delta 72,576); the app persists/retries unchanged bytes and unlocks
-unspent reservations only after its locally scanned tip passes inclusive expiry.
-A gateway expiry report alone cannot unlock them. This is not debt cancellation.
-Payment families, automatic renewal, immutable co-signer fences and the
-`expired-unresolved` accounting below remain unbuilt.
+**Unbuilt design:** payment families, automatic renewal, immutable signer fences
+and `expired-unresolved` accounting. [Owner decisions, 26 October](#proposals-and-owner-decisions-26-october)
+specify the minimal build; references to C apply to every co-signer of the
+[group](double-spend.md). Problems #1 (re-decided 26 October) and #2 (chain-state
+trust) remain settled; this corrects their expiry assumptions, not their decisions.
 
 ## Decided
 
-- Existing design: A builds, proves and signs offline; D submits raw bytes without spending or viewing keys. Branch ID, expiry and fee come from fleet configuration. Never repay a stuck payment from unrelated notes ([offline-builder.md](offline-builder.md)).
-- The shutdown profile, family accounting and A-initiated repair were accepted on 26 October; exact repair-message layouts and same-txid refresh semantics remain open. The accepted policy is not a claim that renewal/family accounting has shipped. See the numbered decisions below and [open work](../open-work.md).
+- A builds, proves and signs offline; D submits bytes without spending/viewing keys. Fleet config supplies branch, expiry and fee. Never repay a stuck payment from unrelated notes ([offline-builder.md](offline-builder.md)).
+- Shutdown profile, family accounting and A-initiated repair were accepted; repair layouts and same-txid refresh semantics remain open ([open work](../open-work.md)). Next: #4, [gateway protocol](gateway.md).
 
 ## Findings
 
-Research cutoff: **25 October 2026**. All execution below used disposable funds on `ths` v0.4.1 / Zakura v1.6.0 Regtest, not mainnet. Source revisions and line citations are below. Evidence: final itemized report, boundary/reorg/PCZT logs, successful cases and sample logs. These are historical research results, not a shipped application or a fresh integration run.
+Research cutoff: **25 October 2026**. All execution used disposable Regtest funds
+on `ths` v0.4.1 / Zakura v1.6.0, not mainnet or the current app. Evidence: final
+itemized report, boundary/reorg/PCZT logs, successful cases and sample logs.
 
 ### Source revisions
 
@@ -42,27 +45,34 @@ Every measured transaction was v6, Ironwood-only, two actions, 9,166 bytes, fee 
 | Resident expiry 1,118 | Present at tip 1,117, evicted at tip 1,118; old bytes then rejected |
 | Same-input, later-expiry replacement | Rejected while original is resident (input conflict); accepted after expiry eviction, mined at 1,119 |
 
-Expiry E permits inclusion in block E. At tip E the next block is too late, so eviction at `tip >= E` is consistent with inclusive block validity. This release has **no three-block expiring-soon refusal** in the tested path: tip+1 worked. ZIP 218 names a three-block threshold; that is not a measured Zakura admission rule or a merchant safety bound.
+Block E is valid; at tip E the next block is too late, hence eviction at
+`tip >= E`. The tested path had **no three-block expiring-soon refusal**: tip+1
+worked. ZIP 218's three-block threshold is neither a measured Zakura admission
+rule nor a merchant safety bound.
 
 Sources: Z `crates/zakura-chain/src/transaction.rs` L679–699 (zero), `crates/zakura-consensus/src/transaction/check.rs` L592–667 (bounds), `crates/zakurad/src/components/mempool/storage.rs` L951–980 (eviction); B `zebra-chain/src/transaction.rs` L164–179, `zebra-consensus/src/transaction/check.rs` L547–622, `zebrad/src/components/mempool/storage.rs` L883–922 and `downloads.rs` L430–486. [ZIP 203](https://zips.z.cash/zip-0203) L34–77; [ZIP 218](https://zips.z.cash/zip-0218) L645–690.
 
-No relative-delta ceiling or accepted-transaction age TTL was found in these inspected admission/storage paths. Zebra's one-hour `eviction_memory_time` is rejection-cache retention, **not resident transaction TTL** (B `zebrad/src/components/mempool/config.rs` L21–33, L52–65). Long expiry promises neither retention nor mining. Live Zebra, real multi-day wall-clock residence, restarts, capacity eviction, congestion and other miners remain untested.
+No relative-delta ceiling or resident-age TTL was found in the inspected paths.
+Zebra's one-hour `eviction_memory_time` retains rejections, **not resident txs**
+(B `zebrad/src/components/mempool/config.rs` L21–33, L52–65). Long expiry promises
+neither retention nor mining. Live Zebra, multi-day wall-clock residence,
+restarts, capacity eviction, congestion and other miners remain untested.
 
 ### Old roots, reorgs and re-anchoring
 
 - An anchor at height **1,113** still mined at **11,488**: **10,375 blocks old**. This tests block age, not three elapsed days. No consensus recent-anchor window was found (Z `crates/zakura-state/src/service/check/anchors.rs` L124–155; B `zebra-state/src/service/check/anchors.rs` L120–160).
-- A two-block `ths reorg` removed a root at 11,490 while preserving the input note from 11,489. Submission failed with `unknown Ironwood anchor`. New witnesses/anchor/proof with **all original ordinary signatures** were accepted and mined at 11,492 with the **same txid**. Retained-FROST-signature re-anchoring was **not executed**; the synthetic-tree FROST expiry-renewal experiment below is separate. The root must cease to be a valid historical root on the selected chain; merely removing one block that contained a repeated root is insufficient.
-- Compatible v6 re-anchoring changes authorizing data and auth digest, not txid or applicable signatures. It needs a new Merkle path for **every real spent note to one common anchor**, private proving state and a new proof. If the input note itself was orphaned, no witness repairs it until the funding exists again on the selected chain.
-- An MMR proof that an anchor exists is not a spending witness. Public commitment ranges/subtrees/checkpoints could update A's witnesses over the mesh without internet on A. Position-specific queries to D reveal which commitments and originating transactions interest A.
+- A two-block `ths reorg` removed the root at 11,490 but preserved the input note from 11,489. Submission failed: `unknown Ironwood anchor`. New witnesses/anchor/proof with **all original ordinary signatures** mined at 11,492, **same txid**. Retained-FROST-signature re-anchoring was **not executed**; synthetic-tree expiry renewal below is separate. A removed root must no longer be historical on the selected chain; removing one occurrence of a repeated root is insufficient.
+- Compatible v6 re-anchoring changes auth data/digest, not txid or applicable signatures. It needs private proving state, a new proof and paths for **every real spent note to one common anchor**. Orphaned funding must first reappear on the selected chain; witnesses cannot repair it.
+- MMR anchor proofs are not spending witnesses. Public commitment ranges/subtrees/checkpoints could update A's witnesses offline over mesh; position-specific D queries reveal commitments/originating txs of interest.
 - Zebra's 1,000-block rollback window is local node policy, not consensus finality (B `zebra-chain/src/parameters/constants.rs` L20–33).
 
 Sources: C `crates/orchard/src/bundle/commitments.rs` L98–107; [ZIP 229](https://zips.z.cash/zip-0229) L382–395; [ZIP 374](https://zips.z.cash/zip-0374) L1384–1422; [ZIP 258](https://zips.z.cash/zip-0258) L172–207. Live Zebra re-anchoring and privacy-preserving mesh witness transport remain open.
 
 ### Expiry renewal is not re-anchoring
 
-- Expiry-only renewal retained **byte-identical actions and proof**, but changed expiry, txid, sighash and signatures. It is not a byte-identical transaction. Ordinary signatures were mined in the replacement test above.
-- A retained, serialized/reloaded **proved pre-IO-finalization PCZT** produced expiry-50 and expiry-60 FROST variants: same actions/proof/α, fresh FROST nonces and fresh dummy/binding signatures; both extracted and validated. This used a synthetic funding tree and **was not mined**. Real-funded FROST renewal remains a gate.
-- Fresh construction randomness changed dummy nullifiers; the real input nullifier remained. Retained construction state can keep all actions identical. Reusing one construction seed for unrelated payments accidentally reused a dummy nullifier in the experiment; seeds must be unique per family. Structured retained state is preferable to relying solely on RNG replay.
+- Expiry renewal kept **byte-identical actions/proof**, not the whole tx: expiry, txid, sighash and signatures changed. Ordinary-signature renewal mined above.
+- A serialized/reloaded **proved pre-IO-finalization PCZT** yielded expiry-50/60 FROST variants: same actions/proof/α, fresh FROST nonces and dummy/binding signatures. Both extracted/validated on a synthetic funding tree, **not mined**. Real-funded FROST renewal remains a gate.
+- Fresh randomness changed dummy nullifiers, not the real input nullifier; retained state can preserve all actions. Reusing a construction seed across unrelated payments accidentally reused a dummy nullifier. Use unique family seeds, preferably structured retained state rather than RNG replay alone.
 - On the orb's two-vCPU Xeon 2.60 GHz: proving-key setup median 401 ms (9 samples, 385–656); two-action Ironwood proof **729 ms** (9, 684–783); direct re-sign **1.254 ms** (19, 1.223–1.639). Excludes scanning, BLE, FROST interaction and phones.
 
 Source details:
@@ -78,26 +88,33 @@ Source details:
 | Anchor setter rejects existing proof/conflicting anchor, not automatic clearing | P `librustzcash/pczt/src/roles/updater/mod.rs` L109–127; explicit clearing in `roles/redactor/orchard.rs` L66–81 |
 | Flags and value balance committed separately from actions | C `crates/orchard/src/bundle/commitments.rs` L147–165 |
 
-Thus “identical actions” alone does not lock complete effects. A rolling relative expiry cap alone is not an absolute recovery fence. Neither finding establishes a production persistence or signing protocol.
+Identical actions do not fix complete effects; a rolling relative cap is not an
+absolute recovery fence. Neither establishes a production persistence/signing protocol.
 
 ### Lifetime, freshness, privacy and upgrades
 
-- Four clocks must stay separate: **bundle freshness, transaction validity, C's reservation lifetime, confirmation policy** ([prior-art.md](../prior-art.md)). The NU7 default of 120 after **target height**, normally tip+1, preserves about 50 minutes, not offline carriage. Common 2.2.0 defaults to 40 (C `crates/zcash_primitives/src/transaction/builder.rs` L54).
-- Thirty minutes is about **72 NU7 target blocks**; 20 blocks is 8m20s. H+20 against an allowed thirty-minute-old H is not a current-tip margin. The 30-minute limit has no sourced Zcash safety basis; it would still stop new acceptance during a multi-day header outage even with long-lived accepted payments.
-- The 100-block recent-anchor window is a provisional **new-payment acceptance policy**, not consensus. Applying it retroactively to accepted payments would obstruct old-root renewal. Ten confirmations is a provisional **low-value demo policy**, not universal finality: ZIP 315 recommends ten for untrusted output spendability; Kraken listed fifty ([prior-art.md](../prior-art.md)).
+- Separate **bundle freshness, tx validity, C's reservation lifetime and confirmation policy** ([prior-art.md](../prior-art.md)). NU7's default 120 after **target height** (normally tip+1) is ~50 minutes, not offline carriage. Common 2.2.0 defaults to 40 (C `crates/zcash_primitives/src/transaction/builder.rs` L54).
+- Thirty minutes ≈ **72 NU7 target blocks**; 20 blocks = 8m20s. H+20 against thirty-minute-old H gives no current-tip margin. The unsourced 30-minute limit stops new acceptance during multi-day header outages despite long-lived accepted payments.
+- The provisional 100-block window governs **new acceptance**, not consensus or existing-family renewal. Ten confirmations is provisional **low-value demo policy**, not finality: ZIP 315 recommends ten for untrusted output spendability; Kraken listed fifty ([prior-art.md](../prior-art.md)).
 - A clustered, pre-NU7 mainnet sample of **1,500 mined non-coinbase transactions** had only **4 with ≥10,368 blocks remaining at inclusion** (3 of 1,240 v6). 181 had expiry zero (2 v6). A raw-byte cross-check found 63,920 blocks remaining in one long-lived transaction. This is not construction delta, a representative population estimate or evidence about failed/unmined transactions. It supports a fingerprinting concern; uniform fleet policy does not blend into ordinary wallets. Sample evidence; [ZIP 315](https://zips.z.cash/zip-0315) L502–507, L532–535; [ZIP 317](https://zips.z.cash/zip-0317) L224–226.
 - Shutdown examples are not uplink guarantees: Internet Society Pulse records [Bangladesh, 5 days 12 hours](https://pulse.internetsociety.org/en/shutdowns/internet-suspended-in-bangladesh-18-july-2024) and [Sudan, 100 days 9 hours](https://pulse.internetsociety.org/en/shutdowns/internet-suspended-in-sudan-2-february-2024/). Neither proves every person's alternatives were unavailable throughout.
 - **No scheduled NU8-or-later activation height was found** at the research cutoff: B `zebra-chain/src/parameters/network_upgrade.rs` L62–72, L104–120 ends at NU7; `constants.rs` L98–106 sets NU7 3,543,405. This is dated evidence, not a promise that no upgrade will occur. Branch mismatch at mining is rejected (B `zebra-consensus/src/transaction/check.rs` L888–907). `with_expiry_height` only assigns a value; it enforces no activation cap (C `builder.rs` L1032–1043). Future proof compatibility is unverified.
 
 ### Family safety and unresolved expiry
 
-Same real notes exclude competing versions on **one valid chain**, not across orphaned histories. Adjacent overlap is not transitive: `{a} → {a,b} → {b}` allows first and last to coexist. Any relaxed family rule needs a nonempty nullifier intersection across **all versions**, not just neighbors; fixed canonical effects are stronger.
+Same real notes exclude versions on **one valid chain**, not orphaned histories.
+Adjacent overlap is insufficient: `{a} → {a,b} → {b}` lets first and last coexist.
+A relaxed family rule needs a nonempty intersection across **all versions**;
+fixed canonical effects are stronger.
 
-Expiry proves no future inclusion after E, **not non-inclusion before E**. Offline evidence cannot show a nullifier was never spent ([ZIP 221](https://zips.z.cash/zip-0221) L660–663). Trusted unspent reconciliation also does not cancel an accepted debt. In 2-of-2 escrow B still cannot renew without A: it preserves a debt claim, not unilateral recovery.
+Expiry proves no future inclusion after E, **not non-inclusion before E**.
+Offline evidence cannot prove a nullifier was never spent ([ZIP 221](https://zips.z.cash/zip-0221) L660–663).
+Even trusted unspent reconciliation cannot cancel debt. 2-of-2 escrow still
+needs A to renew; B has a debt claim, not unilateral recovery.
 
 ## Proposals and owner decisions (26 October)
 
-Numbering follows the owner's twelve-decision walkthrough, not the research report's grouping. Each item carries the owner's 26 October decision. Nothing below changes wire formats or claims implementation.
+Numbering follows the owner's twelve-decision walkthrough, not the research grouping.
 
 1. [Accepted: shutdown profile, 72,576 blocks] **Fleet expiry profiles.** Configurable delta = 3× declared maximum payment-to-uplink interval: courier ≤1 day → **10,368 blocks (~3 days)**; shutdown ≤7 days → **72,576 (~21 days)**. Proposed default: shutdown, only with that uplink promise. One profile per fleet epoch, not payer-selected per payment. Neither covers arbitrary shutdowns.
 2. [Accepted] **Payment family.** All versions of one invoice are one obligation, counted once; inclusion of any version settles it. Retain all bytes/statements/evidence. Require byte-identical actions or a nonempty common nullifier across every version (plus fixed payee/invoice/amount/tier); ordinary renewal preserves full canonical effects. Dedupe variants by `(txid, auth_digest)`; no self-superseding txid cycle for a same-txid authorization refresh.
@@ -127,7 +144,12 @@ Numbering follows the owner's twelve-decision walkthrough, not the research repo
 7. Future upgrade-config authority, freshness and offline distribution.
 8. FROST chosen-α/coordinator security and escrow-key derivation review; research did not close them. Use ZF's current seed-and-commitment rerandomized construction rather than copying the deprecated explicit-randomizer path; do not copy draft DKG `sk=ext` ([prior art](../prior-art.md)). Compatibility with this PCZT workflow remains a gate.
 
-**Additional required v1.1 item: C's written failure model.** State the invariant that no conflicting still-valid authorization can be released for a locked nullifier, covering backup rollback, database cloning, concurrent signing/retries, ambiguous crashes, nonce consumption, replacement authorization, device loss and every alternate recovery/spend-key path. Honest, non-rollbackable C is an assumption to enforce/test, not a property supplied by FROST. C unavailable also locks funds.
+**Required v1.1 failure model:** no conflicting still-valid authorization for a
+locked nullifier, covering rollback/cloning, concurrency/retries, ambiguous
+crashes, nonce consumption, replacements, device loss and every alternate
+recovery/spend-key path. FROST supplies neither honest non-rollbackable C nor
+availability. The [group model](double-spend.md#failure-model-gate-1-written-26-october-reasoned-not-yet-tested)
+is written; enforcement/tests remain gates.
 
 ### Ten gating tests (not completed by the research)
 

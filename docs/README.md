@@ -1,53 +1,30 @@
 # Documentation
 
-Offline Zcash carries signed, proven shielded payments over a local mesh to an
-internet-connected gateway. **Current release: v0.7.7, 29 October 2026.**
-The experiment uses public-testnet TAZ; local Regtest is the development harness.
-Mainnet is unsupported. Gateway signatures authenticate reports, not chain truth.
+**v0.7.7 · public-testnet TAZ and local Regtest · no mainnet.**
+Wallets carry shielded payments over a mesh to an internet-connected gateway.
+Chain reports trust that gateway; independent chain proofs are not built.
 
 ## Start here
 
 | Goal | Read |
 |---|---|
 | Install, pay, receive or run a gateway | [Basecamp guide](basecamp-install.md) |
-| Understand the payment flow | [How it works: three diagrams](how-it-works.md) |
+| Understand the payment flow | [How it works](how-it-works.md) |
 | Understand what must be trusted | [Privacy and threats](privacy-and-threats.md#trust-assumptions-at-v070) |
 | See what changed | [Changelog](../CHANGELOG.md) |
 | Find verified cases and remaining work | [Open work](open-work.md) |
 | Use or build the CLI | [ozm-node guide](install.md) |
-| Build the Android test shell | [Android guide](android-install.md) — no phone/radio validation yet |
+| Build the Android test shell | [Android guide](android-install.md) |
 
-## What is available now
-
-- **Basecamp on macOS and Linux:** one shared service and three apps: wallet,
-  Organiser and Gateway. Wallets create their own keys without invites; Organiser
-  exports one gateway invite. Every device pays, receives and relays.
-- **Automatic readiness:** per-device scan starts, startup/discovery/new-tip sync,
-  automatic economical note splitting, Pay during catch-up, durable incoming
-  verification and pending incoming balances. Simple wallet first; technical
-  controls under Debug.
-- **Recovery:** Leave session backs up rather than deletes. A same-network
-  invite-free restart restores a used wallet, including queued incoming payments;
-  empty backups get fresh keys. Start a new wallet explicitly keeps the old backup.
-- **Latest fixes:** v0.7.6 makes presence/tip notices replaceable so they cannot
-  exhaust the sender's mesh quota; v0.7.7 bounds slow chain work and lets mesh
-  submissions wait for a busy gateway. Upgrade the service before the apps.
-- **Distribution:** releases publish four Basecamp packages for each of
-  `darwin-arm64`, `linux-amd64` and `linux-arm64`, plus four merged catalogue
-  packages and checksums. CLI/APK downloads stop at v0.7.3; build current source
-  for later behavior. Packages remain unsigned.
-
-Funded Linux Basecamp runs exercised splitting, offline delivery, Max, restart,
-recovery and ten gateway-reported confirmations ([dated evidence](open-work.md#built)).
-The owner tested v0.5.1 on three Macs; current Mac versions need retesting.
-Physical BLE, native Android screens and independent chain proofs remain open.
+Releases ship Basecamp packages for macOS and Linux. CLI/APK downloads stop at
+v0.7.3; build current source for later behavior. Funded Linux runs have
+[dated evidence](open-work.md#built); current Mac, phone and radio tests remain open.
 
 ## Architecture and components
 
-[System design](design.md) separates the shipped testnet application from the
-mainnet target. **Built** means implemented, **Decided** means an agreed design,
-**Proposed** awaits a decision, and **Open** names unfinished work. Dated findings
-retain their original versions and test scope; a research PoC is not an app feature.
+[System design](design.md) separates the current app from the mainnet target.
+**Built** means implemented; **Decided** means agreed, not necessarily built;
+**Proposed** awaits a decision; **Open** is unfinished. Research PoCs are not app features.
 
 | Component | Owns |
 |---|---|
@@ -74,5 +51,5 @@ retain their original versions and test scope; a research PoC is not an app feat
 | [Prior art](prior-art.md) | External research at the stated 25 October cutoff |
 | [Archive](../archive/README.md) | Read-only superseded reports and plans; current docs take precedence |
 
-[Repository guidance](../AGENTS.md) holds development rules and the `ths` issue log.
-[PoCs](../poc/) hold research-only FROST and MMR experiments.
+[Repository guidance](../AGENTS.md): development rules and the `ths` issue log.
+[PoCs](../poc/): FROST and MMR experiments.

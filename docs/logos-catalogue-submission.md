@@ -1,13 +1,8 @@
 # Official Logos catalogue submission
 
-Status: **draft for the owner to submit**. On 27 October 2026,
-`gh repo fork logos-co/logos-modules-release --clone=false` failed with
-`HTTP 403: Resource not accessible by integration`. No fork or PR was created.
-The source repository is public; no download credentials are needed.
-
-Draft package/version text updated for v0.7.7 on 29 October. The upstream
-contribution-format findings retain their 27 October scope; recheck them with
-maintainers before submission. Nothing has been submitted by this refresh.
+**Draft, not submitted.** Forking failed with HTTP 403 on 27 October 2026;
+no fork or PR exists. Package versions below are v0.7.7. Contribution-format
+findings date from 27 October; confirm them with maintainers before submitting.
 
 ## PR title
 
@@ -29,12 +24,11 @@ Source: https://github.com/megabyte0x/offline-zcash
 
 All packages build with `nix build .#lgx-portable` from their directories on
 `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`. They pin module-builder
-`8f56bf8`. Metadata declares version 0.7.7. Three thin apps share **one** core
-engine; installing an app does not grant a fleet role. This is experimental
-NU7 public-testnet / local Regtest software, not a mainnet wallet; it is not security reviewed.
-Linux catalogue install/load/status is verified with released `logosctl`
-0.3.2. Funded Linux Basecamp testnet flows have dated evidence. The owner tested
-v0.5.1 on three Macs; current Mac builds and real BLE radios need verification.
+`8f56bf8`. Three apps share one engine; installing Gateway does not grant that
+role. This is unaudited testnet/Regtest software, not a mainnet wallet.
+Linux catalogue install/load/status passed with `logosctl` 0.3.2; funded Linux
+Basecamp flows have [dated evidence](https://github.com/megabyte0x/offline-zcash/blob/main/docs/open-work.md#built). Current Mac builds and
+physical BLE need verification; the Mac run used v0.5.1.
 
 Our public catalogue already publishes merged three-platform LGXs, schema-v2
 index, complete manifest/root hashes, icon sidecars and SHA-256 checksums:
@@ -43,10 +37,9 @@ index, complete manifest/root hashes, icon sidecars and SHA-256 checksums:
 - Index: https://github.com/megabyte0x/offline-zcash/releases/latest/download/index.json
 - Releases: https://github.com/megabyte0x/offline-zcash/releases/tag/v0.7.7
 
-Our packages are **unsigned**. `trustedSigners` is empty. A Merkle root checks
-content identity, not publisher identity; we do not claim the official Logos
-signature. For native publication, please build/merge/sign with the existing
-official pipeline and key; no private key is supplied or requested here.
+Packages are **unsigned** (`trustedSigners` is empty). Merkle roots check content,
+not publisher identity. For native publication, use the official build/merge/sign
+pipeline and key; no private key is supplied or requested.
 
 ## Contribution-format constraint to resolve with maintainers
 
@@ -77,11 +70,9 @@ git -C submodules/offline-zcash checkout v0.7.7
 git add .gitmodules submodules/offline-zcash
 ```
 
-**Lower-effort alternative, subject to the official catalogue's trust policy:**
-use the documented catalogue `includesUrl` mechanism to include these exact
-four packages from our identity URL. This needs no engine/build changes, but
-does **not** sign our packages with the Logos key. Add an includes document
-(or extend the existing one), not an inline package list or generated index:
+**Alternative, subject to catalogue policy:** include these packages through
+`includesUrl`. This avoids build changes but leaves them unsigned. Add an
+includes document, not an inline package list or generated index:
 
 ```json copy Copy Catalogue Include
 {

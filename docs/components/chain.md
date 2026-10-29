@@ -1,33 +1,29 @@
 # Chain: public testnet, Regtest harness, Ironwood v6 rules, fees
 
-**Current implementation: v0.7.7 / Zakura Common 4.0.0.** New desktop/CLI
-sessions default to testnet. Old fleet files without `network` still mean
-Regtest. The tables below retain dated protocol research and mainnet design;
-the proposed `regtest-no-pow` validator and independent chain proofs are unbuilt.
+**v0.7.7 / Common 4.0.0.** New desktop/CLI sessions default to testnet;
+missing `network` in old fleets means Regtest. Independent chain proofs and
+the proposed `regtest-no-pow` validator remain unbuilt.
 
 ## v0.7.0 public-testnet operation (27 October 2026)
 
-Public testnet is now the experiment target: NU7 from **4,465,026**, branch
-`0x77190AD9`, roughly 25-second blocks. Frequent reorgs are expected; ten
-confirmations are a UI policy, not finality. Regtest remains available for benches.
-Fleet `network` selects parameters and address encoding; the RPC chain name
-`test` cannot distinguish public testnet from Zakura Regtest.
+Public testnet: NU7 at **4,465,026**, branch `0x77190AD9`, ~25-second blocks.
+Reorgs are expected; ten confirmations are UI policy, not finality. Fleet
+`network` selects parameters/addresses: RPC `test` also names Zakura Regtest.
 
-The gateway is a **TLS light client**, not a full node. Defaults:
+The gateway uses TLS lightwalletd, not a full node. Defaults:
 `https://testnet.zec.rocks:443` and
 `https://zaino.testnet.unsafe.zec.rocks:443`; configure `fleet.json`'s `servers`
-or the CLI gateway's comma-separated `--rpc` list. Since v0.7.3 the Basecamp
-Gateway app shows the fleet's servers on a testnet session instead of an RPC field. The secondary returned
-gRPC `UNAVAILABLE: Received http2 header with status: 503` on 27 October.
-Use the primary when no secondary is reachable, with a single-source warning.
-Compare reachable servers' common-height hashes, compact batches, tree states
-and transaction answers; withhold disagreeing answers. Agreement is not a proof.
+or the CLI's comma-separated `--rpc` list. Basecamp displays the fleet servers.
+The secondary returned gRPC `UNAVAILABLE: Received http2 header with status: 503`
+on 27 October. One reachable source produces a warning. Reachable sources are
+compared at common-height hashes, tree states and transaction answers;
+disagreeing answers are withheld. Since v0.7.5 compact ranges come only from the
+primary; secondary checks compare batch-end roots, not ciphertexts/nullifiers
+([sync details](mesh.md#v070-compact-sync)). Agreement is not proof.
 
-**Security exception accepted for v0.7.0:** chain state, `included` (1
-confirmation) and `mined` (10) are gateway-reported. TLS authenticates the
-server, not its chain. PoW, sampled headers, MMR anchor paths and txid inclusion
-proofs (tasks 7–9) remain deferred. The older design below describes the eventual
-mainnet requirements, not checks already performed by this release.
+**v0.7.0 trust exception:** state, `included` (1 confirmation) and `mined` (10)
+are gateway-reported. TLS authenticates the server, not its chain. PoW, sampled
+headers, MMR and inclusion proofs below describe the unbuilt mainnet design.
 
 ### Dated service checks
 
@@ -44,14 +40,12 @@ v0.5.4 (`c22ca9b`), Zebra 7.0.0 (`e8db87e`), branch `77190ad9`.
 | Conflicting-nullifier fixture | Code −25, `ironwood double-spend: duplicate nullifier: Nullifier(Nullifier(0x…)), in finalized state: false` inside the contextual-validation error |
 | Malformed encoding | Code −22, `io error: failed to fill whole buffer`; empty input is gRPC INVALID_ARGUMENT `bad transaction data` |
 
-The expiry/conflict fixtures were mutations with invalid signatures. They establish
-rejection ordering and wording, **not** a successful funded double-spend test.
-Queue-full, queued-download and behind-tip errors are classified from the pinned
-Zebra/lightwalletd source and tested locally; they were not induced on the public service.
+Expiry/conflict mutations had invalid signatures: they establish rejection
+ordering/wording, not a funded double-spend. Queue-full/download/behind-tip
+classification comes from pinned source and local tests, not induced public errors.
 
-The design target is Zcash mainnet under NU7 (branch ID `0x77190AD9`, active from height 3,543,405). Development and the four-Mac demo run on a local Regtest **harness** from thus-spoke-zakura (`ths`) v0.4.1: a Zakura 1.6.0 node with every upgrade through NU7 active at height 1, the same branch ID, v6 transactions and the Ironwood pool. Nothing in the design is weakened because the harness cannot exercise it; where Regtest differs from mainnet (no proof of work, synthetic timestamps, one local miner), the gap gets an explicit test flag and mainnet vectors.
-This file holds the chain and protocol facts the other components depend on: size, expiry, branch binding, anchors, headers and fees. Mainnet uses real ZEC and needs explicit approval for every send.
-`ths` bugs and workarounds are logged in [AGENTS.md](../../AGENTS.md) ("thus-spoke-zakura issue log"). That log is the master copy and is not repeated here.
+Mainnet sends require explicit approval. `ths` bugs/workarounds are in the
+[issue log](../../AGENTS.md).
 
 ## Decided
 
@@ -59,7 +53,7 @@ This file holds the chain and protocol facts the other components depend on: siz
 |---|---|---|
 | Target chain | Zcash mainnet, NU7 rules. Every check in the design is specified for mainnet | [decided] |
 | Harness | `ths` v0.4.1 ([zcashlabs/thus-spoke-zakura](https://github.com/zcashlabs/thus-spoke-zakura)), node Zakura v1.6.0 (`ebda15e`), local Regtest. Used for development and the demo only | [decided] |
-| Regtest gaps | The harness disables proof of work (`with_disable_pow(true)`, `zakura-network/src/parameters/testnet.rs` L1424–1425 at `ebda15e`; issue log #8). The only check the design turns off on the harness is the Equihash/difficulty/timestamp check, under an explicit `regtest-no-pow` flag that is itself tested with mainnet header vectors (a real mainnet header passes, a corrupted one fails). Never infer the network from the solution length. Everything else (MMR anchor paths, txid branches, conflict notices, two-gateway agreement, bundle signatures) runs unchanged on the harness | [decided] |
+| Regtest gaps | No PoW (`with_disable_pow(true)`, `zakura-network/src/parameters/testnet.rs` L1424–1425 at `ebda15e`), synthetic timestamps, one miner. Planned `regtest-no-pow` skips only Equihash/difficulty/timestamps and needs valid/corrupted mainnet vectors. All other proof checks remain. Never infer network from solution length | [decided] |
 | Upgrades | NU7 (and everything before it) at height 1, hard-coded in `ths` (issue log #1) | [decided] |
 | Branch ID | `0x77190AD9`; on the wire the header is `06000080` and the branch bytes are `d90a1977` | [decided] |
 | Tx format | v6, Ironwood actions only, sent to ordinary unified addresses | [decided] |
@@ -74,7 +68,9 @@ This file holds the chain and protocol facts the other components depend on: siz
 | `lock_time` | Ignored on fully shielded v6. Transparent P2SH + CLTV is enforced on v6 (measured 26 Oct); CSV is not implemented. Neither stops a self-sweep (see Findings) | [decided] |
 | Mainnet | NU7 at height **3,543,405** (~5 Nov 2026, [ZIP 259](https://zips.z.cash/zip-0259)), so mainnet uses the same branch ID. Common 4 already has this height, but the app does not support mainnet. Each real-value send needs explicit approval | [decided] |
 
-Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` produced a v6 tx with only Ironwood actions: 2 actions, **9,166 bytes**, a **10,000-zat fee** (5,000 per action) and expiry about 40 blocks out (mined at height 106 with `expiryheight` 146). The same send on v0.3.0 under NU6.3 was also 9,166 bytes with a 10,000-zat fee.
+25 October, ths v0.4.1: `ths wallet send --from 1 --to 2 --amount 1` produced
+two Ironwood actions, **9,166 bytes**, **10,000 zat** fee (5,000/action), mined
+at 106 with expiry 146. v0.3.0/NU6.3 gave the same size and fee.
 
 ## Findings
 
@@ -148,17 +144,16 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 
 ### Mainnet step
 
-- The app already uses Common 4.0.0, which sets mainnet NU7 at 3,543,405. The old Common 2.2 migration prerequisite is closed; this does not enable mainnet in the application.
+- Common 4 sets mainnet NU7 at 3,543,405; the application still does not support mainnet.
 - A tx signed under NU6.3 and still unmined at activation becomes invalid.
 - Ironwood itself arrived with NU6.3: mainnet 3,428,143, testnet 4,134,000 (branch `0x37A5165B`). Testnet NU7 activated at 4,465,026 ([ZIP 258](https://zips.z.cash/zip-0258), Zebra releases). Public testnet is the v0.7.0 experiment target.
-- Mainnet still needs application network support, independent chain proofs, Tor, independently operated gateways and security/hardware gates, not just changed endpoints. These are design requirements ([gateway.md](gateway.md)), not current features. The archive's "mainnet stage" wording ([MVP v1 design, Stages](../../archive/reports/MVP%20v1%20design.md)) that deferred Tor and header validation is superseded.
+- Mainnet needs network support, chain proofs, Tor, independent gateways and security/hardware gates ([gateway](gateway.md)). This supersedes the [archive's later Tor/header stage](../../archive/reports/MVP%20v1%20design.md).
 
 ## Open
 
 - [unverified] A mainnet-like chain (NU6.3 active, NU7 not) needs a patched `ths` (issue log #1). It is needed for two tests: a tx unmined across activation dies and is re-issued, and an anchor from before the activation is proved against the pre-activation history tree.
 - [unverified] `regtest-no-pow` test vectors: a real mainnet header passes the Equihash (200,9) and difficulty check and a corrupted one fails, both with the flag off; with the flag on, a live 177-byte Regtest header is accepted and the rest of the bundle checks still run.
 - [unverified] Zakura's history-tree commitment in the mainnet NU7 activation block; Zebra 7 RPC behaviour for `getblock h 0`, `z_gettreestate` and verbose `getrawtransaction`.
-- [resolved 26 Oct] Zebra 7 accepted and mined Common 2.2.0 v6 bytes; see Stack compatibility above. This does not cover every future format or upgrade.
 - [unverified] Live Zebra expiry boundaries/mempool and old-anchor acceptance with the same bytes; Zakura results are in Findings, not open. Real multi-day wall-clock residence, restart/congestion policy and mainnet reorg risk remain untested.
 - [unverified] Upstream librustzcash (`zcash_primitives` 0.31) transactions are accepted by Zakura, and the reverse (issue log #4).
 - Accepted repair decisions, remaining research items and ten renewal/reorg/activation gates: [expiry-reissue.md](expiry-reissue.md#open). Recheck upgrade schedules at signing/renewal; no activation-crossing experiment was run.

@@ -1,41 +1,37 @@
 # Pending tier: statement, receipt, nullifier sharing, policy
 
-The pending tier lets a known payer obtain an IOU receipt before mining. **Current
-implementation: v0.7.7.** Open/unknown payers never get pending acceptance.
-Invited known payers have local admission caps: 3 outstanding payments / 1 ZEC
-per payer and 3 ZEC total per payee. The configured floor is 0.5 ZEC; the current
-verifier rejects amounts **above** it, while the future design below requires
-escrow **at or above** it. Neither policy prevents a double-spend.
+**v0.7.7:** known invited payers can obtain an IOU receipt before mining;
+open/unknown payers cannot. Admission caps are 3 outstanding payments / 1 ZEC
+per payer and 3 ZEC per payee. The verifier rejects amounts **above** the
+configured 0.5-ZEC floor; the future design requires escrow **at or above** it.
+Caps bound new admission at one honest payee, not fleet loss or reorg-restored
+debt, and do not prevent double-spends.
 
-Current signed JSON statements/receipts use the mesh Ed25519 identity and sealed
-`ozm1` envelopes. Device-keystore enrollment, the fixed-size binary formats below,
-invoice matching, shared nullifiers and escrow are **unbuilt**. Local caps bound
-new admission at one honest payee, not total fleet loss or reorg-restored debt.
-
-The remaining sections specify the 25–26 October **MVP v1 design**, not the
-current wire contract. Checks: [payee-verifier.md](payee-verifier.md); builder:
-[offline-builder.md](offline-builder.md); future co-signers: [double-spend.md](double-spend.md).
-
-Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its family, A-initiated repair and expired-unresolved policies were **accepted 26 October** (B-initiated repair requests deferred). Counter reset is `confirmed` on both networks; single-source is a flag bit in the Receipt state byte (both decided 26 October).
+Shipped statements/receipts are signed JSON using mesh Ed25519 identities and
+sealed `ozm1` envelopes. Everything below is the **25–26 October MVP v1 design**:
+device-keystore enrollment, binary formats, invoice matching, nullifier sharing
+(required for complete v1) and escrow remain unbuilt. [Problem #3](expiry-reissue.md)
+records the accepted family, A-initiated repair and expired-unresolved policies;
+B-initiated repair is deferred. Checks: [payee-verifier.md](payee-verifier.md);
+builder: [offline-builder.md](offline-builder.md); co-signers: [double-spend.md](double-spend.md).
 
 ## Decided
 
 ### Summary [decided]
 
-| Question | Decision |
-|---|---|
-| Who signs the statement | A dedicated per-device **Ed25519 payment key**, stored in the keychain as `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, enrolled in person at setup and cross-signed by the device's BitChat Ed25519 key (which BitChat binds to the Noise static key) |
-| What it covers | A 276-byte body: fleet, branch ID, payer and payee keys, txid, auth digest, invoice hash, amount, expiry, payer tip height, timestamp, sequence number, previous-statement hash, superseded txid, tier flag |
-| Receipt | A 260-byte body signed by the payee's payment key: state, reason, H and block hash at H, statement hash |
-| Nullifier sharing | Required for complete MVP v1, not built. About 104 B per payment in the original BitChat-group design, carrying txid, expiry and nullifiers only. Re-specify the carrier for `ozm-mesh`; a hit should refuse pending acceptance |
-| Sequence number | `seq` and `prev_stmt_hash` in the statement; the payee enforces only that `seq` increases per payer. No cap is based on it |
-| Initial policy | Floor 0.5 ZEC; per payer 3 payments and 1.0 ZEC outstanding; 3.0 ZEC outstanding per payee. Thirty-minute freshness is provisional, not a sourced safety bound. Counters reset at `confirmed` (10, provisional) on harness and mainnet |
-| Harness roles | Four Macs: A payer, B payee, C second payee (both offline), D gateway (online, signs bundles with its enrollment payment key). Co-signer processes for v1.1 run across the Macs ([double-spend.md](double-spend.md) open 6) |
+Device payment keys sign statement bodies (**276 B**) and receipt bodies (**260 B**);
+payees share nullifiers, not statements. The sections below define enrollment,
+bytes, admission policy and durable state. The BitChat carrier must be
+re-specified for `ozm-mesh`.
+
+Planned harness: four Macs, A payer, B and C offline payees, D online gateway
+signing bundles with its enrollment payment key. v1.1 co-signer processes run
+across them ([double-spend.md](double-spend.md), open 6).
 
 ### Keys [decided]
 
-- **Payment key:** Ed25519, one per device, generated at install, never derived from the Zcash seed. Stored `ThisDeviceOnly`, so a device restored from backup does not carry it ([Apple](https://developer.apple.com/documentation/security/ksecattraccessiblewhenunlockedthisdeviceonly): such items "do not migrate to a new device"). The restored device re-enrolls and the old key is retired. This protects against cloning, not against malware on the device.
-- **Rejected:** the BitChat Noise X25519 key (cannot sign, and a Noise transcript proves nothing to a third party); BitChat's own Ed25519 key as the signer (it silently falls back to an ephemeral key when the keychain is locked or denied, panic mode deletes it, and it signs chat: `NoiseEncryptionService.swift` L289–323, L575–578 at `04995f68`); a seed-derived key (a restored seed forks the sequence and a seed thief can sign statements); the Ironwood spend-auth signature (`rk` is rerandomized, so it identifies nobody).
+- **Payment key:** install-generated Ed25519, one per device, never seed-derived. Store as `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; [Apple](https://developer.apple.com/documentation/security/ksecattraccessiblewhenunlockedthisdeviceonly) says these items "do not migrate to a new device". Restored devices re-enroll and retire the old key. This resists cloning, not on-device malware. Enroll in person, cross-signed by BitChat's Ed25519 key, which BitChat binds to its Noise static key.
+- **Rejected signers:** Noise X25519 (cannot sign; transcripts prove nothing to third parties); BitChat Ed25519 (ephemeral fallback when keychain is locked/denied, panic deletion, chat signing: `NoiseEncryptionService.swift` L289–323, L575–578 at `04995f68`); seed-derived keys (restore forks sequences; seed thieves can sign); Ironwood spend-auth signatures (rerandomized `rk` identifies nobody).
 - Reserved, not built: `sig_alg = 0x02` for a non-exportable Secure Enclave P-256 key.
 - Hash `H(tag, x) = SHA-256(tag16 ‖ x)`; signature `Ed25519(sk, tag16 ‖ body)`; all integers little-endian. Verify strictly (dalek `verify_strict` or equivalent).
 
@@ -58,7 +54,7 @@ sig_payment (64) = Ed25519(payment_sk, tag ‖ body)
 sig_bitchat (64) = Ed25519(bitchat_signing_sk, tag ‖ body)
 ```
 
-Every peer pins the records it receives. On the harness they come from a fleet file loaded at setup; a mainnet fleet adds a fleet-admin signature (open). The gateway's record (role bit 4) carries the payment key that signs chain bundles ([gateway.md](gateway.md)).
+Peers pin received records; harness records come from the setup fleet file. Mainnet needs a fleet-admin signature (open). Gateway role bit 4 identifies its chain-bundle signing key ([gateway.md](gateway.md)).
 
 ### PaymentStatement v1 (A → B only) [decided]
 
@@ -87,11 +83,11 @@ off len field                 payee check
 stmt_hash = H("OZC_PayStmt_v1__", body)
 ```
 
-- The v6 txid commits to nullifiers, outputs, value balance, expiry and branch ID, and the anchor is auth data ([ZIP 229](https://zips.z.cash/zip-0229)), so the statement does not repeat the nullifiers; a verifier reads them from the tx bytes. `auth_digest` records exactly which bytes B checked; a re-anchored copy keeps its txid, so the payer sends a new statement.
-- The invoice is made unique by a nonce in the ZIP 321 `memo`, which check 6 compares with the decrypted memo.
-- **Re-issue** (`flags.bit0`): retain `supersedes_txid`, payer/payee, amount and invoice binding. Correction: adjacent “at least one shared nullifier” does **not** ensure family-wide exclusion (`{a} → {a,b} → {b}`). Fresh rebuilds change dummy nullifiers, but retained state can keep actions/padding identical. Accepted proposal #2 preserves canonical effects for ordinary renewal; any relaxed family rule requires a common nullifier across **all** versions. Count the obligation once, never reset exposure on renewal; any family version's inclusion settles it. **Decided 26 October, unimplemented**; exact repair wire fields and same-txid authorization refresh semantics remain open ([decisions](expiry-reissue.md)).
-- **Fee check:** `valueBalanceIronwood` of an Ironwood-only tx (v6 has no fee field) must equal the fleet fee for its action count, 10,000 zats for 2 actions. This blocks a transaction built never to be mined.
-- Original framing proposal: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB, requiring the fork's `privateMessageV2` because stock private text is capped at 255 bytes ([archived transport plan](../../archive/docs-2026-10-27/transport-bitchat.md)). That carrier is superseded by [ozm-mesh](mesh.md); its current fragmented `ozm1` payload uses JSON, not this proposed binary layout.
+- The v6 txid commits to nullifiers, outputs, value balance, expiry and branch; the anchor is auth data ([ZIP 229](https://zips.z.cash/zip-0229)). Read nullifiers from tx bytes rather than repeat them here. `auth_digest` identifies the bytes B checked; re-anchoring keeps txid but needs a new statement.
+- A nonce in the ZIP 321 `memo` makes the invoice unique; check 6 compares the decrypted memo.
+- **Re-issue** (`flags.bit0`): retain `supersedes_txid`, parties, amount and invoice binding. Adjacent overlap (`{a} → {a,b} → {b}`) does **not** ensure family-wide exclusion. Fresh rebuilds change dummy nullifiers; retained state can preserve actions/padding. Accepted proposal #2 preserves canonical effects for ordinary renewal; a relaxed rule needs a common nullifier across **all** versions. Count the obligation once without resetting exposure; any version's inclusion settles it. Repair fields and same-txid refresh semantics remain open ([decisions](expiry-reissue.md)).
+- **Fee:** Ironwood-only `valueBalanceIronwood` must equal the action-count fleet fee, 10,000 zats for 2 actions; v6 has no fee field. Refuse deliberately unmineable underpayment.
+- Original BitChat framing: `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, ~12.7 KB. Stock text's 255-byte cap required fork `privateMessageV2` ([archived transport plan](../../archive/docs-2026-10-27/transport-bitchat.md)). [ozm-mesh](mesh.md) instead fragments JSON `ozm1` payloads.
 
 ### Receipt v1 (B → A) [decided]
 
@@ -120,30 +116,30 @@ off len field
 260     end of body; +64 signature
 ```
 
-- `state = checked` renders as **"passes checks at height H; pending"**. B sends it only after the tx, the statement and the counter update are fsynced. Framing `"ozc1:rcpt:" + base64`, a BitChat `privateMessage`.
-- The receipt lets A prove later that B accepted the IOU.
-- State 6 is `expired-unresolved` [decided 26 Oct], not proof of non-inclusion or cancellation: the verified tip reaches expiry with no inclusion known; debt/reservations remain. Repair-message fields remain open. `checked (single-source)` uses bit 0x80, as recorded above; the receipt stays 260 bytes.
+- `checked` renders as **"passes checks at height H; pending"** and proves B accepted the IOU. Send only after fsyncing tx, statement and counters. Framing: BitChat `privateMessage`, `"ozc1:rcpt:" + base64`.
+- State 6 means the verified tip reached expiry with no known inclusion, not non-inclusion or cancellation; debt/reservations remain. Repair fields are open. The single-source qualifier occupies bit 0x80 without enlarging the body (decided 26 Oct).
 
 ### Nullifier sharing between payees [decided]
 
-- **Carrier:** a BitChat **group message** (`MessageType.groupMessage = 0x25`) to a fleet-payee group, ChaCha20-Poly1305 under the group key. Relays see the group ID, epoch, nonce and the outer BitChat `senderID` (`BLEService.swift` L2839–2846, corrected 26 Oct); the sender's BitChat Ed25519 key and signature are inside the ciphertext. Payees map that key to an enrolled payee through `bitchat_signing_pk`. Groups hold at most 16 members and are gossip-synced for 6 h (`GroupProtocol.swift` L350–510, `GossipSyncManager.swift` L73–94, `TransportConfig.swift` L391 at `04995f68`); iOS/macOS only.
+- **Carrier:** BitChat fleet-payee **group message** (`MessageType.groupMessage = 0x25`), ChaCha20-Poly1305 under the group key. Relays see group ID, epoch, nonce and outer `senderID` (`BLEService.swift` L2839–2846, corrected 26 Oct). Encrypted BitChat Ed25519 key/signature map to enrollment via `bitchat_signing_pk`. Groups: at most 16 members, 6 h gossip retention, iOS/macOS only (`GroupProtocol.swift` L350–510, `GossipSyncManager.swift` L73–94, `TransportConfig.swift` L391 at `04995f68`).
 - **Payload:** `"ozc1:nf:" + base64(version u8 ‖ op u8 (1 add, 2 remove) ‖ count u8 ‖ entries)`, entry = `txid 32 ‖ expiry_height u32 ‖ n u8 ‖ n × nullifier 32`. A 2-action payment is 104 B. No payer key, amount or payee address.
-- **Lifecycle:** post `add` after check 7 passes and before the receipt; re-post the open set every 4 h because gossip keeps 6 h. Transport claims have finite expiry; removing a claim at inclusion/expiry is **not** financial settlement or proof of non-inclusion. Durable family/exposure retention and renewal of the same sharer's entry are proposed (#2, #4–5); do not discard debt or old evidence when a gossip entry ages out.
-- **Acceptance rule:** any nullifier of an incoming tx that matches an entry from **another** sharer with a different txid is refused with reason 8. If at least one other fleet payee is connected, B waits **5 s** after posting before signing the receipt (Satoshi's "listen a few seconds"; Karame et al., CCS 2012).
-- **Coverage:** one partition, after propagation. It misses presentations faster than propagation plus the wait, conflicts across partitions, spends sent straight to a gateway, and payees who do not share. The cross-partition bound stays at partitions × limit.
-- **Abuse:** outsiders cannot post. An insider cannot forge a claim that matches a real transaction without having seen a valid one. A false claim only makes a payee refuse; there is no penalty and no hot-listing. Rate-limit each sharer and cap the store at 200 entries. Claims expire at `expiry_height`.
-- **Evidence on demand (after MVP v1):** on a hit, B sends `"ozc1:evq:" + txid` privately to the sharer, who replies `"ozc1:evr:" + tx bytes`. B runs checks 1–3 and 7 and recomputes the txid. A valid T1 sharing a nullifier with T2 proves two authorized spends. Partial digest preimages are not sufficient, and the sharer's statement or receipt must never be sent as evidence (it names the payer and the amount).
+- **Lifecycle:** post `add` after check 7, before receipt; re-post the open set every 4 h. Claim removal at inclusion/expiry is **not** settlement or proof of non-inclusion. Family retention and same-sharer renewal (#2, #4–5) must preserve debt/evidence beyond gossip expiry.
+- **Acceptance:** refuse a nullifier matching **another** sharer's different txid (reason 8). With another fleet payee connected, wait **5 s** after posting before signing (Satoshi's "listen a few seconds"; Karame et al., CCS 2012).
+- **Coverage:** one partition after propagation; misses faster presentations, partitioned/non-sharing payees and direct gateway spends. Cross-partition bound: partitions × limit.
+- **Abuse:** outsiders cannot post; an insider needs a valid transaction to claim its nullifiers. False claims cause refusal, never penalties or hot-listing. Rate-limit sharers; cap at 200 entries; expire claims at `expiry_height`.
+- **Evidence (after MVP v1):** privately request `"ozc1:evq:" + txid`; sharer returns `"ozc1:evr:" + tx bytes`. B runs checks 1–3 and 7 and recomputes txid. Valid T1/T2 with a shared nullifier prove two authorized spends; partial digest preimages do not. Never forward the sharer's statement/receipt: they name the payer and amount.
 - **Gateway extension:** the gateway includes its mempool's nullifiers in chain bundles, which catches a pre-broadcast race when B's bundle is fresh.
 
 ### Sequence number [decided]
 
-- `seq` and `prev_stmt_hash` are in every statement. The payee refuses `seq` at or below the last one seen from that payer (reason 12). Nothing else is enforced: the payer does not disclose its chain in v1, and no cap is based on `seq`, because a cheater can fork the chain freely (EMV's ATC works only because the card enforces it).
-- What it adds: rollback and replay detection at each payee; a completeness audit at reconciliation (ask A for statements 1…n−1); fork proofs of 2 × 340 B (two valid statements with the same `seq` or `prev_stmt_hash` and different bodies).
-- The payer persists `seq + 1` **before** releasing a signature, so a crash cannot fork the chain. A restored backup cannot fork, because the key does not migrate. Self-declared outstanding-count fields were dropped: a cheater can lie in them freely.
+- Refuse non-increasing `seq` (reason 12), except the exact resend allowed above. v1 does not disclose/enforce the whole hash chain or base caps on it: a cheater can fork it, unlike card-enforced EMV ATC.
+- Benefits: per-payee rollback/replay detection; reconciliation audit of statements 1…n−1; 2 × 340-B fork proofs (same `seq` or `prev_stmt_hash`, different signed bodies).
+- Persist `seq + 1` **before** releasing a signature. Crashes then cannot fork; restored backups lack the non-migrating key. Self-reported outstanding counts were dropped as unenforceable.
 
 ### Policy: initial defaults [decided]
 
-Initial values, **provisional** until measured and owner-approved; on the harness the ZEC is notional. Do not treat freshness, validity, reservation and confirmation clocks as interchangeable ([expiry-reissue.md](expiry-reissue.md#lifetime-freshness-privacy-and-upgrades)).
+Values are **provisional**, not mainnet safety bounds; harness ZEC is notional.
+Freshness, validity, reservation and confirmation use separate clocks ([expiry-reissue.md](expiry-reissue.md#lifetime-freshness-privacy-and-upgrades)). Named 26 October decisions below remain subject to measurement.
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -167,11 +163,14 @@ Initial values, **provisional** until measured and owner-approved; on the harnes
 | Go online if possible | Past ⌈C/2⌉ outstanding, if the gateway is reachable, wait for `submitted` before handing over goods | EMV LCOL analogue |
 | Single-source cap | While the chain view comes from one verified gateway (`checked (single-source)`, [payee-verifier.md](payee-verifier.md)), the ⌈C/2⌉ threshold is the hard cap: no further pending acceptance from that payer until a second gateway's tip agrees | One gateway cannot prove no conflict exists |
 
-Planned demo: (1) pay 0.6: refused by the floor; (2) pay 0.3 three times: accepted, a 4th refused; (3) mine to **confirmed (10)** and reset; (4) pay the same note to B then C while connected: C refuses with reason 8; (5) disconnect C: both accept, one mines, the other ends `conflicted`. The shared-nullifier steps are not implemented.
+Planned demo: 0.6 refused; three × 0.3 accepted, fourth refused; **confirmed (10)** resets counters; A pays B, then connected C refuses the same note (reason 8); disconnected B/C both accept, one mines, the other becomes `conflicted`.
 
 ### Policy: fleet formula [decided]
 
-Inputs: `L` the loss the fleet accepts per enrolled payer per detection window (what can be recovered off-chain, or the appetite); `W` the worst-case time from acceptance until a conflict is visible to payees; `P = min(N_payees, r · W)` the payees in different partitions one payer can reach within W, with r the rate of visiting new payees; `p50`, `p95` of payment amounts.
+Inputs: `L` = accepted/recoverable loss per enrolled payer per detection window;
+`W` = worst-case acceptance-to-conflict-detection time;
+`P = min(N_payees, r · W)` = reachable payees in different partitions, with r the
+new-payee visit rate; `p50`, `p95` = payment-amount percentiles.
 
 - Per payee, per payer: `V = L / P`
 - Floor: `F = min(p95, V)`
@@ -191,24 +190,32 @@ Bounds: one dishonest payer loses the fleet at most `P · V = L`; k colluding pa
 - **Chain view:** last bundle height, hash and time; recent anchors; mined nullifiers since the oldest open payment.
 - **Ordering:** write the tx, the statement, the counter update and the share-post intent in one transaction; then post the share, wait, send the receipt.
 
-The payer persists the seq counter (write-ahead), the reserved-notes → statement mapping, and its outbox. Store all of it encrypted at rest with a random database key wrapped by the platform keystore, opened fail-closed (pattern from Peers `KeystoreCrypto.kt` L12–67, Peers research); a PIN or duress wipe is not adopted without a funds-recovery policy.
+The payer persists write-ahead seq, reserved-notes → statement mapping and outbox.
+Encrypt all state with a random database key wrapped by the platform keystore;
+open fail-closed (Peers `KeystoreCrypto.kt` L12–67, Peers research). PIN/duress wipe
+needs a funds-recovery policy first.
 
 ## Findings
 
 ### What the statement proves after a conflict
 
-Evidence bundle, about 11 KB: enrollment record, statement and signature, T1 bytes, T2 bytes (public once mined), inclusion proof for T2 with headers.
+Evidence (~11 KB): enrollment, signed statement, T1 bytes, mined/public T2 bytes,
+T2 inclusion proof and headers. It **proves** K promised B `amount_zat` for invoice
+I through T1, whose nullifier N was mined in T2 ≠ T1, excluding T1. Without a
+K-signed re-issue to T2, K owes B under the fleet agreement. A K-signed T2
+statement to another payee attributes double commitment to the device, not just
+the seed.
 
-It **proves** that the holder of payment key K promised B `amount_zat` for invoice I through T1, which spends nullifiers {N…}; some N was mined in T2 ≠ T1, so T1 can never be mined. If B holds no K-signed re-issue whose txid is T2, K's holder owes B under the fleet agreement. If a second K-signed statement exists for T2 to another payee, K committed the same note twice, attributable to the device key rather than only the seed.
-
-It **does not** prove who broadcast T2 (a seed thief has the spend key but not the device key), when anything happened (`created_at` is self-asserted; the anchor gives a lower bound, expiry an upper bound), that goods changed hands, or that B was not paid another way. It is a debt claim, not proof of fraud.
+It **does not** prove T2's broadcaster (a seed thief lacks the device key), timing
+(`created_at` is asserted; anchor/expiry give lower/upper bounds), delivery of
+goods or absence of other payment. This is a debt claim, not proof of fraud.
 
 ### What the statement must not leak
 
-- It travels only inside the A→B Noise private message, never in B's forward to the gateway, nullifier shares, public messages, chain bundles or courier envelopes.
-- Fixed length, and the tx is padded to 2 actions, so size reveals nothing. Relays still see peer IDs, timing and total size (P5).
-- After a conflict the evidence goes only to whoever settles the dispute; it is a plaintext payment record (P1).
-- Sharing costs recipient privacy inside the fleet: once a tx is mined, group members can tell the sharer received it (P9 in [privacy-and-threats.md](../privacy-and-threats.md)). Removing the txid would not help, because the nullifiers link the share just as well. Acceptable only in a closed fleet.
+- Send only A→B inside Noise, never to gateways, shares, public messages, bundles or couriers.
+- Fixed-length statement and 2-action tx padding hide content size; peer IDs, timing and total size remain visible (P5).
+- Give plaintext conflict evidence only to the dispute settler (P1).
+- Shares link the receiving payee to the mined tx inside the fleet (P9, [privacy-and-threats.md](../privacy-and-threats.md)); removing txid cannot hide nullifier linkage. Closed fleets only.
 
 ### Card and regulator practice
 
@@ -246,12 +253,12 @@ Pattern: a per-transaction cap is ¼ to ⅕ of the total cap, and only an online
 ## Open
 
 1. [unverified] Ed25519 edge-case agreement between CryptoKit and dalek `verify_strict`.
-2. [decided, unimplemented] Fresh rebuild randomness changes dummy nullifiers; retained construction state can preserve them. Adjacent overlap is insufficient; family-wide exclusion/canonical effects and count-once rules were accepted 26 October ([expiry-reissue.md](expiry-reissue.md)).
+2. [decided, unimplemented] Implement the family/canonical-effects/count-once rules above ([expiry-reissue.md](expiry-reissue.md)).
 3. [unverified] BitChat group-message API, 16-member roster and 6 h gossip retention at `04995f68`; framing overhead (350–450 B estimate); whether a group message reaches 15 peers within 5 s on BLE.
 4. [finding] Pinned Zakura rejected same-input renewal while the original was resident and mined it after expiry eviction. Live Zebra and application retry remain open ([expiry-reissue.md](expiry-reissue.md#consensus-expiry-versus-mempool-policy)).
 5. [unverified] Secure Enclave monotonic counter availability; keychain behaviour when a Mac disk image is cloned.
 6. [unverified] Courier envelope size; ZIP 304 status; UPI Lite X figures (secondary sources).
-7. Policy numbers remain provisional; measure amounts, uplink intervals, partition counts and stale-view risk. Problem #3 decisions and the ten-confirmation reset are recorded, but do not make these values mainnet safety guarantees.
+7. Measure amounts, uplink intervals, partition counts and stale-view risk before treating policy values as safety bounds.
 8. Decide when evidence fetching (`ozc1:evq/evr`) ships; it is after MVP v1 by default.
 9. Tests that gate MVP v1 for this tier: the demo script above runs end to end; a statement with a wrong `auth_digest`, wrong `amount_zat`, replayed `seq` or wrong fee is refused with the right reason; a receipt is only sent after the payee's store is fsynced (kill the payee between check and receipt); with one gateway the ⌈C/2⌉ cap is hard and a second agreeing gateway lifts it.
-10. Resolved 26 Oct: `checked (single-source)` is state bit 0x80; the receipt stays 260 bytes.
+10. Resolved 26 Oct: single-source encoding is recorded in Receipt v1 above.

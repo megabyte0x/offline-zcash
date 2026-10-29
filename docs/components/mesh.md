@@ -4,15 +4,16 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 
 ## Decided (built in v0.1.0–v0.3.0)
 
-- **Own mesh crate (`ozm-mesh`), BitChat semantics.** It replaced both the BitChat fork plan and the Offline Protocol sidecar (26 October). The behaviour:
+- **`ozm-mesh`, BitChat-style routing:**
   - TTL flooding (default 7) with de-duplication by message ID;
   - 512-byte frames, to match BLE;
   - store-and-forward with an inventory sync whenever a link comes up;
   - end-to-end delivery acks, with stored copies dropped once the ack is seen;
   - a persisted store, and dialing that never gives up.
 
-  The reasons: no radio exists in orbs, the BitChat apps are Swift-only, and Offline Protocol is an AGPL Python sidecar whose custody refuses DMs. The BitChat fork plan is archived at [../../archive/docs-2026-10-27/transport-bitchat.md](../../archive/docs-2026-10-27/transport-bitchat.md).
-- **Links:** TCP between neighbours; v0.4.0 adds an Android BLE byte-stream implementation (built, no radio validation yet). LAN discovery uses UDP beacons on port 7778, sent on every interface as directed broadcast, multicast `239.255.77.77` and `255.255.255.255`. Through v0.7.2 invited devices put an 8-byte fleet tag in each beacon and auto-connected only to their own fleet, open devices and gateways; since v0.7.3 every device sends a zero tag and connects to any Offline Zcash device, because every device relays and the tag authenticated nothing. v0.7.2 peers accept zero tags, so mixed versions still connect. It works on a Wi-Fi with no internet route. Both transports share the link framing and routing.
+  This replaced the [BitChat fork plan](../../archive/docs-2026-10-27/transport-bitchat.md)
+  and Offline Protocol's AGPL Python sidecar (whose custody refuses DMs).
+- **Links:** TCP and native Android/Linux BLE streams share framing/routing; radios are unverified. LAN discovery broadcasts per interface on UDP 7778 (directed broadcast, `239.255.77.77`, `255.255.255.255`), including Wi-Fi without a default route. Since v0.7.3 the 8-byte fleet tag is zero: every device relays/connects across fleets. v0.7.2's fleet filtering accepts zero, so mixed versions connect. Tags never authenticated peers.
 - **App envelope `ozm1`:** every message authenticates its sender and intended recipient, and is sealed to the recipient's X25519 key (derived from the Ed25519 payment key) with ChaCha20-Poly1305. `pay`, `sub` and `rcpt` retain 4 KiB-multiple padding. v0.7.0 sync/control uses 512 B / 4 KiB / 16 KiB buckets (then 16 KiB multiples). Sender/recipient mesh IDs, size and timing remain visible; sync and payments are distinguishable by size.
 - **Messages:**
 
@@ -31,16 +32,12 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 
 ### v0.7.0 compact sync
 
-- New desktop/CLI sessions default to testnet; old fleet files without `network`
-  load as Regtest. The Android shell still defaults to Regtest. Testnet identities use `utest1` and a birthday
-  chosen per device automatically, seeded from GetTreeState at birthday−1 and
-  checked against the block's Ironwood commitment-tree size. Regtest uses RPC
-  tip−100, at least 1. Offline-created devices retain creation time until chain
-  contact, then conservatively interpolate creation−one day, not the contact tip.
-  v0.7.5 appends authenticated `clockq`/`clockr` variants carrying only the
-  gateway's tip height/time; creation time never leaves the wallet. Existing
-  compact batch, envelope and frame layouts are unchanged. Upgrade gateways for
-  automatic offline-created wallet bootstrap; older nodes drop the new variants.
+- Desktop/CLI defaults to testnet; legacy fleets without `network` and the
+  Android shell default to Regtest. Testnet uses `utest1` and an automatic
+  per-device birthday, seeding GetTreeState at birthday−1 and checking tree size.
+  [Birthday rules](offline-builder.md#v070-testnet-note-plan) cover online/offline
+  creation. v0.7.5 `clockq`/`clockr` carries authenticated tip height/time, never
+  creation time. Older gateways drop these variants; other wire layouts are unchanged.
 - `syncq` normally requests only the current height/hash; the gateway asks for
   the 200-hash retained history **only on predecessor mismatch**. `syncr`
   carries Ironwood nf/cmx/epk/52-byte ct, not full transactions. Consecutive empty
@@ -57,7 +54,9 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   runs preserve those 1,000-block boundaries. Checkpoint challenges fit history
   samples plus recent hashes into the existing 200-entry request; a deep match
   asks for a fresh seed using the existing initial-sync request. No schema change.
-  Reservations and first-note metadata survive reset. No unmined change is spendable.
+  With no common historical hash, restart at the wallet's birthday; an empty
+  wallet with a match starts at common hash+1. Reservations and first-note
+  metadata survive reset. No unmined change is spendable.
 - v0.7.5 online catch-up downloads 2,000-block ranges from the primary only and
   compares each locally applied batch-end root/hash with reachable secondary
   GetTreeState answers before installing it. A mismatch withholds the batch;
@@ -71,18 +70,14 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
   before transmission, including reservations taken during scanning. A crash can
   replay uncommitted batches; a durable cursor never outruns its tree/notes.
   Mesh batches remain 200 blocks and their schema/framing is unchanged.
-- Since v0.7.5 gateway tip pushes carry height/hash on every observed new tip
-  (polling every five seconds), so devices sync without a user action. This
-  intentionally prioritises readiness over v0.7.0's 15-minute coalescing budget;
-  its dated traffic measurements below do not describe v0.7.5. A device requests
-  blocks only when its view differs; mesh batches still contain at most 200
-  blocks. Payment-result transitions push immediately. A 15-minute fallback backs
-  off to an hour when unchanged; an unchanged answer is a small height/hash tip,
-  not a compact batch. Full signed presence refreshes **hourly** on stable links,
-  expires after three hours, and is immediate on link-up. A gateway role/change
-  or loss can now take up to an hour to be noticed on a stable link; missed
-  beacons can delay expiry to three hours. TCP/BLE keepalives still detect a dead
-  direct link on their transport timers. This is not cover traffic.
+- Since v0.7.5 gateways poll every five seconds and push height/hash on every
+  new tip; devices request blocks only when behind. Result transitions push
+  immediately. Fallback starts at 15 minutes, backs off to an hour if unchanged,
+  and returns only height/hash when current. Signed presence is immediate on
+  link-up, otherwise **hourly**, expiring after three hours. Stable-link gateway
+  changes/loss may take an hour to notice, or three to expire; transport timers
+  still detect direct-link loss. This is not cover traffic. Per-tip readiness
+  supersedes the old 15-minute traffic budget measured below.
 - `sync-served` / `synced` events count binary **payload bytes**; `mesh-send`
   also records sealed bytes. `status.mesh.bytes_sent/bytes_received` count full
   framed mesh-stream bytes, including packet headers, fragmentation, acks,
@@ -124,60 +119,40 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 
 ### v0.7.4 store quota during long syncs
 
-On v0.7.3 a non-gateway device catching up over the mesh stopped with "mesh store
-quota exceeded" (public testnet, birthday 4,465,026: stuck at 4,467,225 after about
-1,800 blocks). Its store held 510 of its own acks, one per received 3 KiB sync
-chunk, plus two broadcasts: 512, the per-sender cap. Acks are kept for the 24-hour
-store TTL so an offline sender can still learn of delivery, and nothing acks an
-ack, so they never left the store. Its sync requests were not the cause: they are
-removed when acked. The gateway held the same 510 acks, so it would also have
-dropped the device's next request. Since v0.7.4 a sender's new packet evicts that
-sender's oldest stored acks first, and the sending device may also evict its own
-old broadcasts. Held messages and other senders' packets are never evicted, so the
-v0.7.2 per-sender and global limits are unchanged.
+v0.7.3 stalled at 4,467,225 from birthday 4,465,026: 510 acks plus two broadcasts
+filled its 512-packet quota; the gateway held the same acks. Acks live for 24 hours
+and are not themselves acked. New packets now evict that sender's oldest acks;
+the local device may also evict its old broadcasts. Held messages and other
+senders' packets stay protected; quotas are unchanged.
 
-The same catch-up then stalled on busy testnet ranges for two more reasons. A
-200-block batch can be hundreds of 3 KiB chunks (186, 352 and 710 were seen). The
-link queue holds 128 packets, and `flood` dropped the rest; they were stored but only
-re-sent after a reconnect, so the device received exactly 128 of 186 chunks and never
-completed the batch. Since v0.7.4 a packet that does not fit an authenticated link's
-queue joins that link's pending list and is sent as the queue drains, and a device
-that dropped packets because its app queue was full sends that neighbour its
-inventory on the next 10-second sweep. A 710-chunk batch also exceeded the gateway's
-own 512-packet quota of unacknowledged messages; the gateway now waits for acks
-(`StoreFull`, up to 30 s per chunk) instead of abandoning the batch.
+Observed 200-block responses had 186, 352 and 710 × 3 KiB chunks. A 128-packet
+link queue silently stranded the rest until reconnect. Overflow now joins that
+link's pending list; application-queue drops trigger an inventory on the next
+10-second sweep. Gateway `StoreFull` waits up to 30 s per chunk for acks rather
+than abandoning responses above its own 512-packet quota.
 
 ### v0.7.5 overlapping responses and relay custody
 
-The funded Linux run on 28 October found another stall at height 4,533,025.
-Fallback requests every five seconds overlapped a 272-chunk, 832,578-byte
-response. New gateway tips changed the batch digest; interleaved responses kept
-replacing the receiver's single assembly. The gateway now serves one response
-per requester at a time, and authenticated incoming fragments postpone fallback
-requests. The same wallet passed that range without clearing any mesh store.
-Different requesters can still sync concurrently. A held-download regression
-fails without coalescing and passes with it.
+The 28 October funded Linux run stalled at 4,533,025: five-second fallback
+requests overlapped a 272-chunk / 832,578-byte response. Changing tip digests
+replaced the receiver's assembly. One response per requester plus fragment-driven
+fallback deferral fixed the range without a store reset; other requesters remain
+concurrent. A held-download regression distinguishes the fix.
 
-A relay's full sender quota could also reject fresh replies or gateway presence
-before local delivery. Local addressed messages and broadcasts now reach the
-application even if relay custody is full. The relay still refuses new custody
-and never evicts held messages to make room; application authentication, bounded
-queues and resource limits remain in force.
+Local messages/broadcasts now reach the application even when relay custody is
+full. New custody still refuses at quota; held messages are never evicted.
+Application authentication and queue limits still apply.
 
 ### v0.7.6 replaceable notices and upgrade migration
 
-Presence and tip notices use `send_replaceable`: newer packets may evict this
-device's older notices to absent peers. They no longer consume its entire
-512-packet quota and silently block sync or payments. Held payment/submission/
-sync-request messages remain protected during normal admission. Tip pushes keep
-going to other devices if one send fails.
+Presence/tips use `send_replaceable`, allowing newer local notices to evict older
+ones instead of exhausting the 512-packet quota. Payments/submissions/sync
+requests stay protected; a failed tip send does not stop others.
 
-On the first upgrade from the old store format, the device drops its own
-unmarked directed messages once; the app resends payments, submissions, results
-and sync requests. Other devices' held custody is retained. This migration does
-not clear the wallet, keys or payment book. Deferred incoming verification now
-uses the saved signed statement/mesh sender after discovery loss or restart;
-failed rechecks wait for chain progress rather than logging every second.
+First upgrade drops only this device's old unmarked directed messages once;
+the app resends payments, submissions, results and sync requests. Other custody,
+wallets, keys and payment history remain. Deferred verification uses the saved
+statement/sender after discovery loss or restart, rechecking on chain progress.
 `events.jsonl` rotates above 8 MiB into one `events.1.jsonl`.
 
 ## BLE link (Android first)
@@ -192,7 +167,7 @@ failed rechecks wait for chain progress rather than logging every second.
   - BitChat's private messages need a live Noise XX handshake with the recipient (our reading, not traced in code); our `ozm1` envelope is sealed ahead of time;
   - the BLE code is entangled with the app (iOS `BLEService.swift` alone is 7,187 lines; its link-layer split is planned upstream, not done) and bitchat-android is **GPLv3**.
 - **Licences for borrowed code:** BitChat iOS is Unlicense and Berty's BLE drivers (berty/weshnet `71f6981d`, berty/berty) are Apache-2.0/MIT, so code may be copied with attribution. bitchat-android is GPLv3: read it for patterns, copy nothing.
-- **Not compatible with BitChat users.** Our service UUID and packet format are our own. An interop mode (BitChat's UUID, header, fragments and signed announces) is possible later, about 3–5 extra person-weeks (estimate), and stock nodes would still never store our payments.
+- **Not BitChat-compatible.** Interop needs its UUID, headers, fragments and signed announces; stock nodes still would not store these payments.
 
 ### Implementation (v0.4.0, hardware gates open)
 
@@ -239,7 +214,7 @@ Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d
 
 **4. Discovery and connections.**
 
-- Every device scans and advertises at once (central and peripheral). The advertisement carries the service UUID and a 4-byte hint in service data. Through v0.7.2 the hint was a fleet filter, so devices from other fleets were skipped before connecting; since v0.7.3 it is zero and devices connect to any Offline Zcash device. The PeerId is not advertised; it is learned from Hello after connecting.
+- Devices scan and advertise simultaneously, using the UUID and zero hint above. Hello supplies the PeerId after connecting; advertisements do not carry it.
 - At most 6 BLE links per device, counting pending central and peripheral connections. Scans skip already connected device addresses and do not evict healthy links when full; a new inbound connection evicts the longest-idle link. Hello applies the existing one-link-per-PeerId rule across TCP/BLE. Transport preference for peers already reachable over LAN is not implemented (PeerIds are deliberately absent from advertisements); measure this before adding peer/address caching.
 - Both devices may connect to each other at once; the existing duplicate-link rule keeps one. Measure how often this wastes a connection slot before adding a tie-break.
 - Scan duty: continuous while the app is open, 25 % (for example 5 s on, 15 s off) when backgrounded. *Estimate*; tune against battery.
@@ -250,7 +225,7 @@ Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d
 
 - `minSdk` 29 (L2CAP and modern BLE APIs); `BLUETOOTH_SCAN` (with `neverForLocation`), `BLUETOOTH_ADVERTISE` and `BLUETOOTH_CONNECT` on Android 12+; location permission only below 12.
 - A foreground service of type `connectedDevice` holds the Rust mesh and the BLE link, so relaying continues with the screen off.
-- The first app is a test shell: join with an invite, pay, list payments, show neighbours and link kind. The payment logic is `ozm-node`'s, called through the same uniffi layer.
+- The test shell starts invite-free or joins an invite, pays, lists payments and shows neighbours/link kind through `ozm-node`'s UniFFI API.
 - A phone on Wi-Fi with no internet still uses LAN discovery, so one phone can bridge BLE neighbours to laptops and the gateway.
 
 **7. Then iOS.** Same GATT layout in Swift (CoreBluetooth), Rust core through uniffi Swift bindings. Borrow BitChat iOS's state restoration (`bluetooth-central` and `bluetooth-peripheral` background modes, restore identifiers). Known limits: in the background, scanning must name our exact UUID, the advertisement cannot change, and the UUID is only sent in Apple's overflow area. The payer is foreground-only on iOS (decided earlier); relaying in the background must be tested early with two phones.
@@ -267,16 +242,13 @@ Service UUID `b91d6e31-89f5-4a38-9761-72d1305a4f12`, stream characteristic `b91d
 | B6 | Screen off | R relays with its screen off for 15 minutes under the foreground service |
 | B7 | Capture | A BLE sniffer capture (for example nRF Sniffer) shows no plaintext amount, address or key |
 
-Rough effort (*estimate*): B1 1.5–2 weeks; Android link and app to B4 about 3 weeks; tuning and field tests 2–3 weeks. iOS adds about 3 weeks.
-
 ## Linux desktop BLE (implementation, radio gates open)
 
 `crates/ozm-ble` runs a BlueZ GATT server and connectable LE advertisement alongside
 an LE scanner and GATT client. `ozm-node start --ble` and the Basecamp module's
 `start('{"ble":true}')` opt in; TCP/LAN remains available. Startup fails clearly if
 the system bus, bluetoothd, powered adapter, GATT registration, advertising or scan
-is unavailable. With BLE off, neither BlueZ nor an adapter is required. No version
-bump or new release is implied by this implementation.
+is unavailable. With BLE off, neither BlueZ nor an adapter is required.
 
 - **Android wire compatibility:** the exact service/stream UUIDs above, BlueZ's
   automatic CCCD, write-without-response central → peripheral and notify in the

@@ -2,80 +2,62 @@
 
 ## Built (v0.7.0–v0.7.7)
 
-A gateway is a device with internet whose invite names it the fleet's gateway.
-Since v0.7.3 `gateway` is the only role: every device can pay, receive and relay,
-and invited devices trust the fleet's named gateway rather than the first one they
-hear. On public testnet the gateway is a
-**light client** using configurable TLS lightwalletd servers, not a full node or
-VPS. It serves GetBlockRange compact actions and GetTreeState birthday frontiers
-without receiving viewing keys or scanning anyone else's wallet. The gateway
-device still scans its own wallet locally. Regtest retains ths JSON-RPC.
+A gateway has internet and a fleet invite granting that role. Every device can
+pay, receive and relay; invited wallets trust their named gateway. On testnet it
+uses TLS lightwalletd as a **light client**, serving compact actions/frontiers
+without receiving viewing keys. It scans only its own wallet. Regtest uses ths
+JSON-RPC.
 
-On a Regtest session the Basecamp Gateway app (v0.7.3) accepts only the plain
-`http://` Zakura JSON-RPC URL from `ths endpoints` (usually
-`http://127.0.0.1:18232`). It refuses `https://` URLs, explaining that switching to
-testnet means leaving the session and joining a testnet invite, and refuses
-lightwalletd (`:9067`, gRPC) as not JSON-RPC. On a testnet session it hides the
-RPC field, mining toggle and ths faucet command and shows the fleet file's
-lightwalletd servers.
+The Basecamp Gateway app accepts only `http://` Zakura RPC in Regtest (normally
+`http://127.0.0.1:18232`), not HTTPS or lightwalletd's gRPC port `:9067`. Testnet
+shows the fleet's lightwalletd servers instead of RPC/mining/faucet controls.
+Changing networks requires leaving the session and joining a new invite.
 
-It verifies raw transactions, submits with SendTransaction, persists the exact
-bytes and notification recipients, and watches the server's tip. It reconciles
-GetTransaction before retrying the same bytes every three blocks. Signed result
-transitions are pushed to payer and payee; mesh storage carries them through
-disconnects. `submitted` is not acceptance or inclusion. `included` means one
-server-reported confirmation, `mined` means ten on testnet. Newer signed reports
-can downgrade tracked states, but v0.7.7 stops recurring polling once `mined`:
-a saved report is not continuous monitoring of later reorgs. Expiry and conflict reports do not independently prove
-anything or release locks; only local wallet sync beyond expiry releases unspent
-reservations. Refusal does not cancel bytes already submitted.
+It verifies transactions, persists exact bytes/notification recipients and
+submits with SendTransaction. GetTransaction reconciliation precedes unchanged
+retries every three blocks. Signed transitions reach payer/payee through mesh
+storage. `submitted` is not inclusion; `included` means one server-reported
+confirmation, `mined` ten. Reports can downgrade states, but recurring polling
+stops at `mined`: **later reorgs are not continuously monitored**. Expiry/conflict
+reports are not proofs. Only local sync beyond expiry releases unspent
+reservations; refusal cannot cancel submitted bytes.
 
-Exact error code/message pairs distinguish duplicates from queued downloads,
-full queues and a behind-tip node. Those transient cases retry, never claim
-success. Unknown errors reject conservatively. A server-reported conflicting
-Ironwood nullifier is a conflict warning, not a Merkle proof.
+Exact error code/message pairs distinguish duplicates from transient
+download/queue/tip failures. Transient failures retry; unknown errors reject.
+A reported nullifier conflict is a warning, not a Merkle proof.
 
-Reachable second servers are compared, disagreements withheld, and one-source
-operation visibly warned. The Zaino secondary returned HTTP/2 **503** on
-27 October; it is not required to proceed. Endpoint evidence is in [chain.md](chain.md).
-Testnet refuses `--mine` and gateway funding; use the public faucet instead.
+Reachable servers are compared; disagreements are withheld and one-source
+operation warned. Zaino returned **503** on 27 October ([endpoint evidence](chain.md));
+it is not required to proceed. Testnet refuses `--mine` and gateway funding.
 
-**The owner explicitly defers PoW/MMR/txid inclusion proofs (tasks 7–9).**
-TLS lightwalletd chain state and signed gateway reports are trusted in this
-release. The remaining sections specify the eventual untrusted-gateway mainnet
-design; they must not be read as implemented security guarantees.
+**PoW/MMR/inclusion proofs are deferred.** This release trusts TLS lightwalletd
+and gateway reports. The design below is not implemented security.
 
 ### v0.7.2 contained hardening
 
-New `Sub` requests preserve the schema but set `notify` to one
-`nonce:<128-bit random hex>` string, durably saved before sending and reused on
-retries. `ozm1-result:` broadcasts carry a signed nonce/result binding under the
-`ozm1-gateway-notice-v1` domain. Recipients verify the stored nonce, both signatures,
-the gateway role/pin and result sequence. Legacy name-addressed requests/results
-still work. This implements the request-nonce idea below, **not** the future
-binary `ozc1` bundle format. Plaintext txid/status/nonce is the accepted P12
-testnet leak; submitter identity, duplicate txids and timing remain correlatable.
+`Sub.notify` uses `nonce:<128-bit random hex>`, persisted before send and reused
+on retry. `ozm1-result:` broadcasts bind nonce/result under
+`ozm1-gateway-notice-v1`. Recipients check the stored nonce, both signatures,
+gateway role/pin and sequence. Legacy name-addressed messages still work. This is
+not binary `ozc1`. Plaintext txid/status/nonce is the accepted P12 testnet leak;
+origin, duplicate txids and timing remain correlatable.
 
 Admission before proofs enforces 1 request/s (burst 4), 256 held transactions per
 sender, 4,096 / 128 MiB globally and 1,024 / 32 MiB for strangers; notification
 targets and active workers are bounded. Exact held-byte retries reuse proof
-verification. A missing testnet transaction no longer inherits cached `mined`.
-Submission sends unchanged bytes concurrently to every connected configured
-server, not only the first. Strict HTTPS/WebPKI remains mandatory; no SPKI pin,
-Tor or chain proof is established by v0.7.2. Funded Linux Basecamp payment-to-mined
-was subsequently exercised with v0.7.5 ([dated evidence](../open-work.md#built)).
+verification. Missing transactions cannot inherit cached `mined`. Unchanged
+bytes go concurrently to all connected configured servers. HTTPS/WebPKI is
+mandatory; SPKI pinning, Tor and chain proofs are unbuilt. Funded v0.7.5 Linux
+Basecamp results are in [open-work](../open-work.md#built).
 
 ### v0.7.7 busy-gateway fix
 
-A hung chain check could hold the shared submission lock indefinitely; even
-healthy checks caused immediate mesh-submission refusals while holding it.
-Each gateway tick now has a 60-second deadline; DNS/TLS/info connection setup
-has 15 seconds per server. A mesh submission waits up to 90 seconds for the
-lock, then processing has its own 90-second deadline. Concurrent identical-byte
-requests join one in-flight result. Gateway-owned sends return busy while
-retaining their original bytes for retry. These bounds restore progress, not
-guaranteed delivery or chain truth. No wallet reset is needed; upgrade the
-service package first.
+A hung chain check held the submission lock indefinitely; healthy checks also
+refused submissions while locked. Deadlines are now 60 s per tick and 15 s per
+server connection (DNS/TLS/info). Submissions wait up to 90 s for the lock, then
+have 90 s to process. Identical-byte requests share one in-flight result;
+gateway-owned sends retain original bytes on busy. Upgrade the service first,
+without resetting wallets. Deadlines do not guarantee delivery.
 
 ## Decided
 
@@ -89,7 +71,7 @@ service package first.
 | Identity | Exact-byte resends idempotent; cache/delivery dedupe on **(txid, auth_digest)**, because re-anchoring keeps txid. Family obligations are proposed (#3), not D's invoice/identity data | [decided, clarified] |
 | Returns | (1) a broadcast receipt for the txid; (2) signed chain bundles (contents below) carrying the tip, anchor paths, inclusion proofs and conflict notices | [decided] |
 | Bundle contents | Tip (height, hash, full header); `authDataRoot(N+1)` (32 B) for each anchor block N; MMR path from leaf N to `hashBlockCommitments` of header N+1 for each anchor in use; recent-anchor set (height → Ironwood root) for the fleet window; inclusion proofs (header + txid Merkle branch) for every txid the payee forwarded; targeted conflict notices; signature. Every slot is present from step 1 of the build order, empty when nothing applies | [decided] |
-| Signing key | The gateway signs every bundle with its enrollment payment key, the same per-device Ed25519 scheme as payer and payee (role bit 4 in the enrollment record, [pending-tier.md](pending-tier.md)). Two conflicting signed tips from one key are portable evidence of misbehaviour | [decided] |
+| Signing key | Enrollment Ed25519 payment key, role bit 4 ([pending-tier.md](pending-tier.md)). Different signed bodies with the same key and sequence prove equivocation; different tips alone may be lag or reorg | [decided] |
 | Nullifier delivery | Targeted conflict notices by default: `nf → T′` with T′'s raw bytes (~9.2 KB) and its txid branch to a verified header, so the payee checks it like any inclusion proof. The full nullifier list for the fleet window on request, for audits and for payees that were out of range. Absence of a notice is not proof of absence | [decided] |
 | History MMR | The gateway rebuilds the full ZIP 221/258 history tree from `getblock h 0` plus `z_gettreestate` per height, persists the leaves, rebuilds after a reorg (`ths reorg` / `ths rollback` in the harness) and computes anchor paths itself, because nodes keep only MMR peaks (issue log #9) | [decided] |
 | Inclusion proofs | Txid branch from the `getblock h 1` txid list to `hashMerkleRoot` of a verified header; `authdigest` from verbose `getrawtransaction`. No authorizing-data path is sent: the v6 txid commits nullifiers, outputs, value balance and expiry ([ZIP 229](https://zips.z.cash/zip-0229)), which is all the payee needs | [decided] |
@@ -100,12 +82,15 @@ service package first.
 | Submission timing | Submit **immediately** on arrival, in parallel, over a fresh Tor circuit per tx; **no random delay or batching** (they widen the sweep window). Rebroadcast until mined or expired. A signed gateway ack shows as `submitted` for the payee, never as `included`. Owner, 26 Oct; message formats are problem #4 research | [decided] |
 | Header delivery | **Sampled proofs** (FlyClient-style over the ZIP 221 history tree), not a full contiguous header chain. Owner, 26 Oct. Research: security is heuristic under Zcash's per-block difficulty adjustment (ZIP 221 Security); proposal = checkpoint + last 100 full headers + tail-biased Fiat–Shamir samples, each with its own prefix history commitment and recomputed DAA from 113 predecessor leaves; modelled ≈1.5 / 4.5 / 6.9 MB for 1 / 7 / 21 days offline (λ40); at λ64 / 21 days: 524 draws, ≈597 full headers, 23,278 opened leaves, ≈8.55 MB, ≈261 chunks vs 5.1 / 36 / 108 MB full headers. Owner decisions 26 Oct: accepted as a **labelled heuristic** (no 2^-λ safety claims); λ = 64; 100-header full suffix; checkpoint after NU7, no cross-upgrade proofs for now; full-header fallback near hubs is allowed but not required for MVP; `regtest-no-pow` for the first harness, and the same proofs must also run on public testnet (NU7 at 4,465,026, [ZIP 259](https://zips.z.cash/zip-0259)) | [decided] |
 | Policy values (#9, decided 26 Oct, provisional for harness/testnet) | Resubmit every 3 blocks, 5 min stalled-tip fallback; retain raw bytes until verified tip passes E + 3,456; reject expiry 0 or E > H_D + 1 + 72,576. Queues: 256 variants and 1 new/s (burst 4) per sender; global 4,096 variants or 128 MiB, strangers ≤ 1,024 / 32 MiB, enrolled reserved; when full refuse new work, never evict held bytes. Tip broadcast ≤ 1 per 25 s; 8 × 32 KiB chunks in flight. #9 research | [decided] |
-| Protocol defaults | Fresh Tor circuit = per-transaction circuit isolation (unique SOCKS credentials), not NEWNYM. Reconcile/resubmit every 3 blocks with backoff; keep raw bytes until expiry plus margin; per-sender rate limits and bounded queues; conflict index over the 72,576-block fleet window. Provisional until #9 (owner, 26 Oct; research) | [decided] |
+| Circuit isolation and conflict index | Unique SOCKS credentials per transaction, not NEWNYM. Index conflicts over the 72,576-block fleet window | [decided] |
 | Placement | Gateways at hubs where people gather (markets, bus terminals, valley exits); minimal delivery, no carrier protocol yet (owner, 26 Oct) | [decided] |
 | Mempool meaning | A mempool receipt says only that D's node accepted tx1 first. Zebra 7 rejects nullifier conflicts before insertion with no fee replacement (`verified_set.rs` L153–162 at `e8db87e`), but miners that saw tx2 first, or a block with tx2, override it (race research) | [finding] |
 | Transport | Payer and payee both send the bytes to the gateway as separate BitChat private messages (26 Oct); a packet addressed to the payee stops there ([mesh.md](mesh.md)) | [decided] |
 
-Build order (a sequence, not a security downgrade; each step has gating tests in [open-work.md](../open-work.md)): (1) bundle format with every slot, bundle signature, anchor-in-window, expiry margin, txid branch and the MMR anchor path (verifier exists: 15 lines in [`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md)); (2) Equihash and difficulty checker with the pinned floor and mainnet vectors; (3) two-gateway agreement and single-source degradation. The earlier "Mainnet (v2)" row that deferred Tor and the operator approval to a later stage is superseded by the rows above.
+Build order: (1) complete bundle slots/signature, anchor window, expiry margin,
+txid branch and MMR path ([prototype](../../poc/mmr-anchor-poc/README.md));
+(2) Equihash/difficulty with pinned floor and mainnet vectors; (3) two-gateway
+agreement/single-source caps. [Gates](../open-work.md) apply to every stage.
 
 ## Protocol v1 (owner decisions 26 October; byte layouts proposed, not implemented)
 
@@ -171,7 +156,7 @@ ozc1:bun  tag "OZC_GwBun_v1____": header fields as ack, bundle_id 32, chunk_inde
 | Delay / time-shift | Releases the tx late, within expiry. With `nExpiryHeight = 0`, arbitrarily late | Finite fleet expiry; never use 0 |
 | Forge chain state | Fake tip, fake anchors or a fake "included" | The payee checks Equihash and difficulty against a pinned floor from a setup checkpoint, MMR paths for anchors, txid branches for inclusion; ≥ 2 gateways must agree on the tip. Headers still cannot prove heaviest chain ([payee-verifier.md](payee-verifier.md#chain-state-checks-no-trust-in-the-gateway-decided)) |
 | Omit a conflict | Hides that a nullifier was spent elsewhere | Not detectable from one gateway (completeness). ≥ 2 independent gateways for the same window, payee-to-payee nullifier sharing ([pending-tier.md](pending-tier.md)), loss caps |
-| Equivocate | Different tips to different payees | Signed bundles: two conflicting tips under one enrollment key are portable evidence; payees compare tips when they meet |
+| Equivocate | Different bodies signed with the same key/sequence | Payees compare signed bundles when they meet; conflicting same-sequence signatures are portable evidence |
 | First spy | Sees every tx first, with timing and its mesh origin | Fresh Tor circuit per tx (random delay and batching dropped 26 Oct: they widen the sweep window) |
 | Sees all txs | Can link fleet traffic (stale anchor, long expiry, bursts: gap G6) | Shared anchor heights; uniform fee |
 
@@ -203,11 +188,12 @@ So the payee receives the tip header plus the work since the last checkpoint sam
 - `hashBlockCommitments = BLAKE2b-256("ZcashBlockCommit", historyRoot ‖ authDataRoot(N+1) ‖ 0³²)`: Zakura `block/commitment.rs` L301–320 and `zakura-state/src/service/check.rs` L321–335 (the check uses the previous block's tree). The `ZcashAuthDatHash` tree is in `merkle.rs` L374–405. The history tree resets at each upgrade activation (`history_tree.rs` L313–321).
 - `getblockheader h false` returns 177 B on Regtest and 1,487 B on mainnet; the verbose form includes `blockcommitments` (`methods.rs` L2209–2227). Verbose `getrawtransaction` returns `authdigest` (`zakura-rpc/src/methods/types/transaction.rs` L70–73).
 - lightwalletd never fills `CompactBlock.header` (proto L28–41; `parser/block.go` L110–125) and its `GetTreeState` returns only the frontier string, not the root (`service.proto` L178–185; `frontend/service.go` L429–436). The gateway therefore needs node JSON-RPC, not only lightwalletd. [unverified: lightwalletd read in code only, not run]
-- Measured: all 131 rebuilt history roots matched header N+1's `hashBlockCommitments`; the txid Merkle root matched the header for 132/132 blocks; two real Ironwood anchors proved by MMR path. The prototype is 277 lines (payee verifier 15, gateway MMR with paths 75, leaf fetch and `authDataRoot` 54). Production estimate [unverified]: payee 100–150 lines, gateway 300–500 lines.
+- Measured: 131/131 rebuilt history roots matched header N+1's `hashBlockCommitments`; txid roots matched 132/132 headers; two Ironwood anchors proved by MMR path. Prototype: 277 lines (payee 15, gateway MMR/paths 75, leaf fetch/`authDataRoot` 54).
 
 ### Logos phase facts
 
-These are for later; the logos-co modules play no part in MVP v1 ([logos_zcash_modules.md](../../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/logos_zcash_modules.md)).
+These upstream modules are not the app's shared Basecamp engine
+([source review](../../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/logos_zcash_modules.md)).
 
 - `logos-zebrad-module` ([`a681945`](https://github.com/logos-co/logos-zebrad-module/tree/a68194507241dd03c633752480f9a8e39cbe1b79)) runs upstream Zebra **v7.0.0** in-process, plus lightwalletd v0.5.5, built by `logos-zebra-nix` (`0b5e2ac`, `nix/zebra-src.nix` L6–13). Four patches, none in consensus, chain, state or network code.
 - `grpc()` forwards every `CompactTxStreamer` path except `GetMempoolStream`, so `SendTransaction` passes (`zebrad-c/src/grpc.rs` L64–111). A relay module must be added to `callers.json`; by default only the wallet core is allowed (README L87–92).
@@ -219,13 +205,12 @@ These are for later; the logos-co modules play no part in MVP v1 ([logos_zcash_m
 
 ## Open
 
-- **Next design problem #4:** specify gateway wire protocol and signature coverage, submission ACK versus inclusion, retry/idempotency and ordinary tip lag versus competing forks. Problem #3 repair/family/config proposals remain unratified; no such protocol is implemented. Gateway duties from problem #2 stay decided ([open-work.md](../open-work.md)).
+- Complete the proposed bundle's inner layout and sampled-proof parameters. Repair/family rules were approved on 26 October but remain unimplemented ([expiry-reissue.md](expiry-reissue.md)); the outer `ozc1` layout above is proposed, not built.
 - [unverified] A phone gateway through `socat` or an SSH tunnel to `ths` lightwalletd. Test: `SendTransaction` from an iOS build over Wi-Fi.
 - [unverified] Gateway behaviour on resubmitting an already-mined or already-pooled txid (expected: a harmless error). Test both RPC paths on `ths`.
 - [unverified] Payee restarts, then the gateway appears hours later and submits (open check 6, [MVP v1 design](../../archive/reports/MVP%20v1%20design.md)).
-- Bundle wire format (field order, encoding, signature coverage) is not written down; the contents and the signing key are decided above. Write it before build-order step 1.
 - [unverified] Packet capture shows no plaintext amounts, payees or keys between the payee and the gateway (open check 5).
-- [unverified] Tor client on iOS (Arti was named in the old plan), random-delay range, and public endpoint choice. Needed for the mainnet submission path, not blocked by the harness.
+- [unverified] iOS Tor client (the old plan names Arti), endpoint choice and circuit isolation on actual sends/retries. Submission is immediate; random delay and batching were rejected.
 - [unverified] Difficulty floor pinning: how the setup checkpoint fixes the minimum `nBits` the payee accepts, and how often it is refreshed. An attacker who can mine above the floor but below mainnet difficulty could still fake a tip; the floor must track mainnet closely.
 - [unverified] Equihash (200,9) verify time on Mac and iPhone. 96 µs/header on an orb Xeon ([`poc/mmr-anchor-poc`](../../poc/mmr-anchor-poc/README.md) `eqbench`), ≈ 0.33 s per day of headers; Apple hardware not measured.
 - [unverified] Mainnet proof sizes (MMR path, txid branch); only Regtest sizes are measured.
