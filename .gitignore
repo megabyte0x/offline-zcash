@@ -1,5 +1,5 @@
 .DS_Store
-.amp/portals/*
+**/.amp/portals/*
 target/
 bench/.state/
 bench/.state-lan/
