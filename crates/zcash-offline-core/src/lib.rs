@@ -51,7 +51,7 @@ pub fn parse_zec(s: &str) -> anyhow::Result<u64> {
     anyhow::ensure!(frac.len() <= 8, "at most 8 decimal places");
     let whole: u64 = if whole.is_empty() { 0 } else { whole.parse()? };
     let frac: u64 = if frac.is_empty() { 0 } else { format!("{frac:0<8}").parse()? };
-    Ok(whole * COIN + frac)
+    whole.checked_mul(COIN).and_then(|w| w.checked_add(frac)).ok_or_else(|| anyhow::anyhow!("amount too large"))
 }
 
 #[cfg(test)]
@@ -62,6 +62,7 @@ mod tests {
         assert_eq!(parse_zec("0.25").unwrap(), 25_000_000);
         assert_eq!(parse_zec("1").unwrap(), COIN);
         assert_eq!(parse_zec(".00000001").unwrap(), 1);
+        assert!(parse_zec("184467440738").is_err(), "must not wrap to 0.90448384");
         assert!(parse_zec("0.000000001").is_err());
         assert_eq!(fmt_zec(123_456_789), "1.23456789");
     }

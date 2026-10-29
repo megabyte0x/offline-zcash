@@ -377,7 +377,9 @@ impl Node {
     }
 
     fn handle_packet(&self, st: &mut State, from: PeerId, p: Packet) {
-        if p.created_ms > now_ms().saturating_add(persist::CLOCK_SKEW_MS)
+        // A packet claiming this node as its sender is forged or an echo; it must not use our quota.
+        if p.sender == self.me
+            || p.created_ms > now_ms().saturating_add(persist::CLOCK_SKEW_MS)
             || p.payload.len() + HEADER_LEN >= persist::MAX_MESSAGE_BYTES
         { return; }
         // Relay custody must not block local delivery of replies or gateway presence.

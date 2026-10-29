@@ -203,6 +203,8 @@ pub struct App {
     sync_run: tokio::sync::Mutex<()>,
     sync_apply: tokio::sync::Mutex<()>,
     sync_running: std::sync::atomic::AtomicBool,
+    /// Mesh msg_id of each payment send, so only the ack of that message marks it delivered.
+    pay_msgs: Mutex<BTreeMap<String, String>>,
     last_wallet_persist: std::sync::atomic::AtomicU64,
     sync_error: Mutex<Option<String>>,
     sync_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -282,6 +284,7 @@ impl App {
             sync_run: Default::default(),
             sync_apply: Default::default(),
             sync_running: Default::default(),
+            pay_msgs: Default::default(),
             last_wallet_persist: Default::default(),
             sync_error: Default::default(),
             sync_task: Default::default(),
@@ -381,6 +384,7 @@ impl App {
         let kind = body.kind();
         // Presence and tips are superseded by the next one; never let them hold the store quota.
         let replaceable = matches!(body, Body::Presence(_) | Body::Tip { .. });
+        let pay_txid = if let Body::Pay { statement, .. } = &body { Some(statement.body.txid.clone()) } else { None };
         let payload_bytes = bincode::serialized_size(&body)?;
         let inner = Inner {
             from: self.name().to_string(),
@@ -392,6 +396,11 @@ impl App {
         let sealed = envelope::seal(&inner, &recipient)?;
         let peer: PeerId = dev.peer_id.parse()?;
         let msg_id = if replaceable { self.mesh.send_replaceable(peer, sealed.clone()).await? } else { self.mesh.send(peer, sealed.clone()).await? };
+        if let Some(txid) = pay_txid {
+            let mut m = self.pay_msgs.lock().unwrap();
+            if m.len() >= 1024 { m.clear(); }
+            m.insert(msg_id.to_string(), txid);
+        }
         self.event("mesh-send", json!({"kind": kind, "to": dev.name, "bytes": sealed.len(), "payload_bytes": payload_bytes, "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
         Ok(())
     }
@@ -442,6 +451,13 @@ impl App {
     }
 
     fn resolve_birthday(&self, tip: u32, time: u64) -> Result<u32> {
+        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
+            // The birthday is set once: refuse a claimed tip or time the local clock cannot reach.
+            let (checkpoint, checkpoint_time) = WalletState::TESTNET_CHECKPOINT;
+            let now = now_ms() / 1000;
+            let max_tip = checkpoint as u64 + now.saturating_sub(checkpoint_time) / 15 + 2_000;
+            anyhow::ensure!(tip as u64 <= max_tip && time <= now + 7_200, "chain clock {tip} at {time} is ahead of this device's clock");
+        }
         let mut st = self.state.lock().unwrap();
         st.0.resolve_birthday(self.cfg.fleet.network, self.cfg.fleet.birthday, tip, time);
         self.persist(&st.0, &st.1)?;
@@ -1216,15 +1232,14 @@ impl App {
             MeshEvent::Delivered { msg_id, by } => {
                 let by_name = self.device(&by.to_string()).map(|d| self.route_name(&d)).unwrap_or(by.to_string());
                 self.event("mesh-delivered", json!({"msg_id": msg_id.to_string(), "by": by_name}));
-                // Mark sent payments to that payee as delivered (the mesh-level ack).
-                let txids: Vec<String> = {
-                    let st = self.state.lock().unwrap();
-                    st.1.payments.values().filter(|p| p.direction == "sent" && p.receipt_peer.as_deref() == Some(&by_name) && p.state == "sent").map(|p| p.txid.clone()).collect()
-                };
-                for t in txids {
+                // Only the payee's ack of the payment message itself marks that payment delivered.
+                let txid = self.pay_msgs.lock().unwrap().remove(&msg_id.to_string());
+                if let Some(t) = txid {
                     let _ = self.update(&t, |p| {
-                        p.state = "delivered".into();
-                        p.note(format!("mesh ack from {by_name}"));
+                        if p.direction == "sent" && p.state == "sent" && p.receipt_peer.as_deref() == Some(&by_name) {
+                            p.state = "delivered".into();
+                            p.note(format!("mesh ack from {by_name}"));
+                        }
                     });
                 }
             }
@@ -1330,13 +1345,10 @@ impl App {
             if s.expiry_height != v.tx.expiry_height {
                 return Err(st_err("statement expiry does not match the transaction"));
             }
+            // Replays are caught by txid above; a seq check would refuse valid payments that arrive out of order.
             let st = self.state.lock().unwrap();
-            if let Some(last) = st.1.last_seq_in.get(from) {
-                if s.seq <= *last {
-                    return Err(st_err(&format!("replayed or old seq {} (last {last})", s.seq)));
-                }
-            }
-            for p in st.1.payments.values().filter(|p| p.direction == "received" && p.state != "mined") {
+            let tip = st.0.tip_height;
+            for p in st.1.payments.values().filter(|p| p.direction == "received" && p.state != "mined" && !(p.state == "expired" && tip > p.expiry_height)) {
                 if let Some(nf) = v.tx.nullifiers.iter().find(|n| p.nullifiers.contains(n)) {
                     return Err(Reject { code: code::CONFLICT, reason: format!("note {nf} already pays pending payment {}", p.txid) });
                 }
@@ -1361,7 +1373,8 @@ impl App {
                     let mut st = self.state.lock().unwrap();
                     st.1.deferred_payments.remove(&s.txid);
                     st.0.record_incoming(v.notes)?;
-                    st.1.last_seq_in.insert(from.to_string(), s.seq);
+                    let last = st.1.last_seq_in.entry(from.to_string()).or_default();
+                    *last = (*last).max(s.seq);
                     let mut p = Payment {
                         txid: v.tx.txid.clone(),
                         auth_digest: v.tx.auth_digest.clone(),

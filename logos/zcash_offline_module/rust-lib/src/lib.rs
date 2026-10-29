@@ -216,6 +216,8 @@ impl Node {
             Some(a) => Some(a.parse().with_context(|| format!("api {a}"))?),
             None => None,
         };
+        // The API token is served to any client that sends a loopback Host header.
+        anyhow::ensure!(api.is_none_or(|a: std::net::SocketAddr| a.ip().is_loopback()), "api must be a loopback address");
         // Build the proving key off the call path; the first pay would otherwise wait for it.
         std::thread::spawn(|| {
             zcash_offline_core::builder::proving_key();

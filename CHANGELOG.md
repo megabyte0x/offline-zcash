@@ -17,6 +17,19 @@ It is not security reviewed and does not support real funds.
 - Shortened the README to the product proposition and documentation links; refreshed the guides, architecture, component status and roadmap for v0.7.7. Regenerated the three hand-drawn payment/mesh/gateway diagrams for the current testnet light-client flow. Documentation distinguishes implemented controls from mainnet plans and preserves dated test evidence.
 - Cut repetition and release narration across the setup guides, component docs, threat model and roadmap. Kept commands, protocol limits, sources and dated evidence; left How it works and its diagrams unchanged.
 
+### Security
+- `ozm-node run`/`start` refuse a non-loopback `--api` address, and the Basecamp module refuses a non-loopback `api` option. The API hands its token to any client that sends a loopback `Host` header, so a LAN peer could otherwise read it and spend the wallet. Isolated containers can opt out with `OZM_API_REMOTE=1` (the bench image sets it).
+- A device drops mesh packets that claim its own ID as sender. About 512 forged packets could otherwise fill its own store quota and block every payment and sync request it sends for a day.
+- A payee refuses an offline payment whose expiry is beyond the fleet policy (tip + anchor window + expiry delta), instead of issuing a receipt for a transaction that stays pending for years.
+- A testnet wallet ignores a chain clock whose tip or time is ahead of what its own clock allows, so one bad first gateway reply can no longer set a birthday past the real chain and stop sync for good.
+- Joining an invite into a home that already holds the same device identity but a different spending key is refused instead of silently replacing the key. `fleet.json` is now written atomically.
+
+### Fixed
+- A payee no longer refuses a valid payment as "replayed or old seq" when it arrives after a later payment from the same payer (for example after waiting for an unknown anchor). Replays are still caught by txid.
+- A payment is marked delivered only when the payee acknowledges that payment's own message, not any message from the payee.
+- Notes from a received payment that expired (local scan past its expiry) no longer block a new payment from the same notes as a conflict.
+- Very large typed amounts are refused instead of wrapping to a small value.
+
 ## [0.7.7] - 2026-10-29
 
 ### Fixed

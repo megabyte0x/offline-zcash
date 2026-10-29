@@ -227,6 +227,9 @@ fn join(invite: &PathBuf, home: Option<PathBuf>) -> Result<()> {
 }
 
 async fn run(o: RunOpts) -> Result<()> {
+    // The API token is served to any client that sends a loopback Host header.
+    anyhow::ensure!(o.api.ip().is_loopback() || std::env::var("OZM_API_REMOTE").as_deref() == Ok("1"),
+        "--api {} is not a loopback address; anyone who can reach it can spend this wallet (set OZM_API_REMOTE=1 only inside an isolated container)", o.api);
     let app = start(&o).await?;
     let router = router(app.clone(), o.debug_api);
     let listener = tokio::net::TcpListener::bind(o.api).await.with_context(|| format!("bind API {}", o.api))?;

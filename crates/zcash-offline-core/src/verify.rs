@@ -137,6 +137,10 @@ pub fn verify_payment(raw: &[u8], me: &DeviceSecret, view: &WalletState, policy:
     if checked.expiry_height == 0 {
         return Err(rej(code::EXPIRY, "expiry 0 (never expires) is refused"));
     }
+    // The payer sets expiry from its own tip, which may be ahead of this view by up to the anchor window.
+    if !already_received && checked.expiry_height as u64 > view.tip_height as u64 + policy.anchor_window as u64 + policy.expiry_delta as u64 {
+        return Err(rej(code::EXPIRY, format!("expiry {} is beyond the fleet policy of {} blocks", checked.expiry_height, policy.expiry_delta)));
+    }
     if let Some(nf) = checked.nullifiers.iter().find(|nf| !already_received && view.chain_nullifiers.contains(*nf)) {
         return Err(rej(code::CONFLICT, format!("note {nf} was already spent on chain")));
     }

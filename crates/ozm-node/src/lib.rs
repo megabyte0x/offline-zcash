@@ -266,10 +266,12 @@ pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
     anyhow::ensure!(*me == inv.secret.public_on(inv.fleet.network)?, "invite keys do not match its fleet");
     if home.join("secret.json").exists() {
         let old: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(home.join("secret.json"))?)?;
-        anyhow::ensure!(old.ed25519_sk == inv.secret.ed25519_sk, "{} already holds device {}; use another home", home.display(), old.name);
+        // Same identity with another spending key would silently replace the wallet's keys.
+        anyhow::ensure!(old.ed25519_sk == inv.secret.ed25519_sk && old.ironwood_sk == inv.secret.ironwood_sk,
+            "{} already holds device {}; use another home", home.display(), old.name);
     }
     private_dir(home)?;
-    std::fs::write(home.join("fleet.json"), serde_json::to_string_pretty(&inv.fleet)?)?;
+    write_private(&home.join("fleet.json"), serde_json::to_string_pretty(&inv.fleet)?.as_bytes())?;
     write_private(&home.join("secret.json"), serde_json::to_string_pretty(&inv.secret)?.as_bytes())?;
     let label = |d: &zcash_offline_core::DevicePublic| if d.is_gateway() { format!("{} (gateway)", d.name) } else { d.name.clone() };
     Ok(format!(

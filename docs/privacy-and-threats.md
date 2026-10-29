@@ -452,7 +452,8 @@ Controls introduced in v0.6.0, with later amendments noted:
   for pinned-gateway inclusion reports, not independent proof/finality.
 - **Local API:** per-run random token and loopback Host header; UI/CLI obtain
   token from local page. Render remote strings as text. Bind to `127.0.0.1`;
-  `--api 0.0.0.0` is isolated-test-only, not a secure network API. Same-user
+  non-loopback `--api` is refused unless `OZM_API_REMOTE=1` (isolated test
+  containers only; not a secure network API). Same-user
   programs remain trusted.
 - **Regtest faucet:** one request/device/60 s, persisted across gateway restarts;
   at most 10 notes, configured total cap (default 1 ZEC). Fresh IDs evade it.
