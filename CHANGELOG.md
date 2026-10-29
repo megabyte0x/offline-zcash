@@ -9,6 +9,14 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-10-29
+
+### Fixed
+- A gateway no longer refuses every payment submission as "gateway busy; retry submission" after one chain check hangs. On 29 October a v0.7.6 gateway's 5-second chain check stopped completing (no new tip notices, wallet sync or gateway results after 15:25), held the submission lock and blocked its retry loop, so its own payments and its peers' submissions never reached lightwalletd and stayed "Awaiting inclusion". Each chain check is now limited to 60 s, each lightwalletd connection (DNS, TLS and info calls) to 15 s, and a submission to 90 s. A peer's submission waits for a running check instead of being refused. The check also stops re-querying transactions it already reports as mined, so it holds the lock for less time. Before, even a healthy gateway refused most mesh submissions, because its check held the lock for most of every 5-second interval: a payee whose submission was refused was never told its payment had been mined (two received payments stayed "Awaiting inclusion" although on chain), and a payment only the payee could submit was never broadcast. A restart did not help.
+
+### Changed
+- Workspace, four Logos packages and Android version are 0.7.7; Android version code is 16. Only gateways need this release to fix stuck submissions; upgrade the service package first, then the apps.
+
 ## [0.7.6] - 2026-10-29
 
 ### Changed

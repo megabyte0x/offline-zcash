@@ -44,7 +44,8 @@ impl Lightwallet {
         let mut clients = Vec::new();
         let mut errors = Vec::new();
         for url in servers {
-            let result = async {
+            // connect_timeout covers TCP only; bound DNS and the TLS/info round trips too.
+            let result = tokio::time::timeout(Duration::from_secs(15), async {
                 ensure!(url.starts_with("https://"), "public testnet requires TLS (https://)");
                 let channel = Endpoint::from_shared(url.clone())?.connect_timeout(Duration::from_secs(3))
                     .timeout(Duration::from_secs(20)).tls_config(ClientTlsConfig::new().with_webpki_roots())?.connect().await?;
@@ -55,7 +56,7 @@ impl Lightwallet {
                 let height: u32 = tip.height.try_into()?;
                 ensure!(height >= 4_465_026, "server is behind NU7");
                 Ok::<_, anyhow::Error>((client, height, display_hash(&tip.hash)?))
-            }.await;
+            }).await.unwrap_or_else(|_| Err(anyhow!("did not answer within 15 s")));
             match result {
                 Ok((client, height, hash)) => clients.push((url.clone(), client, height, hash)),
                 Err(e) => errors.push(format!("{url}: {e:#}")),

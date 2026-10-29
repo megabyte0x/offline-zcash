@@ -474,7 +474,13 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
                 let _ = a.announce().await;
             }
             if ticks % 5 == 1 {
-                if let Err(e) = a.gateway_tick().await { a.event("gateway-watch-error", json!({"error": format!("{e:#}")})); }
+                // A hung chain lookup (for example DNS) must not hold the gateway lock and stop
+                // retries; every submission would otherwise be refused as busy.
+                match tokio::time::timeout(Duration::from_secs(60), a.gateway_tick()).await {
+                    Ok(Err(e)) => a.event("gateway-watch-error", json!({"error": format!("{e:#}")})),
+                    Err(_) => a.event("gateway-watch-error", json!({"error": "chain check timed out after 60 s"})),
+                    Ok(Ok(())) => {}
+                }
             }
             a.retry_tick().await;
             if auto_sync > 0 {

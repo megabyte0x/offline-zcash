@@ -1544,7 +1544,10 @@ impl App {
         let changed = old != (source.tip, source.hash.clone());
         self.reported_tip.store(source.tip, std::sync::atomic::Ordering::Relaxed);
         *self.sync_sources.lock().unwrap() = source.sources.clone();
-        let entries: Vec<_> = self.state.lock().unwrap().1.gateway.values().filter(|e| !e.tx_hex.is_empty()).cloned().collect();
+        // Mined (10 confirmations) entries are settled; re-querying each one every 5 s only keeps
+        // the submission lock busy. They are still answered from the stored result on resubmission.
+        let entries: Vec<_> = self.state.lock().unwrap().1.gateway.values()
+            .filter(|e| !e.tx_hex.is_empty() && !matches!(e.result.body.status, TxStatus::Mined { .. })).cloned().collect();
         for entry in entries {
             let raw = hex::decode(&entry.tx_hex)?;
             let known = source.status(&raw, &entry.txid).await?;
@@ -1626,20 +1629,30 @@ impl App {
     }
 
     async fn on_sub(self: &Arc<Self>, from: &str, tx: Vec<u8>, txid: String, notify: Vec<String>) -> Result<()> {
-        let Ok(_guard) = self.gateway_apply.try_lock() else {
-            // A payer and its payee submit the same transaction moments apart. The later one joins
-            // the running submission and gets its result, instead of waiting for its own retry.
-            let mut running = self.sub_in_flight.lock().unwrap();
-            if let Some(sub) = running.as_mut().filter(|s| s.txid == txid && s.raw == tx) {
-                self.admit_sub(from, &txid, &tx, &notify)?;
-                sub.joined.extend(notify_targets(from, notify));
-                return Ok(());
+        let _guard = match self.gateway_apply.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                // A payer and its payee submit the same transaction moments apart. The later one joins
+                // the running submission and gets its result, instead of waiting for its own retry.
+                {
+                    let mut running = self.sub_in_flight.lock().unwrap();
+                    if let Some(sub) = running.as_mut().filter(|s| s.txid == txid && s.raw == tx) {
+                        self.admit_sub(from, &txid, &tx, &notify)?;
+                        sub.joined.extend(notify_targets(from, notify));
+                        return Ok(());
+                    }
+                }
+                // Our own payments are submitted inside a UI call; the retry loop resubmits them
+                // between chain checks. Mesh submitters wait instead of being refused.
+                anyhow::ensure!(from != self.name(), "gateway busy; retry submission");
+                tokio::time::timeout(Duration::from_secs(90), self.gateway_apply.lock()).await
+                    .map_err(|_| anyhow!("gateway busy; retry submission"))?
             }
-            bail!("gateway busy; retry submission");
         };
         self.admit_sub(from, &txid, &tx, &notify)?;
         *self.sub_in_flight.lock().unwrap() = Some(InFlightSub { txid: txid.clone(), raw: tx.clone(), joined: vec![] });
-        let r = self.on_sub_locked(from, tx, txid, notify).await;
+        let r = tokio::time::timeout(Duration::from_secs(90), self.on_sub_locked(from, tx, txid, notify)).await
+            .unwrap_or_else(|_| Err(anyhow!("chain server did not answer within 90 s; retry submission")));
         // A failed submission leaves no join window open; joined senders retry on their own.
         self.sub_in_flight.lock().unwrap().take();
         r
