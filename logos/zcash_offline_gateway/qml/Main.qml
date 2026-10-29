@@ -132,7 +132,7 @@ Rectangle {
         contentItem: ColumnLayout {
             spacing: 10
             Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
-            Label2 { text: "The gateway and node stop. This device's keys, wallet and submission history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards you can join another invite, for example a testnet session. Starting again without an invite on the same network restores this device's own wallet: same address and balance. An invite's wallet stays in the backup." }
+            Label2 { text: "The gateway and node stop. This device's keys, wallet and submission history move to a backup folder next to it; nothing is deleted. Exported session folders stay where they are. Afterwards you can join another invite, for example a testnet session. Starting again without an invite on the same network restores this device's own wallet if it holds notes or payment history; an empty wallet is replaced by a new one that syncs from near the chain tip. An invite's wallet stays in the backup." }
             RowLayout { Layout.fillWidth: true; spacing: 10
                 Btn { secondary: true; text: "Cancel"; Layout.fillWidth: true; onClicked: leaveConfirm.close() }
                 Btn { objectName: "confirmLeaveButton"; text: "Leave and keep a backup"; Layout.fillWidth: true; onClicked: { leaveConfirm.close(); root.leave() } } }

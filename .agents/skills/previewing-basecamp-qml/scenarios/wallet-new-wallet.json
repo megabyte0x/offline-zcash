@@ -1,0 +1,15 @@
+{"qml": "logos/zcash_offline_ui/qml/Main.qml", "size": [1000, 1700],
+ "replies": {
+  "status": {"joined": true, "running": true, "network": "testnet", "name": "2e8ca68d660b296b", "role": "", "version": "0.7.5",
+    "peer_id": "2e8ca68d660b296b", "address": "utest1examplexampleexample", "online": false, "syncing": true, "chain_tip": 4553516,
+    "ready": false, "preparing": false, "checked": true, "pending_checks": 0, "chain_sources": [], "single_source": false,
+    "selected_gateway": {"name": "Gateway", "peer_id": "aa11bb22cc33dd44", "hops": 1, "tip": 4553516},
+    "wallet": {"tip": 4482825, "notes": 0, "spendable": 0, "locked": 0, "pending_incoming": 0},
+    "mesh": {"discovered": 1, "stored": 3, "packets_relayed": 0, "frames_sent": 10, "frames_received": 400}, "neighbor_links": []},
+  "list_payments": {"payments": [], "refusals": [], "gateway": []},
+  "leave": {"ok": true, "backup": "/data/ozm-backup-20261029-070000", "message": "Left the session."},
+  "start": {"joined": true, "running": true}
+ },
+ "steps": [{"shot": "wallet-simple"}, {"click": "debugButton"}, {"wait": 500}, {"shot": "wallet-debug"},
+   {"click": "newWalletButton"}, {"wait": 400}, {"shot": "new-wallet-confirm"},
+   {"click": "confirmNewWalletButton"}, {"wait": 800}]}

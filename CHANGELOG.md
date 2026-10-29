@@ -9,6 +9,14 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+### Changed
+- The Organiser creates a gateway-only session: no device names or per-person invites. It exports one gateway invite and can join this device as the gateway; everyone else starts the wallet without an invite. `fleet_init` and `ozm-node fleet-init` still accept named devices.
+- A wallet started without an invite no longer restores an empty backed-up wallet. Only backups with notes or payment history come back; otherwise new keys scan from near the chain tip. Before, a "new" wallet after Leave session resumed an old wallet's scan, for example from NU7 at 4,465,026, and spent a long time catching up.
+
+### Added
+- **Start a new wallet…** in the wallet's Debug session card (module `start` option `new_wallet`, `ozm-node run --new-wallet`) backs up the current wallet and starts with new keys near the chain tip. Removing the Basecamp module keeps `module_data`, so this is the way to get a fresh wallet.
+- A `previewing-basecamp-qml` skill renders the Basecamp QML apps with a mock module bridge in seconds, records the module calls a click flow makes and saves screenshots, without building `.lgx` packages.
+
 ### Fixed
 - A queued incoming payment can finish verification after its sender disappears from discovery or the recipient restarts, including queues saved by v0.7.5. Retries recheck the stored statement signature against its original mesh sender instead of requiring live presence. This does not grant gateway authority or pending acceptance to unknown payers, and existing wallet scan starts remain unchanged.
 

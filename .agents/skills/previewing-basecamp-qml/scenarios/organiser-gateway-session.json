@@ -1,0 +1,7 @@
+{"qml": "logos/zcash_offline_organiser/qml/Main.qml", "size": [1000, 1000],
+ "replies": {
+  "status": {"joined": false, "sessions": "/data/sessions", "network": ""},
+  "fleet_init": {"folder": "/data/sessions/session-1", "joined": "Joined fleet 'Offline Zcash session' as Gateway (gateway). Devices: Gateway (gateway)",
+     "devices": [{"name": "Gateway", "role": "gateway", "invite_path": "/data/sessions/session-1/Gateway.invite.json"}]}
+ },
+ "steps": [{"shot": "organiser-new"}, {"click": "createFleetButton"}, {"wait": 800}, {"shot": "organiser-created"}]}

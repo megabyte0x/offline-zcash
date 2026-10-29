@@ -143,7 +143,7 @@ Rectangle {
         contentItem: ColumnLayout {
             spacing: 10
             Text { text: "Leave this session?"; color: root.fg; font.pixelSize: 18; font.bold: true }
-            Muted { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Afterwards this device can start without an invite or join a new one, on either network. Starting again without an invite on the same network restores this device's own wallet: same address and balance. An invite's wallet stays in the backup." }
+            Muted { text: "The node stops. This device's keys, wallet and payment history move to a backup folder next to it; nothing is deleted. Afterwards this device can start without an invite or join a new one, on either network. Starting again without an invite on the same network restores this device's own wallet if it holds notes or payment history; an empty wallet is replaced by a new one that syncs from near the chain tip. An invite's wallet stays in the backup." }
             RowLayout { Layout.fillWidth: true; spacing: 10
                 Btn { secondary: true; text: "Cancel"; onClicked: leaveConfirm.close() }
                 Btn {
@@ -155,6 +155,38 @@ Rectangle {
                             setup.msg = r.error ? "Could not leave: " + r.error : r.message
                             root.paysLoaded = false; root.pays = { payments: [], refusals: [], gateway: [] }
                             root.refresh()
+                        }, 60000)
+                    }
+                } }
+        }
+    }
+
+    Popup {
+        id: newWalletConfirm
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; focus: true; padding: 20
+        width: Math.min(root.width - 40, 480)
+        background: Rectangle { color: root.card; border.color: root.line; radius: 10 }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text { text: "Start a new wallet?"; color: root.fg; font.pixelSize: 18; font.bold: true }
+            Muted { text: "Creates new keys and a new address that sync from near the current chain tip, instead of continuing this wallet's scan. This wallet's keys, balance and history move to a backup folder; nothing is deleted. Funds sent to the old address stay with the old keys." }
+            RowLayout { Layout.fillWidth: true; spacing: 10
+                Btn { secondary: true; text: "Cancel"; onClicked: newWalletConfirm.close() }
+                Btn {
+                    objectName: "confirmNewWalletButton"; text: "Back up and start new"
+                    onClicked: {
+                        newWalletConfirm.close(); setup.busy = true; setup.failed = false; setup.msg = "Backing up this wallet…"
+                        var net = root.network || "testnet"
+                        root.call("leave", [], function (r) {
+                            if (r.error) { setup.busy = false; setup.failed = true; setup.msg = "Could not back up: " + r.error; root.refresh(); return }
+                            root.paysLoaded = false; root.pays = { payments: [], refusals: [], gateway: [] }
+                            setup.msg = "Creating a new wallet…"
+                            root.call("start", [JSON.stringify({ network: net, new_wallet: true })], function (s) {
+                                setup.busy = false; setup.failed = !!s.error
+                                setup.msg = s.error ? "Could not start the new wallet: " + s.error : "New wallet started. The old one is in " + r.backup
+                                root.refresh()
+                            }, 60000)
                         }, 60000)
                     }
                 } }
@@ -847,8 +879,10 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.maximumWidth: 720
                     Layout.leftMargin: root.narrow ? 12 : 20; Layout.rightMargin: root.narrow ? 12 : 20
-                    Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept, and its own (invite-free) wallet comes back on the same network." }
+                    Muted { text: "To switch network or use another invite, leave this session. A backup of this device's keys and wallet is kept; its own (invite-free) wallet comes back on the same network if it holds notes or payment history." }
                     Btn { objectName: "leaveSessionButton"; secondary: true; text: "Leave session…"; enabled: !setup.busy; onClicked: leaveConfirm.open() }
+                    Muted { text: "A new wallet syncs from near the chain tip. Use it when this wallet is still catching up on old blocks and holds nothing you need." }
+                    Btn { objectName: "newWalletButton"; secondary: true; text: "Start a new wallet…"; enabled: !setup.busy; onClicked: newWalletConfirm.open() }
                     Muted { visible: !!(root.st && root.st.syncing); font.pixelSize: 12; text: "Leaving now stops the wallet sync; nothing is lost." }
                 }
                 Item { implicitHeight: 12 }

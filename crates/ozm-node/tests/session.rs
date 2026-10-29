@@ -785,5 +785,16 @@ fn leave_keeps_a_backup_and_session_exports() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     ozm_node::leave_home(&home).unwrap();
     ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 0).unwrap();
-    assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), own, "wallets are kept per network");
+    let testnet = std::fs::read(home.join("secret.json")).unwrap();
+    assert_ne!(testnet, own, "wallets are kept per network");
+    // An empty wallet is not restored, so a new start scans from near the tip, not its old start.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ozm_node::leave_home(&home).unwrap();
+    ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 0).unwrap();
+    assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), testnet, "empty wallets are not restored");
+    // New wallet on request, even when the backup holds funds.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ozm_node::leave_home(&home).unwrap();
+    ozm_node::join_open_with(&home, zcash_offline_core::fleet::Network::Regtest, 0, false).unwrap();
+    assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), own, "a new wallet was requested");
 }

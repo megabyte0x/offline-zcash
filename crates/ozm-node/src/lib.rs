@@ -88,6 +88,9 @@ pub struct RunOpts {
     /// Open the UI in the default browser once started.
     #[arg(long)]
     pub open: bool,
+    /// Create new invite-free keys instead of restoring the newest backup's wallet.
+    #[arg(long)]
+    pub new_wallet: bool,
 }
 
 impl RunOpts {
@@ -114,6 +117,7 @@ impl RunOpts {
             auto_sync_secs: 900,
             debug_api: false,
             open: false,
+            new_wallet: false,
         }
     }
 }
@@ -287,12 +291,17 @@ pub fn join_open(home: &Path) -> Result<()> {
 }
 
 pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> {
+    join_open_with(home, network, birthday, true)
+}
+
+/// Like [`join_open_on`]; `restore: false` always creates new keys and leaves backups untouched.
+pub fn join_open_with(home: &Path, network: Network, birthday: u32, restore: bool) -> Result<()> {
     if home.join("secret.json").exists() {
         return Ok(());
     }
     anyhow::ensure!(!home.join("fleet.json").exists() && !home.join("data/wallet.json").exists(),
         "device files exist but secret.json is missing; restore the keys or choose a new home");
-    if let Some(kept) = kept_wallet(home, network) {
+    if let Some(kept) = kept_wallet(home, network).filter(|_| restore) {
         // Same keys, address, notes and payment history; the session (gateway pin, mesh store,
         // events, start options) stays behind in the backup.
         let fleet = Fleet::load(&kept.join("fleet.json"))?;
@@ -314,16 +323,25 @@ pub fn join_open_on(home: &Path, network: Network, birthday: u32) -> Result<()> 
     Ok(())
 }
 
-/// The newest `<home>-backup-*` folder that holds an invite-free wallet on `network`. Leave keeps
-/// whole device folders there, so the device's own wallet outlives sessions and invited joins.
+/// The newest `<home>-backup-*` folder that holds an invite-free wallet on `network` with notes or
+/// payment history. Leave keeps whole device folders there, so the device's own wallet outlives
+/// sessions and invited joins. An empty wallet is not restored: its old scan start would only make
+/// a new start rescan history that holds nothing, while new keys start near the tip.
 fn kept_wallet(home: &Path, network: Network) -> Option<PathBuf> {
+    let used = |b: &Path| {
+        let wallet = zcash_offline_core::wallet::WalletState::load(&b.join("data/wallet.json"));
+        let payments = std::fs::read(b.join("data/payments.json")).ok()
+            .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).map_or(true, |v| v["payments"].as_object().is_none_or(|p| !p.is_empty())));
+        // Unreadable files count as used: never trade possibly owned funds for speed.
+        wallet.map_or(true, |w| w.first_note_height.is_some()) || payments.unwrap_or(false)
+    };
     let prefix = format!("{}-backup-", home.file_name()?.to_str()?);
     let mut backups: Vec<PathBuf> = std::fs::read_dir(home.parent()?).ok()?.filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix)))
         .map(|e| e.path()).collect();
     backups.sort();
     backups.into_iter().rev().find(|b| b.join("secret.json").is_file()
-        && Fleet::load(&b.join("fleet.json")).is_ok_and(|f| f.open && f.network == network))
+        && Fleet::load(&b.join("fleet.json")).is_ok_and(|f| f.open && f.network == network) && used(b))
 }
 
 /// Starts the mesh, the app and its background loops. Must run inside a tokio runtime.
@@ -338,7 +356,7 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
                 creation_tip = Some(source.tip);
             }
         }
-        join_open_on(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?, o.network, o.birthday)?;
+        join_open_with(o.secret.parent().ok_or_else(|| anyhow!("secret needs a home directory"))?, o.network, o.birthday, !o.new_wallet)?;
     }
     let fleet = Fleet::load(&o.fleet)?;
     #[cfg(unix)]

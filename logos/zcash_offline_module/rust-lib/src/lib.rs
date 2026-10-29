@@ -98,6 +98,9 @@ struct StartOptions {
     ble: Option<bool>,
     discovery_port: Option<u16>,
     api: Option<String>,
+    /// One-off: create new invite-free keys instead of restoring a backed-up wallet. Not saved.
+    #[serde(default, skip_serializing)]
+    new_wallet: bool,
 }
 
 const OPTIONS_FILE: &str = "module-start.json";
@@ -205,6 +208,7 @@ impl Node {
         opts.mine = o.mine.unwrap_or(false);
         opts.discover = o.discover.unwrap_or(true);
         opts.ble = o.ble.unwrap_or(false);
+        opts.new_wallet = o.new_wallet;
         if let Some(p) = o.discovery_port {
             opts.discovery_port = p;
         }
@@ -380,7 +384,7 @@ impl ZcashOfflineModule for Node {
             }
             let open = Fleet::load(&home.join("fleet.json")).is_ok_and(|f| f.open);
             let backup = ozm_node::leave_home(&home)?;
-            let kept = if open { " Start again without an invite on the same network to use this wallet again." } else { "" };
+            let kept = if open { " Start again without an invite on the same network to use this wallet again if it holds notes or payment history." } else { "" };
             Ok(json!({"ok": true, "backup": backup, "sessions": home.with_file_name("sessions"),
                 "message": format!("Left the session. Keys, wallet and history are kept in {}; nothing was deleted.{kept}", backup.display())}))
         })())

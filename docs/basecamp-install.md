@@ -176,17 +176,17 @@ the `ths` chain (Regtest) stay outside Basecamp.
    development with a local `ths` chain, open **Advanced (local Regtest for
    developers)** and turn on **Create a local Regtest session instead of testnet**.
    Wallet scan settings are automatic, including for invites created offline.
-2. Add a device for each invite you need and tick **This device is the gateway**
-   for at least one of them, for example `Operator`. Wallet devices can join
-   without invites, so you may only need the gateway entry.
-3. Keep the suggested session folder, `<persistence path>/sessions/session-YYYYMMDD-HHMMSS`
+2. Keep the suggested session folder, `<persistence path>/sessions/session-YYYYMMDD-HHMMSS`
    ([paths](#where-the-data-lives)), or choose another. Existing fleet or key files
    are never overwritten.
-4. To use this device as the gateway, set **Join this device as** to `Operator`.
-   Leave it empty to export only.
-5. Click **Create session and invites**. It writes `fleet.json` and each device's
-   `.invite.json` and `.secret.json`. **Open session folder** opens the export; if
-   no file manager opens, paste the shown path into Finder → Go → Go to Folder.
+3. Keep **This device is the gateway (join now)** ticked to make this computer the
+   gateway; untick it to export the gateway invite for another computer.
+4. Click **Create gateway session**. It writes `fleet.json` and one
+   `Gateway.invite.json` / `Gateway.secret.json`. There are no device names or
+   per-person invites: everyone else opens Offline Zcash and chooses **Start without
+   invite**. **Open session folder** opens the export; if no file manager opens,
+   paste the shown path into Finder → Go → Go to Folder. Named invites remain
+   available from `ozm-node fleet-init --device NAME`.
 
 A separate gateway laptop pastes its gateway invite in the Gateway app and clicks
 **Join device**. A device whose invite is not the gateway sees Start disabled.
@@ -266,7 +266,14 @@ switch from Regtest to testnet.
 **Your own wallet comes back.** Since v0.7.4, when the device next starts
 **without an invite on the same network**, it restores the keys, address, wallet
 (notes and sync height) and payment history from the newest backup that holds an
-invite-free wallet on that network. The balance shows again after the next sync.
+invite-free wallet on that network **and has notes or payment history**. The balance
+shows again after the next sync. After v0.7.5 an empty backed-up wallet is not
+restored: the device creates new keys whose scan starts near the chain tip, instead
+of resuming an old wallet's scan from far behind (for example from NU7 at 4,465,026).
+To force a new wallet even when the current one holds funds, open **Debug** in the
+wallet and use **Start a new wallet…**: it leaves (keeping the backup) and starts with
+new keys. Removing the Basecamp module does not remove `module_data`, so a
+reinstalled module loads the same wallet; use Start a new wallet instead.
 The session stays behind: the pinned gateway, the mesh store, events and start
 options are not restored, so the device picks a gateway again. Regtest and testnet
 keep separate wallets. An invited session uses the organiser's keys from its
