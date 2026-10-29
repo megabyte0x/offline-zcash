@@ -3,13 +3,78 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Offline Zcash: pay without the internet</title>
-<meta name="description" content="Private Zcash payments that work without the internet: pay phone to phone, pass it through the people nearby, and settle when anyone gets back online.">
-<meta property="og:title" content="Offline Zcash: pay without the internet">
-<meta property="og:description" content="Private digital cash for when the network goes dark.">
-<meta property="og:image" content="https://offlinezcash.com/img/pay.jpg">
+<title>Offline Zcash: Private Payments Without the Internet</title>
+<meta name="description" content="Send private Zcash payments with no signal. Devices nearby relay your sealed payment over Wi-Fi, and one online gateway settles it. Free and open source.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="author" content="megabyte">
 <link rel="canonical" href="https://offlinezcash.com/">
 <meta name="theme-color" content="#0a0c0b">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Offline Zcash">
+<meta property="og:url" content="https://offlinezcash.com/">
+<meta property="og:title" content="Offline Zcash: Pay without the internet">
+<meta property="og:description" content="Private digital cash for when the network goes dark. Pay phone to phone, pass it along the mesh, settle later.">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="https://offlinezcash.com/og/og-1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:alt" content="Offline Zcash: Pay without the internet. A night market during a blackout, lit by phone screens.">
+<meta property="og:image" content="https://offlinezcash.com/og/og-1200x1200.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="1200">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:alt" content="Offline Zcash: Pay without the internet.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Offline Zcash: Pay without the internet">
+<meta name="twitter:description" content="Private digital cash for when the network goes dark. Pay phone to phone, pass it along the mesh, settle later.">
+<meta name="twitter:image" content="https://offlinezcash.com/og/og-1200x630.jpg">
+<meta name="twitter:image:alt" content="Offline Zcash: Pay without the internet.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://offlinezcash.com/#website",
+      "url": "https://offlinezcash.com/",
+      "name": "Offline Zcash",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://megabyte.sh/#person" }
+    },
+    {
+      "@type": "Person",
+      "@id": "https://megabyte.sh/#person",
+      "name": "megabyte",
+      "url": "https://megabyte.sh",
+      "sameAs": ["https://github.com/megabyte0x"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://offlinezcash.com/#app",
+      "name": "Offline Zcash",
+      "description": "Open-source wallet and mesh network for Logos Basecamp that sends private Zcash payments without an internet connection. Nearby devices relay the signed payment and an online gateway settles it.",
+      "url": "https://offlinezcash.com/",
+      "image": "https://offlinezcash.com/og/og-1200x630.jpg",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "macOS (Apple silicon), Linux",
+      "softwareVersion": "0.7.7",
+      "softwareRequirements": "Logos Basecamp 0.3.2 or newer",
+      "isAccessibleForFree": true,
+      "license": "https://github.com/megabyte0x/offline-zcash",
+      "codeRepository": "https://github.com/megabyte0x/offline-zcash",
+      "downloadUrl": "https://github.com/megabyte0x/offline-zcash/releases/latest",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@id": "https://megabyte.sh/#person" },
+      "isPartOf": { "@id": "https://offlinezcash.com/#website" }
+    }
+  ]
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -292,6 +357,13 @@ details.more .inner li { margin-bottom: 8px; }
 .why h3 { font: 400 40px/1.05 var(--serif); letter-spacing: -.015em; margin: 8px 0 12px; }
 .why p { margin: 0; color: var(--cream-dim); max-width: 460px; }
 
+/* ---------- FAQ ---------- */
+.faq > div { display: grid; grid-template-columns: 38% 1fr; gap: 28px; padding: 26px 0; border-top: 1px solid var(--line); }
+.faq > div:last-child { border-bottom: 1px solid var(--line); }
+.faq h3 { margin: 0; font: 400 26px/1.2 var(--serif); letter-spacing: -.01em; }
+.faq p { margin: 0; color: var(--cream-dim); }
+.faq a { text-underline-offset: 3px; }
+
 /* ---------- Trust ---------- */
 .trust { background: var(--cream); color: var(--ink); }
 .trust .head p { color: rgba(10,12,11,.66); }
@@ -302,18 +374,13 @@ details.more .inner li { margin-bottom: 8px; }
 .cards h3 { font: 400 30px/1.1 var(--serif); margin: 12px 0 10px; letter-spacing: -.01em; }
 .cards p { margin: 0; font-size: 15px; color: rgba(10,12,11,.72); }
 
-/* ---------- Troubleshooting ---------- */
-.fix { width: 100%; border-collapse: collapse; }
-.fix td { padding: 18px 0; border-top: 1px solid var(--line); vertical-align: top; }
-.fix tr:last-child td { border-bottom: 1px solid var(--line); }
-.fix td:first-child { width: 38%; font: 400 22px/1.25 var(--serif); padding-right: 28px; }
-.fix td:last-child { color: var(--cream-dim); }
-
 /* ---------- Footer ---------- */
 .end { position: relative; height: 92vh; min-height: 560px; }
 .end .band { height: 62%; }
 .end h2 { font-size: clamp(44px, 6vw, 96px); }
 .end .links { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+.foot a { color: var(--cream-dim); text-underline-offset: 3px; }
+.foot a:hover { color: var(--cream); }
 .foot { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 26px 28px; color: var(--cream-faint); border-top: 1px solid var(--line); }
 
 /* ---------- Reveal ---------- */
@@ -335,6 +402,7 @@ details.more .inner li { margin-bottom: 8px; }
   .role-switch button span { display: none; }
   .reqs, .cards { grid-template-columns: 1fr 1fr; }
   .why { grid-template-columns: 1fr; }
+  .faq > div { grid-template-columns: 1fr; gap: 10px; }
   .why > div, .why > div:nth-child(even) { padding: 28px 0; border-left: 0; }
   .why h3 { font-size: 32px; }
   .reqs > div:nth-child(3) { border-left: 0; }
@@ -344,8 +412,6 @@ details.more .inner li { margin-bottom: 8px; }
   .ui { white-space: normal; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   .step::before { font-size: 60px; }
   .role-switch button b { font-size: 20px; }
-  .fix td { display: block; width: auto !important; }
-  .fix td:last-child { border-top: 0; padding-top: 0; }
   .section { padding: 96px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -363,6 +429,7 @@ details.more .inner li { margin-bottom: 8px; }
   </a>
   <nav class="pills" aria-label="Sections">
     <a href="#why">Why</a>
+    <a href="#faq">FAQ</a>
     <a href="#install" data-role-link="user">Install as user</a>
     <a href="#install" data-role-link="gateway">Install as gateway</a>
   </nav>
@@ -372,12 +439,12 @@ details.more .inner li { margin-bottom: 8px; }
 <main>
   <!-- Hero: value proposition -->
   <section class="scene in" id="hero">
-    <img src="img/pay.jpg" alt="A night market during a blackout; two people exchange a payment with their phones">
+    <img src="img/pay.jpg" alt="A night market during a blackout; two people exchange a payment with their phones" fetchpriority="high" width="1920" height="1080">
     <div class="band">
       <div class="kicker">Private digital cash for when the network goes dark</div>
       <h1 class="serif">Pay without the internet.<span class="cursor" aria-hidden="true"></span></h1>
       <p>Send and receive private Zcash payments phone to phone and laptop to laptop, with no signal and no bank in between.
-        Your payment travels through the people around you and settles as soon as anyone gets back online.</p>
+        Your payment travels through the people around you and settles as soon as a gateway in the mesh gets back online.</p>
       <nav class="timeline" aria-label="Chapters">
         <a href="#chapters" data-ch="0"><span class="dot"></span><span class="lbl">Pay offline</span></a>
         <a href="#chapters" data-ch="1"><span class="dot"></span><span class="lbl">Pass it along</span></a>
@@ -394,13 +461,14 @@ details.more .inner li { margin-bottom: 8px; }
         <div class="kicker">Why it matters</div>
         <h2 class="serif">Money stops when<br>the network stops.</h2>
         <p>Card terminals, banking apps and crypto wallets all assume a live connection. When it disappears, so does the ability to pay,
-          exactly when people need it most. Cash still works offline, but it can't cross distance and it isn't private by design.</p>
+          exactly when people need it most. BitChat kept messages moving through internet shutdowns.
+          Offline Zcash does the same for money.</p>
       </div>
       <div class="why reveal">
-        <div><span class="why-n serif">i.</span><h3 class="serif">Blackouts &amp; disasters</h3><p>Storms, floods and power cuts take mobile networks down for days. Food, fuel and medicine still have to be paid for.</p></div>
-        <div><span class="why-n serif">ii.</span><h3 class="serif">Shutdowns &amp; censorship</h3><p>Governments switch off the internet during protests and elections. Payment rails that need permission can be switched off with it.</p></div>
+        <div><span class="why-n serif">i.</span><h3 class="serif">Shutdowns &amp; censorship</h3><p>Governments switch off the internet during protests, elections and wars to silence the crowd. Payment rails that need permission are switched off with it.</p></div>
+        <div><span class="why-n serif">ii.</span><h3 class="serif">Disasters</h3><p>Floods, cyclones and landslides cut coastal and hill regions off for days. Even the wealthiest are stuck when there is no way to pay.</p></div>
         <div><span class="why-n serif">iii.</span><h3 class="serif">Places the signal never reached</h3><p>Rural villages, ships, mountains and border towns live with weak or no coverage every day, not only in emergencies.</p></div>
-        <div><span class="why-n serif">iv.</span><h3 class="serif">Crowds &amp; congestion</h3><p>Festivals, stadiums and markets overload the network. Lines grow while phones search for a signal.</p></div>
+        <div><span class="why-n serif">iv.</span><h3 class="serif">A parallel economy</h3><p>Zcash is building a private economy and Logos a parallel society, yet both still lean on a centralised internet. Offline Zcash removes that last dependency.</p></div>
       </div>
     </div>
   </section>
@@ -410,7 +478,7 @@ details.more .inner li { margin-bottom: 8px; }
     <div class="chapters-sticky">
       <div class="track" id="track">
         <article class="scene">
-          <img src="img/pay.jpg" alt="" loading="lazy">
+          <img src="img/pay.jpg" alt="A vendor and a customer pay each other phone to phone by lantern light" loading="lazy" width="1920" height="1080">
           <div class="band">
             <div class="kicker">01 · Pay offline</div>
             <h2 class="serif">Your device is the bank</h2>
@@ -420,7 +488,7 @@ details.more .inner li { margin-bottom: 8px; }
           </div>
         </article>
         <article class="scene">
-          <img src="img/carry.jpg" alt="" loading="lazy">
+          <img src="img/carry.jpg" alt="Hands passing phones and a laptop across a table, relaying a payment" loading="lazy" width="1920" height="1080">
           <div class="band">
             <div class="kicker">02 · Pass it along</div>
             <h2 class="serif">The people around you are the network</h2>
@@ -429,12 +497,12 @@ details.more .inner li { margin-bottom: 8px; }
           </div>
         </article>
         <article class="scene">
-          <img src="img/settle.jpg" alt="" loading="lazy">
+          <img src="img/settle.jpg" alt="A laptop by a window at dusk acting as the gateway for an offline neighbourhood" loading="lazy" width="1920" height="1080">
           <div class="band">
             <div class="kicker">03 · Settle later</div>
             <h2 class="serif">One connection is enough</h2>
-            <p>When any device in the group, the gateway, has internet, it publishes the payment to the Zcash network
-              and passes the confirmation back to everyone.</p>
+            <p>When a gateway, any device in the mesh that is set up to reach the internet, gets a connection, it publishes
+              the payment to the Zcash network and passes the confirmation back to everyone.</p>
             <a class="btn" href="#install" data-role-link="gateway">Install as gateway →</a>
           </div>
         </article>
@@ -501,7 +569,7 @@ details.more .inner li { margin-bottom: 8px; }
             <div>
               <h3>Add Offline Zcash</h3>
               <p>In Basecamp, open <span class="ui">Settings → Package Repositories</span>, paste this link, click <span class="ui">Add</span>, then <span class="ui">Refresh</span>.</p>
-              <div class="copy"><pre>https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json</pre><button type="button" data-copy>Copy</button></div>
+              <div class="copy"><pre>https://offlinezcash.com/basecamp</pre><button type="button" data-copy>Copy</button></div>
               <p>Then open <span class="ui">Manage Packages</span>, search <strong>zcash</strong>, and install <strong>Offline Zcash service</strong> and <strong>Offline Zcash</strong>.</p>
             </div>
           </li>
@@ -542,7 +610,7 @@ details.more .inner li { margin-bottom: 8px; }
             <div>
               <h3>Add the gateway apps</h3>
               <p>Open <span class="ui">Settings → Package Repositories</span>, paste this link, click <span class="ui">Add</span>, then <span class="ui">Refresh</span>.</p>
-              <div class="copy"><pre>https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json</pre><button type="button" data-copy>Copy</button></div>
+              <div class="copy"><pre>https://offlinezcash.com/basecamp</pre><button type="button" data-copy>Copy</button></div>
               <p>In <span class="ui">Manage Packages</span>, search <strong>zcash</strong> and install <strong>Offline Zcash service</strong>,
                 <strong>Offline Zcash Organiser</strong> and <strong>Offline Zcash Gateway</strong>. Add <strong>Offline Zcash</strong> too if you also want to pay from this laptop.</p>
             </div>
@@ -575,22 +643,32 @@ details.more .inner li { margin-bottom: 8px; }
     </div>
   </section>
 
-  <!-- Good to know -->
-  <section class="section" id="note" style="padding-top:40px">
+  <!-- FAQ -->
+  <section class="section" id="faq">
     <div class="wrap">
-      <table class="fix reveal">
-        <tr><td>Early and experimental</td><td>Offline Zcash is a working prototype running on the Zcash test network with free test coins. Don't use it for real money yet; it has not had a security review.</td></tr>
-        <tr><td>Trust your gateway</td><td>Confirmations come from your group's gateway. Use one run by someone you know.</td></tr>
-      </table>
+      <div class="head reveal">
+        <div class="kicker">Questions</div>
+        <h2 class="serif">Asked and answered.</h2>
+      </div>
+      <div class="faq reveal">
+        <div><h3>What is Offline Zcash?</h3><p>Offline Zcash is an open-source wallet and mesh network for Logos Basecamp that lets people send private Zcash payments without an internet connection. A device signs a shielded payment offline, nearby devices relay it over Wi-Fi or a local network, and a gateway publishes it to the Zcash network once it is online.</p></div>
+        <div><h3>How can you pay without the internet?</h3><p>Your wallet builds and signs the payment on your device, using coins you prepared while you were online. The sealed payment hops between nearby devices until it reaches the person you are paying, who checks it and sends back a signed receipt. The final confirmation arrives once a gateway connects.</p></div>
+        <div><h3>What is a gateway?</h3><p>A gateway is a laptop in the mesh that has internet access and was set up as the gateway when its group was created. It submits payments to the Zcash network and reports confirmations back. One gateway can serve a whole group, and anyone can run one with the Organiser and Gateway apps.</p></div>
+        <div><h3>Why not use cash or a normal crypto wallet?</h3><p>Cash cannot travel beyond arm's reach, and ordinary crypto wallets need the internet to send anything. Offline Zcash combines what both lack: digital, private payments that move through the people around you, the way BitChat moves messages during an internet shutdown.</p></div>
+        <div><h3>Does it work over Bluetooth or on phones?</h3><p>Today Offline Zcash runs in Logos Basecamp on Mac (Apple silicon) and Linux laptops, over Wi-Fi or a local network. Bluetooth on Linux and an Android app exist as experiments and have not yet been tested on real radios.</p></div>
+        <div><h3>Is it safe to use with real money?</h3><p>Not yet. Offline Zcash is an experimental prototype on the Zcash test network, using free test coins. It has not had a security review, and confirmations are reported by your group's gateway rather than proved independently, so use a gateway run by someone you trust.</p></div>
+        <div><h3>Who builds Offline Zcash?</h3><p>Offline Zcash is built by <a href="https://megabyte.sh">megabyte</a> as open-source software for Logos Basecamp. The code, design notes and release history are public on <a href="https://github.com/megabyte0x/offline-zcash">GitHub</a>.</p></div>
+      </div>
     </div>
   </section>
 
   <!-- Closing scene -->
   <section class="scene end" id="end">
-    <img src="img/carry.jpg" alt="" loading="lazy">
+    <img src="img/carry.jpg" alt="" loading="lazy" width="1920" height="1080">
     <div class="band">
       <div class="kicker">Offline Zcash</div>
       <h2 class="serif">Money that waits for no signal.</h2>
+      <p>Like insurance: you don't need it until you do.</p>
       <div class="links">
         <a class="btn" href="#install" data-role-link="user">Install as user</a>
         <a class="btn" href="#install" data-role-link="gateway">Install as gateway</a>
@@ -601,7 +679,7 @@ details.more .inner li { margin-bottom: 8px; }
 </main>
 
 <footer class="foot kicker">
-  <span>Built for Logos Basecamp</span>
+  <span>Built for Logos Basecamp · Built by <a href="https://megabyte.sh">megabyte</a></span>
   <span>Experimental · testnet only · not security reviewed</span>
 </footer>
 
@@ -674,5 +752,7 @@ details.more .inner li { margin-bottom: 8px; }
   }
 })();
 </script>
+<!-- Cloudflare Web Analytics: cookieless, no personal data -->
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "4c4b21be45654eb7aebc55840c483d77"}'></script>
 </body>
 </html>

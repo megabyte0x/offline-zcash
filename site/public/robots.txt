@@ -1,0 +1,5 @@
+# Everyone, including AI search and answer engines, may read this site.
+User-agent: *
+Allow: /
+
+Sitemap: https://offlinezcash.com/sitemap.xml

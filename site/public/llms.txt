@@ -1,0 +1,19 @@
+# Offline Zcash
+
+> Offline Zcash is an open-source wallet and mesh network for Logos Basecamp that sends private Zcash payments without an internet connection. A device signs a shielded payment offline, nearby devices relay it over Wi-Fi or a local network, and a gateway with internet publishes it to the Zcash network and returns the confirmation. Built by megabyte (https://megabyte.sh).
+
+Status: experimental prototype on the Zcash test network with free test coins. Not security reviewed; do not use real ZEC. Runs in Logos Basecamp 0.3.2+ on macOS (Apple silicon) and Linux. Bluetooth (Linux) and Android are experimental and untested on real radios.
+
+## Main sections
+
+- [Homepage](https://offlinezcash.com/): why offline payments matter, how it works, install steps for users and gateways, FAQ
+- [Install guide and troubleshooting](https://github.com/megabyte0x/offline-zcash/blob/main/docs/basecamp-install.md)
+- [How it works, with diagrams](https://github.com/megabyte0x/offline-zcash/blob/main/docs/how-it-works.md)
+- [Privacy and threat model](https://github.com/megabyte0x/offline-zcash/blob/main/docs/privacy-and-threats.md)
+- [Source code](https://github.com/megabyte0x/offline-zcash)
+
+## Key facts
+
+- Basecamp package catalogue: https://offlinezcash.com/basecamp
+- Every device pays, receives and relays; a gateway is the one device per group that also reaches the internet.
+- Confirmations (1 = included, 10 = mined) are reported by the gateway, not independently proved.
