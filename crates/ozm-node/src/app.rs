@@ -91,6 +91,9 @@ pub struct DeferredPayment {
     /// A restart requires a new chain response before refusing an unknown anchor.
     #[serde(skip)]
     pub sync_generation: u64,
+    /// After a failed retry, wait for this sync generation (the next chain response).
+    #[serde(skip)]
+    pub retry_generation: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -340,7 +343,12 @@ impl App {
         // `writeln!` would issue several writes; build the line and append it in one call.
         let line = format!("{line}\n");
         let _log = self.events_log.lock().unwrap();
-        if let Ok(mut f) = options.open(self.cfg.data.join("events.jsonl")) {
+        // Bounded history: keep the current file and one previous file of at most 8 MiB each.
+        let path = self.cfg.data.join("events.jsonl");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 8 * 1024 * 1024) {
+            let _ = std::fs::rename(&path, self.cfg.data.join("events.1.jsonl"));
+        }
+        if let Ok(mut f) = options.open(&path) {
             let _ = f.write_all(line.as_bytes());
         }
     }
@@ -371,6 +379,8 @@ impl App {
 
     pub(crate) async fn send_device(&self, dev: &DevicePublic, body: Body) -> Result<()> {
         let kind = body.kind();
+        // Presence and tips are superseded by the next one; never let them hold the store quota.
+        let replaceable = matches!(body, Body::Presence(_) | Body::Tip { .. });
         let payload_bytes = bincode::serialized_size(&body)?;
         let inner = Inner {
             from: self.name().to_string(),
@@ -381,7 +391,7 @@ impl App {
         let inner = envelope::authenticate(inner, &self.cfg.me, &recipient)?;
         let sealed = envelope::seal(&inner, &recipient)?;
         let peer: PeerId = dev.peer_id.parse()?;
-        let msg_id = self.mesh.send(peer, sealed.clone()).await?;
+        let msg_id = if replaceable { self.mesh.send_replaceable(peer, sealed.clone()).await? } else { self.mesh.send(peer, sealed.clone()).await? };
         self.event("mesh-send", json!({"kind": kind, "to": dev.name, "bytes": sealed.len(), "payload_bytes": payload_bytes, "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
         Ok(())
     }
@@ -1300,7 +1310,7 @@ impl App {
                     "incoming verification queue full; retry after sync");
                 st.1.deferred_payments.insert(s.txid.clone(), DeferredPayment {
                     from: from.into(), tx_hex: hex::encode(&tx), statement: statement.clone(), view_height: view.0,
-                    target_height, sync_generation: generation,
+                    target_height, sync_generation: generation, retry_generation: 0,
                 });
                 self.persist(&st.0, &st.1)?;
                 drop(st);
@@ -1570,8 +1580,12 @@ impl App {
         recipients.extend(self.peers.lock().unwrap().values().map(|s| s.announcement.body.device.clone()));
         recipients.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
         recipients.dedup_by(|a, b| a.peer_id == b.peer_id);
-        for dev in recipients { self.send_device(&dev, Body::Tip { height, hash: hash.into() }).await?; }
-        Ok(())
+        // One unreachable recipient must not stop the tip reaching the others.
+        let mut first_error = None;
+        for dev in recipients {
+            if let Err(e) = self.send_device(&dev, Body::Tip { height, hash: hash.into() }).await { first_error.get_or_insert(e); }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     fn enrolled_sender(&self, from: &str) -> bool {
@@ -1770,14 +1784,20 @@ impl App {
     pub async fn retry_tick(self: &Arc<Self>) {
         let mut deferred: Vec<_> = {
             let st = self.state.lock().unwrap();
-            st.1.deferred_payments.values().filter(|p| p.view_height != st.0.tip_height
-                || self.sync_generation.load(std::sync::atomic::Ordering::Relaxed) > p.sync_generation).cloned().collect()
+            let generation = self.sync_generation.load(std::sync::atomic::Ordering::Relaxed);
+            st.1.deferred_payments.values().filter(|p| generation >= p.retry_generation
+                && (p.view_height != st.0.tip_height || generation > p.sync_generation)).cloned().collect()
         };
         // Preserve each payer's sequence order when several anchors become known in one batch.
         deferred.sort_by_key(|p| p.statement.body.seq);
         for p in deferred {
+            let txid = p.statement.body.txid.clone();
             if let Err(e) = self.on_pay(&p.from, hex::decode(&p.tx_hex).unwrap_or_default(), p.statement).await {
-                self.event("deferred-payment-error", json!({"error": format!("{e:#}")}));
+                self.event("deferred-payment-error", json!({"txid": txid, "error": format!("{e:#}")}));
+                // Retry after the chain view changes, not on every tick: a failure that repeats each
+                // second only grows events.jsonl.
+                let generation = self.sync_generation.load(std::sync::atomic::Ordering::Relaxed);
+                if let Some(d) = self.state.lock().unwrap().1.deferred_payments.get_mut(&txid) { d.retry_generation = generation + 1; }
             }
         }
         let now = now_ms();

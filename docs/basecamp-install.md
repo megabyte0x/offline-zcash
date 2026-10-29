@@ -339,6 +339,12 @@ running after an install ([logos-basecamp#423](https://github.com/logos-co/logos
 fixed in 0.3.1). Your wallet is in `module_data` and is not touched by any of
 these steps.
 
+Upgrade the **service package (`zcash_offline_module`) first**, then the apps.
+Basecamp stops a running service only when that package itself is upgraded;
+upgrading an app alone leaves the old service running. v0.7.6 migrates its own
+data on start (mesh store, folder permissions), so no folder needs deleting or
+renaming.
+
 1. Check Basecamp's version, shown at the bottom of its left sidebar (for example
    `0.3.2 · Portable`), and update to
    [0.3.2 or newer](https://github.com/logos-co/logos-basecamp/releases/latest) if it is older.

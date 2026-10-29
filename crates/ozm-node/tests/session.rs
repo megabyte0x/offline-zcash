@@ -270,6 +270,10 @@ async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender(
         st.1.deferred_payments.get_mut(&p.txid).unwrap().statement = statement.clone();
         st.1.deferred_payments.get_mut(&second.txid).unwrap().from = g.public().unwrap().peer_id;
     }
+    // A failed retry waits for the next chain response instead of repeating every tick.
+    app.retry_tick().await;
+    assert!(app.payment(&p.txid).is_none());
+    for d in app.state.lock().unwrap().1.deferred_payments.values_mut() { d.retry_generation = 0; }
     app.retry_tick().await; // No second Pay message and no sender needed.
     assert_eq!(app.status()["pending_checks"], 0);
     assert!(app.state.lock().unwrap().1.refusals.is_empty());
@@ -760,6 +764,11 @@ fn leave_keeps_a_backup_and_session_exports() {
     join_invite(&std::fs::read_to_string(&result.devices[0].invite_path).unwrap(), &home).unwrap();
     let backup = ozm_node::leave_home(&home).unwrap();
     assert!(!home.exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&backup).unwrap().permissions().mode() & 0o777, 0o700, "key folders are owner-only");
+    }
     assert!(backup.file_name().unwrap().to_str().unwrap().starts_with("ozm-backup-20"));
     assert_eq!(std::fs::read(backup.join("secret.json")).unwrap(), secret);
     assert!(dir.path().join("sessions/1/G.invite.json").is_file());
@@ -791,7 +800,15 @@ fn leave_keeps_a_backup_and_session_exports() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     ozm_node::leave_home(&home).unwrap();
     ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 0).unwrap();
-    assert_ne!(std::fs::read(home.join("secret.json")).unwrap(), testnet, "empty wallets are not restored");
+    let fresh = std::fs::read(home.join("secret.json")).unwrap();
+    assert_ne!(fresh, testnet, "empty wallets are not restored");
+    // A payment still waiting for its chain view keeps the wallet worth restoring.
+    std::fs::create_dir_all(home.join("data")).unwrap();
+    std::fs::write(home.join("data/payments.json"), r#"{"payments":{},"refusals":[],"gateway":{},"deferred_payments":{"tx":{}}}"#).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ozm_node::leave_home(&home).unwrap();
+    ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Testnet, 0).unwrap();
+    assert_eq!(std::fs::read(home.join("secret.json")).unwrap(), fresh, "a deferred incoming payment is kept");
     // New wallet on request, even when the backup holds funds.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     ozm_node::leave_home(&home).unwrap();

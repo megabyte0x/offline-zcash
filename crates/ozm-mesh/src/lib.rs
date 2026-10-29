@@ -211,6 +211,15 @@ impl Mesh {
         self.node.originate(Kind::Message, to, payload)
     }
 
+    /// Like [`Mesh::send`] for a notice a newer one supersedes, such as presence or a chain tip:
+    /// it is delivered the same way, but this device's later packets may evict it from the store,
+    /// so notices to peers that never come back cannot exhaust the sender quota.
+    pub async fn send_replaceable(&self, to: PeerId, payload: Vec<u8>) -> Result<MsgId> {
+        ensure!(to != self.node.me, "cannot send to ourselves");
+        ensure!(to != PeerId::default(), "the zero PeerId is reserved for broadcasts");
+        self.node.originate_with(Kind::Message, to, payload, true)
+    }
+
     pub async fn broadcast(&self, payload: Vec<u8>) -> Result<MsgId> {
         self.node.originate(Kind::Broadcast, PeerId::default(), payload)
     }

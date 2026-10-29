@@ -23,6 +23,9 @@ pub(crate) struct Db {
     pub seen: HashMap<MsgId, u64>,
     /// Message ids an Ack has been seen for, with expiry (unix ms).
     pub acked: HashMap<MsgId, u64>,
+    /// Store format. 0 (before v0.7.6) could not mark replaceable notices; see `migrate`.
+    #[serde(default)]
+    pub format: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -30,6 +33,9 @@ pub(crate) struct Stored {
     /// The copy to send onward: ttl and hops already adjusted for the next link.
     pub packet: Packet,
     pub expires_ms: u64,
+    /// This device's own notice that a newer one supersedes (presence, tip). Local only.
+    #[serde(default)]
+    pub replaceable: bool,
 }
 
 impl Db {
@@ -61,9 +67,10 @@ impl Db {
 
     /// A sender's new packet may displace only that sender's entries, so other senders keep
     /// their quota, and never a held message. Every received sync chunk leaves an ack, and
-    /// nothing acks an ack, so a long catch-up would otherwise fill the sender's quota.
+    /// nothing acks an ack, so a long catch-up would otherwise fill the sender's quota. Our own
+    /// replaceable notices to absent peers (presence, tips) would fill it the same way.
     fn evictable(s: &Stored, p: &Packet, own: bool) -> bool {
-        s.packet.sender == p.sender && (s.packet.kind == Kind::Ack || (own && s.packet.kind == Kind::Broadcast))
+        s.packet.sender == p.sender && (s.packet.kind == Kind::Ack || (own && (s.packet.kind == Kind::Broadcast || s.replaceable)))
     }
 
     /// Evicts the sender's oldest evictable entries, acks first, until `p` fits. Returns false,
@@ -84,6 +91,17 @@ impl Db {
             if let Some(old) = map.iter().min_by_key(|(_, e)| **e).map(|(k, _)| *k) { map.remove(&old); }
         }
         map.insert(id, expiry);
+    }
+
+    /// Format 0 stores never marked this device's presence and tip notices as replaceable, so a
+    /// v0.7.5 device could hold 512 of them and refuse every new send. The app layer resends what
+    /// still matters (payments, submissions, results, sync requests), so our own unmarked messages
+    /// are dropped once; other senders' custody is kept.
+    pub fn migrate(&mut self, me: crate::PeerId) {
+        if self.format == 0 {
+            self.store.retain(|_, s| !(s.packet.sender == me && s.packet.kind == Kind::Message));
+            self.format = 1;
+        }
     }
 
     /// Old caches are transport data, not wallet history. Keep only bounded, live entries.

@@ -88,6 +88,7 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Node {
     pub fn new(cfg: MeshConfig, mut db: Db, events: mpsc::Sender<MeshEvent>) -> Self {
+        db.migrate(cfg.peer_id);
         db.constrain(now_ms(), cfg.store_ttl.as_millis().min(u64::MAX as u128) as u64);
         Node {
             me: cfg.peer_id,
@@ -283,6 +284,11 @@ impl Node {
     }
 
     pub fn originate(&self, kind: Kind, recipient: PeerId, payload: Vec<u8>) -> Result<MsgId> {
+        self.originate_with(kind, recipient, payload, false)
+    }
+
+    /// `replaceable`: a later own packet may evict this one from the store (see `Stored`).
+    pub fn originate_with(&self, kind: Kind, recipient: PeerId, payload: Vec<u8>, replaceable: bool) -> Result<MsgId> {
         let fragments = (1 + HEADER_LEN + payload.len()).div_ceil(self.cfg.mtu);
         ensure!(fragments <= MAX_FRAGMENTS, "payload too large: {} bytes", payload.len());
         let mut st = lock(&self.state);
@@ -306,6 +312,7 @@ impl Node {
         self.mark_seen(&mut st, &p);
         self.flood(&mut st, None, &p);
         self.store(&mut st, p);
+        if let Some(s) = st.db.store.get_mut(&id) { s.replaceable = replaceable; }
         self.persist(&st);
         Ok(id)
     }
@@ -337,7 +344,7 @@ impl Node {
     fn store(&self, st: &mut State, p: Packet) {
         if !st.db.make_room(&p, p.sender == self.me) { return; }
         let expires_ms = p.created_ms.saturating_add(self.store_ttl_ms());
-        st.db.store.insert(p.msg_id, Stored { packet: p, expires_ms });
+        st.db.store.insert(p.msg_id, Stored { packet: p, expires_ms, replaceable: false });
     }
 
     /// A link whose queue is full gets the packet later from its pending list, as the queue
@@ -608,6 +615,39 @@ mod tests {
         let mut next = st.db.store[&id].packet.clone();
         next.msg_id = MsgId::random();
         assert!(!st.db.can_store(&next) && st.db.can_make_room(&next, false));
+    }
+
+    #[test]
+    fn notices_to_absent_peers_never_block_held_messages() {
+        let (tx, _rx) = mpsc::channel(64);
+        let node = Node::new(MeshConfig::default(), Db::default(), tx);
+        let absent = PeerId([7; 8]);
+        // Presence and tips to a peer that never returns fill the quota without blocking.
+        for _ in 0..persist::MAX_SENDER_PACKETS + 5 {
+            node.originate_with(Kind::Message, absent, b"presence".to_vec(), true).unwrap();
+        }
+        assert_eq!(node.stats().stored, persist::MAX_SENDER_PACKETS);
+        // Held messages (sync requests, payments) displace them, and are never displaced.
+        for _ in 0..persist::MAX_SENDER_PACKETS {
+            node.originate(Kind::Message, absent, b"held".to_vec()).unwrap();
+        }
+        assert!(lock(&node.state).db.store.values().all(|s| !s.replaceable));
+        assert!(node.originate_with(Kind::Message, absent, b"presence".to_vec(), true).unwrap_err().is::<crate::StoreFull>());
+        // A v0.7.5 store full of our own unmarked messages is cleared once on load; other
+        // senders' custody stays.
+        let mut db = std::mem::take(&mut lock(&node.state).db);
+        db.format = 0;
+        let other = Packet { kind: Kind::Message, ttl: 7, hops: 1, msg_id: MsgId::random(), sender: PeerId([3; 8]),
+            recipient: absent, created_ms: now_ms(), payload: vec![1] };
+        db.store.insert(other.msg_id, persist::Stored { packet: other.clone(), expires_ms: u64::MAX, replaceable: false });
+        let (tx, _rx) = mpsc::channel(64);
+        let me = node.me;
+        let node = Node::new(MeshConfig { peer_id: me, ..Default::default() }, db, tx);
+        let st = lock(&node.state);
+        assert_eq!((st.db.store.len(), st.db.format), (1, 1));
+        assert!(st.db.store.contains_key(&other.msg_id));
+        drop(st);
+        assert!(node.originate(Kind::Message, absent, b"sync request".to_vec()).is_ok());
     }
 
     #[test]

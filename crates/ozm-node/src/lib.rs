@@ -183,7 +183,7 @@ pub fn fleet_init(o: &FleetInitOptions) -> Result<FleetInitResult> {
         }
     }
     let (fleet, secrets) = generate_fleet_on(&o.name, &devs, Policy::default(), o.network, o.birthday)?;
-    std::fs::create_dir_all(&o.out)?;
+    private_dir(&o.out)?;
     let folder = o.out.canonicalize()?;
     let fleet_path = folder.join("fleet.json");
     std::fs::write(&fleet_path, serde_json::to_string_pretty(&fleet)?)?;
@@ -226,6 +226,35 @@ pub fn home_dir(home: Option<PathBuf>) -> Result<PathBuf> {
     Ok(PathBuf::from(base).join(".ozm"))
 }
 
+/// Creates `path` and makes it owner-only (0700 on Unix): device folders hold spending keys.
+pub fn private_dir(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Tightens folders older releases created with the default umask (0755): this device's home,
+/// its `<home>-backup-*` folders and the sibling `sessions` exports, which hold invites.
+fn tighten_device_folders(home: &Path) {
+    let (Some(parent), Some(name)) = (home.parent(), home.file_name().and_then(|n| n.to_str())) else { return };
+    let backup = format!("{name}-backup-");
+    let Ok(entries) = std::fs::read_dir(parent) else { return };
+    for e in entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n == name || n.starts_with(&backup) || n == "sessions" {
+            let _ = private_dir(&e.path());
+            for sub in ["data", "sessions"].iter().map(|s| e.path().join(s)).filter(|p| p.is_dir()) { let _ = private_dir(&sub); }
+            if n == "sessions" {
+                for s in std::fs::read_dir(e.path()).into_iter().flatten().flatten().filter(|s| s.path().is_dir()) { let _ = private_dir(&s.path()); }
+            }
+        }
+    }
+}
+
 pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     zcash_offline_core::wallet::write_atomic(path, bytes)
 }
@@ -239,7 +268,7 @@ pub fn join_invite(invite_json: &str, home: &Path) -> Result<String> {
         let old: DeviceSecret = serde_json::from_str(&std::fs::read_to_string(home.join("secret.json"))?)?;
         anyhow::ensure!(old.ed25519_sk == inv.secret.ed25519_sk, "{} already holds device {}; use another home", home.display(), old.name);
     }
-    std::fs::create_dir_all(home)?;
+    private_dir(home)?;
     std::fs::write(home.join("fleet.json"), serde_json::to_string_pretty(&inv.fleet)?)?;
     write_private(&home.join("secret.json"), serde_json::to_string_pretty(&inv.secret)?.as_bytes())?;
     let label = |d: &zcash_offline_core::DevicePublic| if d.is_gateway() { format!("{} (gateway)", d.name) } else { d.name.clone() };
@@ -323,15 +352,17 @@ pub fn join_open_with(home: &Path, network: Network, birthday: u32, restore: boo
     Ok(())
 }
 
-/// The newest `<home>-backup-*` folder that holds an invite-free wallet on `network` with notes or
-/// payment history. Leave keeps whole device folders there, so the device's own wallet outlives
-/// sessions and invited joins. An empty wallet is not restored: its old scan start would only make
-/// a new start rescan history that holds nothing, while new keys start near the tip.
+/// The newest `<home>-backup-*` folder that holds an invite-free wallet on `network` with notes,
+/// payment history or an incoming payment waiting for its chain view. Leave keeps whole device
+/// folders there, so the device's own wallet outlives sessions and invited joins. An empty wallet
+/// is not restored: its old scan start would only make a new start rescan history that holds
+/// nothing, while new keys start near the tip.
 fn kept_wallet(home: &Path, network: Network) -> Option<PathBuf> {
     let used = |b: &Path| {
         let wallet = zcash_offline_core::wallet::WalletState::load(&b.join("data/wallet.json"));
         let payments = std::fs::read(b.join("data/payments.json")).ok()
-            .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).map_or(true, |v| v["payments"].as_object().is_none_or(|p| !p.is_empty())));
+            .map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).map_or(true, |v| v["payments"].as_object().is_none_or(|p| !p.is_empty())
+                || v["deferred_payments"].as_object().is_some_and(|d| !d.is_empty())));
         // Unreadable files count as used: never trade possibly owned funds for speed.
         wallet.map_or(true, |w| w.first_note_height.is_some()) || payments.unwrap_or(false)
     };
@@ -379,7 +410,8 @@ pub async fn start(o: &RunOpts) -> Result<Arc<App>> {
     if let Some(url) = rpc.as_deref().filter(|_| fleet.network == Network::Regtest) {
         regtest_rpc_url(url)?;
     }
-    std::fs::create_dir_all(&o.data)?;
+    private_dir(&o.data)?;
+    if let Some(home) = o.secret.parent() { tighten_device_folders(home); }
     let discovery = o.discover.then(|| Discovery { port: o.discovery_port, ..Default::default() });
     let (mesh, mut events) = Mesh::start(MeshConfig {
         peer_id: pubme.peer_id.parse()?,
