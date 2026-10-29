@@ -1,0 +1,13 @@
+// Deploy with `npx wrangler deploy` from this folder.
+{
+  "name": "offline-zcash",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": true },
+  "routes": [
+    { "pattern": "offlinezcash.com", "custom_domain": true },
+    { "pattern": "www.offlinezcash.com", "custom_domain": true },
+    { "pattern": "offlinezec.com", "custom_domain": true },
+    { "pattern": "www.offlinezec.com", "custom_domain": true }
+  ]
+}

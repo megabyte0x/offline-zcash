@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline Zcash: pay without the internet</title>
+<meta name="description" content="Private Zcash payments that work without the internet: pay phone to phone, pass it through the people nearby, and settle when anyone gets back online.">
+<meta property="og:title" content="Offline Zcash: pay without the internet">
+<meta property="og:description" content="Private digital cash for when the network goes dark.">
+<meta property="og:image" content="https://offlinezcash.com/img/pay.jpg">
+<link rel="canonical" href="https://offlinezcash.com/">
+<meta name="theme-color" content="#0a0c0b">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0a0c0b;
+  --ink-2: #121513;
+  --ink-3: #1a1e1b;
+  --cream: #ececE4;
+  --cream-dim: rgba(236, 236, 228, .62);
+  --cream-faint: rgba(236, 236, 228, .32);
+  --line: rgba(236, 236, 228, .16);
+  --gold: #e2e0c9;
+  --serif: "Instrument Serif", "Rhymes Display", Georgia, serif;
+  --sans: "Public Sans", system-ui, -apple-system, sans-serif;
+  --mono: "Fira Code", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+html, body { overflow-x: hidden; }
+@supports (overflow: clip) { html, body { overflow-x: clip; } }
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--cream);
+  font: 400 17px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+img { display: block; }
+::selection { background: var(--cream); color: var(--ink); }
+
+/* Film grain over everything, like archival footage. */
+body::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 100;
+  opacity: .07;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  animation: grain 1.2s steps(6) infinite;
+}
+@keyframes grain {
+  0% { background-position: 0 0; } 20% { background-position: -37px 21px; }
+  40% { background-position: 23px -41px; } 60% { background-position: -19px -13px; }
+  80% { background-position: 41px 33px; } 100% { background-position: 0 0; }
+}
+
+.kicker {
+  font: 400 12px/1.4 var(--mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--cream);
+}
+.serif { font-family: var(--serif); font-weight: 400; letter-spacing: -.02em; }
+
+/* ---------- Header ---------- */
+.top {
+  position: fixed; inset: 0 0 auto 0; z-index: 50;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 14px 28px;
+  transition: background .4s;
+}
+.top.solid { background: rgba(10,12,11,.55); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.brand-mark {
+  font: italic 34px/1 var(--serif);
+  width: 34px; text-align: center;
+}
+.brand-name { font: 400 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--cream-dim); }
+.pills {
+  display: flex;
+  border: 1px solid var(--cream-faint);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  background: rgba(10,12,11,.25);
+  overflow: hidden;
+}
+.pills a {
+  padding: 9px 20px;
+  font: 400 11px var(--mono); letter-spacing: .2em; text-transform: uppercase;
+  text-decoration: none; color: var(--cream-dim);
+  transition: color .2s, background .2s;
+}
+.pills a + a { border-left: 1px solid var(--cream-faint); }
+.pills a:hover, .pills a.on { color: var(--cream); background: rgba(236,236,228,.08); }
+.top-right { justify-self: end; }
+.ghost {
+  font: 400 11px var(--mono); letter-spacing: .18em; text-transform: uppercase;
+  color: var(--cream-dim); text-decoration: none;
+  padding: 9px 16px; border: 1px solid var(--cream-faint); border-radius: 999px;
+}
+.ghost:hover { color: var(--cream); border-color: var(--cream); }
+
+/* ---------- Scenes: sharp image above, frosted band below ---------- */
+.scene {
+  position: relative;
+  height: 100vh; min-height: 640px;
+  overflow: hidden;
+  background: #000;
+}
+.scene > img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover;
+  filter: grayscale(1) contrast(1.05) brightness(.82);
+  transform: scale(1.04);
+  transition: transform 8s ease-out;
+}
+.scene.in > img { transform: scale(1); }
+.band {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 50%;
+  backdrop-filter: blur(22px) brightness(.62) saturate(0);
+  -webkit-backdrop-filter: blur(22px) brightness(.62) saturate(0);
+  background: rgba(10,12,11,.28);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px 24px 56px;
+}
+.band h1, .band h2 { margin: 14px 0 16px; line-height: .95; }
+.band h1 { font-size: clamp(56px, 8.4vw, 132px); }
+.band h2 { font-size: clamp(46px, 6.4vw, 100px); }
+.band p { margin: 0 auto; max-width: 820px; font-size: 18px; color: var(--cream); }
+.cursor {
+  display: inline-block; width: .42em; height: .78em;
+  background: var(--cream); margin-left: .06em; vertical-align: -.04em;
+  animation: blink 1.05s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Timeline under the hero title */
+.timeline {
+  position: relative;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  width: min(1000px, 92vw); margin: 40px auto 0;
+}
+.timeline::before {
+  content: ""; position: absolute; top: 5px; left: 16.66%; right: 16.66%;
+  height: 1px; background: var(--cream-faint);
+}
+.timeline a { position: relative; text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.timeline .dot {
+  width: 11px; height: 11px; border-radius: 50%; background: var(--cream);
+  box-shadow: 0 0 0 6px rgba(236,236,228,.08);
+  transition: box-shadow .3s;
+}
+.timeline a:hover .dot { box-shadow: 0 0 0 10px rgba(236,236,228,.16); }
+.timeline .lbl { font: 400 23px var(--serif); letter-spacing: -.01em; }
+.timeline a.dim .lbl { color: var(--cream-dim); }
+.scroll-hint { margin-top: 36px; color: var(--cream-dim); text-decoration: none; }
+
+/* Horizontal chapter track */
+.chapters { position: relative; height: 300vh; }
+.chapters-sticky { position: sticky; top: 0; height: 100vh; overflow: hidden; }
+.track { display: flex; width: 300vw; height: 100%; will-change: transform; }
+.track .scene { width: 100vw; flex: none; height: 100vh; }
+.progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--cream); width: 0; z-index: 3; }
+.chapter-count { position: absolute; right: 28px; bottom: 22px; z-index: 3; color: var(--cream-dim); }
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 26px; padding: 11px 20px;
+  border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--cream); color: var(--ink);
+  font: 500 11px var(--mono); letter-spacing: .18em; text-transform: uppercase;
+  text-decoration: none;
+  transition: transform .2s, background .2s;
+}
+.btn:hover { transform: translateY(-1px); background: #fff; }
+.btn.line { background: transparent; color: var(--cream); border: 1px solid var(--cream-faint); }
+.btn.line:hover { border-color: var(--cream); background: rgba(236,236,228,.06); }
+
+/* ---------- Install ---------- */
+.section { padding: 140px 28px; }
+.wrap { max-width: 1120px; margin: 0 auto; }
+.head { text-align: center; margin-bottom: 56px; }
+.head h2 { font-size: clamp(48px, 6vw, 92px); line-height: 1; margin: 16px 0 18px; }
+.head p { max-width: 680px; margin: 0 auto; color: var(--cream-dim); }
+
+.role-switch {
+  display: grid; grid-template-columns: 1fr 1fr;
+  max-width: 760px; margin: 0 auto 64px;
+  border: 1px solid var(--cream-faint); border-radius: 999px; padding: 5px;
+  position: relative;
+}
+.role-switch .slider {
+  position: absolute; top: 5px; bottom: 5px; left: 5px; width: calc(50% - 5px);
+  background: var(--cream); border-radius: 999px;
+  transition: transform .45s cubic-bezier(.7,0,.2,1);
+}
+.role-switch[data-role="gateway"] .slider { transform: translateX(100%); }
+.role-switch button {
+  position: relative; z-index: 1;
+  background: none; border: 0; cursor: pointer; color: var(--cream-dim);
+  padding: 14px 18px; border-radius: 999px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  transition: color .3s;
+}
+.role-switch button b { font: 400 26px/1.1 var(--serif); color: inherit; letter-spacing: -.01em; }
+.role-switch button span { font: 400 10.5px var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+.role-switch button[aria-selected="true"] { color: var(--ink); }
+
+.reqs {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin-bottom: 72px;
+}
+.reqs > div { padding: 24px 22px; }
+.reqs > div + div { border-left: 1px solid var(--line); }
+.reqs .kicker { color: var(--cream-dim); margin-bottom: 10px; }
+.reqs p { margin: 0; font-size: 15px; }
+.reqs code { font: 13px var(--mono); }
+
+.path { display: none; }
+.path.on { display: block; animation: rise .6s ease both; }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+.step {
+  display: grid; grid-template-columns: 140px 1fr; gap: 32px;
+  padding: 40px 0; border-top: 1px solid var(--line);
+  counter-increment: s;
+}
+.step:last-child { border-bottom: 1px solid var(--line); }
+.step::before {
+  content: counter(s, decimal-leading-zero);
+  font: 400 88px/0.9 var(--serif); color: var(--cream-faint);
+  letter-spacing: -.03em;
+  transition: color .5s;
+}
+.step.seen::before { color: var(--cream); }
+.step > div { min-width: 0; }
+.step h3 { font: 400 38px/1.1 var(--serif); letter-spacing: -.015em; margin: 6px 0 12px; }
+.step p, .step li { color: var(--cream-dim); margin: 0 0 10px; max-width: 760px; }
+.step p strong, .step li strong { color: var(--cream); font-weight: 500; }
+.step ul { padding-left: 20px; margin: 0 0 10px; }
+.step a { text-decoration-color: var(--cream-faint); text-underline-offset: 3px; }
+.step a:hover { text-decoration-color: var(--cream); }
+.tag { display: inline-block; margin-right: 6px; padding: 3px 9px; border: 1px solid var(--cream-faint); border-radius: 999px; font: 400 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--cream); vertical-align: 2px; }
+.ui { font: 500 14.5px var(--sans); color: var(--cream); background: rgba(236,236,228,.08); border: 1px solid var(--line); padding: 1px 7px; border-radius: 5px; white-space: nowrap; }
+code { font-family: var(--mono); font-size: .86em; color: var(--cream); }
+
+.copy {
+  display: flex; align-items: stretch; margin: 16px 0 12px; max-width: 760px;
+  border: 1px solid var(--cream-faint); border-radius: 10px; overflow: hidden;
+  background: var(--ink-2);
+}
+.copy pre { margin: 0; padding: 14px 16px; flex: 1; overflow-x: auto; font: 13.5px/1.7 var(--mono); color: var(--cream); }
+.copy button {
+  flex: none; border: 0; border-left: 1px solid var(--cream-faint);
+  background: transparent; color: var(--cream); cursor: pointer;
+  padding: 0 18px; font: 500 11px var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  min-width: 96px; transition: background .2s;
+}
+.copy button:hover { background: rgba(236,236,228,.08); }
+.copy button.done { background: var(--cream); color: var(--ink); }
+
+.states { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 10px; }
+.states span { font: 12px var(--mono); padding: 6px 12px; border: 1px solid var(--cream-faint); border-radius: 999px; }
+.states i { font-style: normal; color: var(--cream-faint); }
+
+details.more {
+  margin-top: 40px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--ink-2);
+}
+details.more summary {
+  cursor: pointer; list-style: none; padding: 22px 26px;
+  display: flex; align-items: center; gap: 16px;
+  font: 400 26px var(--serif);
+}
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary .kicker { color: var(--cream-dim); margin-left: auto; }
+details.more summary::after { content: "+"; font: 300 28px var(--sans); color: var(--cream-dim); transition: transform .3s; }
+details.more[open] summary::after { transform: rotate(45deg); }
+details.more .inner { padding: 0 26px 26px; color: var(--cream-dim); }
+details.more .inner ol { padding-left: 20px; }
+details.more .inner li { margin-bottom: 8px; }
+
+/* ---------- Why ---------- */
+.why { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+.why > div { padding: 40px 40px 40px 0; border-bottom: 1px solid var(--line); }
+.why > div:nth-child(even) { padding-left: 40px; padding-right: 0; border-left: 1px solid var(--line); }
+.why-n { display: block; font-size: 22px; font-style: italic; color: var(--cream-faint); }
+.why h3 { font: 400 40px/1.05 var(--serif); letter-spacing: -.015em; margin: 8px 0 12px; }
+.why p { margin: 0; color: var(--cream-dim); max-width: 460px; }
+
+/* ---------- Trust ---------- */
+.trust { background: var(--cream); color: var(--ink); }
+.trust .head p { color: rgba(10,12,11,.66); }
+.trust .kicker { color: var(--ink); }
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid rgba(10,12,11,.18); }
+.cards > div { padding: 30px 24px 10px 0; }
+.cards > div + div { padding-left: 24px; border-left: 1px solid rgba(10,12,11,.18); }
+.cards h3 { font: 400 30px/1.1 var(--serif); margin: 12px 0 10px; letter-spacing: -.01em; }
+.cards p { margin: 0; font-size: 15px; color: rgba(10,12,11,.72); }
+
+/* ---------- Troubleshooting ---------- */
+.fix { width: 100%; border-collapse: collapse; }
+.fix td { padding: 18px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.fix tr:last-child td { border-bottom: 1px solid var(--line); }
+.fix td:first-child { width: 38%; font: 400 22px/1.25 var(--serif); padding-right: 28px; }
+.fix td:last-child { color: var(--cream-dim); }
+
+/* ---------- Footer ---------- */
+.end { position: relative; height: 92vh; min-height: 560px; }
+.end .band { height: 62%; }
+.end h2 { font-size: clamp(44px, 6vw, 96px); }
+.end .links { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+.foot { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 26px 28px; color: var(--cream-faint); border-top: 1px solid var(--line); }
+
+/* ---------- Reveal ---------- */
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity .9s ease, transform .9s ease; }
+.reveal.in { opacity: 1; transform: none; }
+
+/* ---------- Small screens: chapters stack vertically ---------- */
+@media (max-width: 860px) {
+  .pills { display: none; }
+  .top { grid-template-columns: 1fr auto; }
+  .chapters { height: auto; }
+  .chapters-sticky { position: static; height: auto; }
+  .track { flex-direction: column; width: 100%; transform: none !important; }
+  .track .scene { width: 100%; }
+  .progress, .chapter-count { display: none; }
+  .band { height: 62%; }
+  .band p { font-size: 16px; }
+  .timeline .lbl { font-size: 15px; line-height: 1.15; padding: 0 4px; text-align: center; }
+  .role-switch button span { display: none; }
+  .reqs, .cards { grid-template-columns: 1fr 1fr; }
+  .why { grid-template-columns: 1fr; }
+  .why > div, .why > div:nth-child(even) { padding: 28px 0; border-left: 0; }
+  .why h3 { font-size: 32px; }
+  .reqs > div:nth-child(3) { border-left: 0; }
+  .reqs > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .cards > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  .step { grid-template-columns: 1fr; gap: 6px; }
+  .ui { white-space: normal; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .step::before { font-size: 60px; }
+  .role-switch button b { font-size: 20px; }
+  .fix td { display: block; width: auto !important; }
+  .fix td:last-child { border-top: 0; padding-top: 0; }
+  .section { padding: 96px 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="top" id="top">
+  <a class="brand" href="#hero" aria-label="Offline Zcash home">
+    <span class="brand-mark">z</span>
+    <span class="brand-name">Offline Zcash</span>
+  </a>
+  <nav class="pills" aria-label="Sections">
+    <a href="#why">Why</a>
+    <a href="#install" data-role-link="user">Install as user</a>
+    <a href="#install" data-role-link="gateway">Install as gateway</a>
+  </nav>
+  <div class="top-right"><a class="ghost" href="https://github.com/megabyte0x/offline-zcash">GitHub ↗</a></div>
+</header>
+
+<main>
+  <!-- Hero: value proposition -->
+  <section class="scene in" id="hero">
+    <img src="img/pay.jpg" alt="A night market during a blackout; two people exchange a payment with their phones">
+    <div class="band">
+      <div class="kicker">Private digital cash for when the network goes dark</div>
+      <h1 class="serif">Pay without the internet.<span class="cursor" aria-hidden="true"></span></h1>
+      <p>Send and receive private Zcash payments phone to phone and laptop to laptop, with no signal and no bank in between.
+        Your payment travels through the people around you and settles as soon as anyone gets back online.</p>
+      <nav class="timeline" aria-label="Chapters">
+        <a href="#chapters" data-ch="0"><span class="dot"></span><span class="lbl">Pay offline</span></a>
+        <a href="#chapters" data-ch="1"><span class="dot"></span><span class="lbl">Pass it along</span></a>
+        <a href="#chapters" data-ch="2"><span class="dot"></span><span class="lbl">Settle later</span></a>
+      </nav>
+      <a class="kicker scroll-hint" href="#why">Scroll ↓</a>
+    </div>
+  </section>
+
+  <!-- Why -->
+  <section class="section" id="why">
+    <div class="wrap">
+      <div class="head reveal">
+        <div class="kicker">Why it matters</div>
+        <h2 class="serif">Money stops when<br>the network stops.</h2>
+        <p>Card terminals, banking apps and crypto wallets all assume a live connection. When it disappears, so does the ability to pay,
+          exactly when people need it most. Cash still works offline, but it can't cross distance and it isn't private by design.</p>
+      </div>
+      <div class="why reveal">
+        <div><span class="why-n serif">i.</span><h3 class="serif">Blackouts &amp; disasters</h3><p>Storms, floods and power cuts take mobile networks down for days. Food, fuel and medicine still have to be paid for.</p></div>
+        <div><span class="why-n serif">ii.</span><h3 class="serif">Shutdowns &amp; censorship</h3><p>Governments switch off the internet during protests and elections. Payment rails that need permission can be switched off with it.</p></div>
+        <div><span class="why-n serif">iii.</span><h3 class="serif">Places the signal never reached</h3><p>Rural villages, ships, mountains and border towns live with weak or no coverage every day, not only in emergencies.</p></div>
+        <div><span class="why-n serif">iv.</span><h3 class="serif">Crowds &amp; congestion</h3><p>Festivals, stadiums and markets overload the network. Lines grow while phones search for a signal.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works, scrolled horizontally -->
+  <section class="chapters" id="chapters" aria-label="How it works">
+    <div class="chapters-sticky">
+      <div class="track" id="track">
+        <article class="scene">
+          <img src="img/pay.jpg" alt="" loading="lazy">
+          <div class="band">
+            <div class="kicker">01 · Pay offline</div>
+            <h2 class="serif">Your device is the bank</h2>
+            <p>Your wallet creates and signs the payment itself. No server, no account, no signal needed.
+              Enter an address and an amount, and press Send.</p>
+            <a class="btn" href="#install" data-role-link="user">Install as user →</a>
+          </div>
+        </article>
+        <article class="scene">
+          <img src="img/carry.jpg" alt="" loading="lazy">
+          <div class="band">
+            <div class="kicker">02 · Pass it along</div>
+            <h2 class="serif">The people around you are the network</h2>
+            <p>Nearby devices pass the sealed payment from one to the next until it reaches the person you are paying.
+              Nobody along the way can read it or change it, and the payee gets a signed receipt.</p>
+          </div>
+        </article>
+        <article class="scene">
+          <img src="img/settle.jpg" alt="" loading="lazy">
+          <div class="band">
+            <div class="kicker">03 · Settle later</div>
+            <h2 class="serif">One connection is enough</h2>
+            <p>When any device in the group, the gateway, has internet, it publishes the payment to the Zcash network
+              and passes the confirmation back to everyone.</p>
+            <a class="btn" href="#install" data-role-link="gateway">Install as gateway →</a>
+          </div>
+        </article>
+      </div>
+      <div class="progress" id="progress"></div>
+      <div class="kicker chapter-count" id="count">01 / 03</div>
+    </div>
+  </section>
+
+  <!-- Value -->
+  <section class="section trust" id="value">
+    <div class="wrap">
+      <div class="head reveal">
+        <div class="kicker">What you get</div>
+        <h2 class="serif">Cash, without the paper.</h2>
+        <p>Everything people like about cash, plus what cash can't do.</p>
+      </div>
+      <div class="cards reveal">
+        <div><div class="kicker">Always on</div><h3>Works offline</h3><p>Pay and get paid with no signal, no Wi-Fi and no data plan. A local network is enough.</p></div>
+        <div><div class="kicker">Private</div><h3>Yours alone</h3><p>Built on shielded Zcash, and every payment is sealed for the person you pay. Devices carry it along without being able to read it.</p></div>
+        <div><div class="kicker">Direct</div><h3>No one in between</h3><p>No bank, card network or payment company has to approve your payment. It goes straight from you to the person you pay.</p></div>
+        <div><div class="kicker">Together</div><h3>Everyone helps</h3><p>Every device relays for its neighbours. The more people join, the further payments reach.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section class="section" id="install">
+    <div class="wrap">
+      <div class="head reveal">
+        <div class="kicker">Get started</div>
+        <h2 class="serif">Choose your part.</h2>
+        <p>Most people only need the wallet. A group needs one gateway: a laptop that also has internet and keeps everyone's payments moving to the network.</p>
+      </div>
+
+      <div class="role-switch reveal" id="roles" role="tablist" data-role="user">
+        <span class="slider" aria-hidden="true"></span>
+        <button role="tab" id="tab-user" aria-controls="path-user" aria-selected="true" data-role="user">
+          <b>User</b><span>I want to pay &amp; get paid</span>
+        </button>
+        <button role="tab" id="tab-gateway" aria-controls="path-gateway" aria-selected="false" data-role="gateway">
+          <b>Gateway</b><span>I connect my group to the network</span>
+        </button>
+      </div>
+
+      <div class="reqs reveal">
+        <div><div class="kicker">App</div><p>Free <strong>Logos Basecamp</strong> app</p></div>
+        <div><div class="kicker">Computer</div><p>Mac with Apple silicon, or a recent Linux</p></div>
+        <div><div class="kicker">Nearby</div><p>Same Wi-Fi or local network as the group</p></div>
+        <div><div class="kicker">Gateway only</div><p>An internet connection</p></div>
+      </div>
+
+      <!-- User path -->
+      <div class="path on" id="path-user" role="tabpanel" aria-labelledby="tab-user">
+        <ol class="steps">
+          <li class="step">
+            <div>
+              <h3>Get Logos Basecamp</h3>
+              <p>Download it from the <a href="https://github.com/logos-co/logos-basecamp/releases/latest">Basecamp release page</a> and open it.
+                On a Mac, right-click → <strong>Open</strong> the first time.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Add Offline Zcash</h3>
+              <p>In Basecamp, open <span class="ui">Settings → Package Repositories</span>, paste this link, click <span class="ui">Add</span>, then <span class="ui">Refresh</span>.</p>
+              <div class="copy"><pre>https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json</pre><button type="button" data-copy>Copy</button></div>
+              <p>Then open <span class="ui">Manage Packages</span>, search <strong>zcash</strong>, and install <strong>Offline Zcash service</strong> and <strong>Offline Zcash</strong>.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Open your wallet</h3>
+              <p>Open <strong>Offline Zcash</strong> and click <span class="ui">Start without invite</span>. Your wallet and address are created on your device, and nobody else ever sees your keys.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Add funds while you're online</h3>
+              <p>Copy your address and add test coins from a free <a href="https://faucet.testnet.valargroup.dev">testnet faucet</a>.
+                The wallet gets them ready for offline use on its own. Wait until they show as <strong>mined</strong>, then you're set to go offline.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Pay anyone nearby</h3>
+              <p>Paste the other person's address under <span class="ui">Send</span>, enter an amount and press <span class="ui">Send</span>. To get paid, share
+                <span class="ui">Your address</span>. Your payments list shows each one move from sent to confirmed.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <!-- Gateway path -->
+      <div class="path" id="path-gateway" role="tabpanel" aria-labelledby="tab-gateway">
+        <ol class="steps">
+          <li class="step">
+            <div>
+              <h3>Get Logos Basecamp</h3>
+              <p>Use a laptop that has internet and is on the same Wi-Fi or local network as your group. Download Basecamp from the
+                <a href="https://github.com/logos-co/logos-basecamp/releases/latest">Basecamp release page</a> and open it.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Add the gateway apps</h3>
+              <p>Open <span class="ui">Settings → Package Repositories</span>, paste this link, click <span class="ui">Add</span>, then <span class="ui">Refresh</span>.</p>
+              <div class="copy"><pre>https://raw.githubusercontent.com/megabyte0x/offline-zcash/main/logos-repo.json</pre><button type="button" data-copy>Copy</button></div>
+              <p>In <span class="ui">Manage Packages</span>, search <strong>zcash</strong> and install <strong>Offline Zcash service</strong>,
+                <strong>Offline Zcash Organiser</strong> and <strong>Offline Zcash Gateway</strong>. Add <strong>Offline Zcash</strong> too if you also want to pay from this laptop.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Create your group</h3>
+              <p>Open <strong>Offline Zcash Organiser</strong>, keep <span class="ui">This device is the gateway</span> ticked and click
+                <span class="ui">Create gateway session</span>. Nobody else needs an invite: their wallets find your gateway automatically.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Start the gateway</h3>
+              <p>Open <strong>Offline Zcash Gateway</strong>, click <span class="ui">Check chain service</span>, then <span class="ui">Start gateway</span>.
+                No server or special hardware is needed.</p>
+            </div>
+          </li>
+          <li class="step">
+            <div>
+              <h3>Keep it running</h3>
+              <p>Leave Basecamp open and connected. Your gateway quietly sends the group's payments to the Zcash network and brings the confirmations back.
+                Share your gateway's ID from <strong>Debug</strong> with your group so they know they're connected to you.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <p style="text-align:center;margin-top:48px"><a class="btn line" href="https://github.com/megabyte0x/offline-zcash/blob/main/docs/basecamp-install.md">Full install guide &amp; troubleshooting ↗</a></p>
+    </div>
+  </section>
+
+  <!-- Good to know -->
+  <section class="section" id="note" style="padding-top:40px">
+    <div class="wrap">
+      <table class="fix reveal">
+        <tr><td>Early and experimental</td><td>Offline Zcash is a working prototype running on the Zcash test network with free test coins. Don't use it for real money yet; it has not had a security review.</td></tr>
+        <tr><td>Trust your gateway</td><td>Confirmations come from your group's gateway. Use one run by someone you know.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- Closing scene -->
+  <section class="scene end" id="end">
+    <img src="img/carry.jpg" alt="" loading="lazy">
+    <div class="band">
+      <div class="kicker">Offline Zcash</div>
+      <h2 class="serif">Money that waits for no signal.</h2>
+      <div class="links">
+        <a class="btn" href="#install" data-role-link="user">Install as user</a>
+        <a class="btn" href="#install" data-role-link="gateway">Install as gateway</a>
+        <a class="btn line" href="https://github.com/megabyte0x/offline-zcash">Source ↗</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot kicker">
+  <span>Built for Logos Basecamp</span>
+  <span>Experimental · testnet only · not security reviewed</span>
+</footer>
+
+<script>
+(() => {
+  // Header turns solid after the hero.
+  const top = document.getElementById("top");
+  const onScrollHeader = () => top.classList.toggle("solid", scrollY > 40);
+
+  // Chapters: vertical scroll drives a horizontal track on wide screens.
+  const chapters = document.getElementById("chapters");
+  const track = document.getElementById("track");
+  const progress = document.getElementById("progress");
+  const count = document.getElementById("count");
+  const scenes = [...track.children];
+  const wide = matchMedia("(min-width: 861px)");
+  const onScrollChapters = () => {
+    if (!wide.matches) return;
+    const r = chapters.getBoundingClientRect();
+    const span = chapters.offsetHeight - innerHeight;
+    const p = Math.min(1, Math.max(0, -r.top / span));
+    track.style.transform = `translateX(${-p * (scenes.length - 1) * 100}vw)`;
+    progress.style.width = `${p * 100}%`;
+    const i = Math.round(p * (scenes.length - 1));
+    count.textContent = `0${i + 1} / 0${scenes.length}`;
+    scenes.forEach((s, k) => s.classList.toggle("in", k === i));
+  };
+  document.querySelectorAll(".timeline a").forEach(a => a.addEventListener("click", e => {
+    if (!wide.matches) return;
+    e.preventDefault();
+    const span = chapters.offsetHeight - innerHeight;
+    scrollTo({ top: chapters.offsetTop + span * (+a.dataset.ch / (scenes.length - 1)), behavior: "smooth" });
+  }));
+
+  addEventListener("scroll", () => { onScrollHeader(); onScrollChapters(); }, { passive: true });
+  addEventListener("resize", onScrollChapters);
+  onScrollHeader(); onScrollChapters();
+
+  // Role switch, also reachable from #user / #gateway links.
+  const roles = document.getElementById("roles");
+  const setRole = role => {
+    roles.dataset.role = role;
+    roles.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.role === role));
+    document.querySelectorAll(".path").forEach(p => p.classList.toggle("on", p.id === "path-" + role));
+    document.querySelectorAll(".pills [data-role-link]").forEach(a => a.classList.toggle("on", a.dataset.roleLink === role));
+    history.replaceState(null, "", "#" + role);
+    observeSteps();
+  };
+  roles.querySelectorAll("button").forEach(b => b.addEventListener("click", () => setRole(b.dataset.role)));
+  document.querySelectorAll("[data-role-link]").forEach(a => a.addEventListener("click", () => setRole(a.dataset.roleLink)));
+
+  // Copy buttons.
+  document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(b.previousElementSibling.textContent.trim());
+    b.textContent = "Copied"; b.classList.add("done");
+    setTimeout(() => { b.textContent = "Copy"; b.classList.remove("done"); }, 1600);
+  }));
+
+  // Reveal on scroll; step numbers light up as you read.
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add(e.target.classList.contains("step") ? "seen" : "in"); io.unobserve(e.target); }
+  }), { threshold: .25 });
+  document.querySelectorAll(".reveal, .scene.end").forEach(el => io.observe(el));
+  function observeSteps() { document.querySelectorAll(".path.on .step:not(.seen)").forEach(el => io.observe(el)); }
+  observeSteps();
+
+  if (location.hash === "#gateway" || location.hash === "#user") {
+    setRole(location.hash.slice(1));
+    document.getElementById("install").scrollIntoView();
+  }
+})();
+</script>
+</body>
+</html>

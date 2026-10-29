@@ -9,6 +9,9 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+### Added
+- The homepage at [offlinezcash.com](https://offlinezcash.com) (source in `site/`, deployed as a Cloudflare Worker) explains the payment flow and gives step-by-step Basecamp install instructions for wallet users and for gateways.
+
 ## [0.7.7] - 2026-10-29
 
 ### Fixed
