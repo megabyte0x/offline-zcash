@@ -1,32 +1,78 @@
-# Docs
+# Documentation
 
-Offline Zcash payments: a signed, proven Ironwood transaction moves between devices over a mesh with no internet, and a device with internet submits it.
+Offline Zcash carries signed, proven shielded payments over a local mesh to an
+internet-connected gateway. **Current release: v0.7.7, 29 October 2026.**
+The experiment uses public-testnet TAZ; local Regtest is the development harness.
+Mainnet is unsupported. Gateway signatures authenticate reports, not chain truth.
 
-Rule: the design target is mainnet with an untrusted gateway; the local `ths` Regtest chain is a test harness and never a reason to weaken a check ([design.md](design.md)).
+## Start here
 
-Current state (28 October 2026): **v0.1.0 to v0.6.0** ran on the local NU7 chain: a payment built offline hops across the mesh, the payee checks it and sends a receipt, a gateway mines it and the result comes back. v0.2.0 is an installable `ozm-node` with LAN discovery; v0.3.0 runs the same device inside Logos Basecamp. **v0.4.0** adds an Android BLE + LAN test app and **v0.4.1** experimental Bluetooth on Linux (`ozm-node --ble`, Basecamp toggle); no real phone or radio has been tested yet. **v0.5.0** adds Basecamp Organiser and Gateway apps alongside the existing node app, all sharing one service; four `.lgx` packages per platform. **v0.5.1** adds public catalogue installation by name and changelog-driven releases. **v0.6.0** adds invite-free joining, payments by address and exact builder-fee Max, with signed envelopes/acks, pinned gateway/address identities and local API protection. Open devices wait for gateway-reported inclusion, never pending acceptance; chain facts are not independently proved. **v0.7.0** targets NU7 public testnet: the gateway is a light client of TLS lightwalletd servers (`testnet.zec.rocks`, `zaino.testnet.unsafe.zec.rocks`), with Regtest via `ths` v0.4.1 kept for benches; `included` (1 confirmation) and `mined` (10) are gateway-reported. **v0.7.1** clarifies the UIs and **v0.7.2** hardens mesh, gateway and wallet limits. **v0.7.3** focuses on the Basecamp apps on macOS and Linux; Android is not the current focus. It keeps only the gateway role (every device pays, receives and relays), drops the LAN/BLE fleet tag, adds **Leave session** to the Basecamp apps (not on Android or in the `ozm-node` CLI, which uses another `--home`) and checks the Regtest gateway's RPC URL. **v0.7.4** fixes long mesh syncs that stopped with "mesh store quota exceeded", keeps a device's invite-free wallet across Leave session, and documents how to make Basecamp load a new version. **v0.7.5** adds automatic readiness and a simple wallet with Debug, fixes catch-up refusals, gateway self-submission and overlapping sync responses, and was exercised with funded Linux Basecamp payments, offline delivery, restart and ten gateway-reported confirmations. Releases currently ship only the macOS and Linux Basecamp packages; CLI tarballs and the Android APK are not released for now. See [basecamp-install.md](basecamp-install.md), [android-install.md](android-install.md), [how-it-works.md](how-it-works.md) and [open-work.md](open-work.md#built). Design: #1 re-decided 26 October (pending below the floor, payer + 3-of-4 co-signer group above it), #2 settled, #3 decided for a minimal build; next design problem is **#4 gateway protocol**. Chain-state bundles, nullifier sharing and the co-signer group are designed but not built.
-
-| Read | For |
+| Goal | Read |
 |---|---|
-| [how-it-works.md](how-it-works.md) | Three diagrams: the payment journey, inside the mesh, the gateway bridge |
-| [mvp-v0.2.0.md](mvp-v0.2.0.md) | v0.2.0: install, invites, LAN discovery, sync and test funds over the mesh; how to run a session |
-| [../logos/README.md](../logos/README.md) | Basecamp core module and QML UI: API, build, run, what was verified |
-| [basecamp-install.md](basecamp-install.md) | Tester guide: install Offline Zcash in Logos Basecamp, join, pay, run a gateway, leave a session |
-| [android-install.md](android-install.md) | Not the current focus. Android 10+ arm64 APK: install, permissions, laptop gateway, join and pay; fresh-orb build and Kotlin/Rust contract test |
-| [install.md](install.md) | Installing `ozm-node` on macOS and Linux |
-| [mvp-v0.1.0.md](mvp-v0.1.0.md) | What v0.1.0 runs, measured timeline, gating test results, decisions and limits |
-| [design.md](design.md) | System view, payment flow, finalized decisions, stages |
-| [open-work.md](open-work.md) | What to build and test next, in order |
-| [prior-art.md](prior-art.md) | Dated community sweep: borrow/don't-borrow inventory, flaws, negative searches and contacts (cutoff 25 October 2026) |
-| [components/chain.md](components/chain.md) | Mainnet target, local `ths` harness and its gaps (`regtest-no-pow`), Ironwood/v6 facts, headers and history tree, fees |
-| [components/offline-builder.md](components/offline-builder.md) | Crate pins, build sequence, note reservation |
-| [components/expiry-reissue.md](components/expiry-reissue.md) | Measured expiry/renewal/re-anchor facts; twelve unratified proposals plus bucketed alternative; eight open items and ten gates |
-| [components/payee-verifier.md](components/payee-verifier.md) | Offline checks, chain-state checks with no trust in the gateway, receipt states, what headers can prove |
-| [components/pending-tier.md](components/pending-tier.md) | PaymentStatement and Receipt formats, payment keys, nullifier sharing, limits |
-| [components/gateway.md](components/gateway.md) | Built TLS lightwalletd gateway and its limits; planned submission over Tor, signed bundles, history-MMR rebuild, untrusted-gateway mitigations |
-| [components/mesh.md](components/mesh.md) | `ozm-mesh`: flooding, frames, store-and-forward, acks, LAN discovery, compact sync; Android and Linux BLE implementation (radio gates unverified) |
-| [components/double-spend.md](components/double-spend.md) | Acceptance tiers; payer + 3-of-4 co-signer group; rejected alternatives (26 Oct) |
-| [privacy-and-threats.md](privacy-and-threats.md) | Threat model and leaks |
-| [../archive/](../archive/README.md) | Superseded plans (BitChat fork transport, Logos pathway plans), the original report and research notes |
+| Install, pay, receive or run a gateway | [Basecamp guide](basecamp-install.md) |
+| Understand the payment flow | [How it works: three diagrams](how-it-works.md) |
+| Understand what must be trusted | [Privacy and threats](privacy-and-threats.md#trust-assumptions-at-v070) |
+| See what changed | [Changelog](../CHANGELOG.md) |
+| Find verified cases and remaining work | [Open work](open-work.md) |
+| Use or build the CLI | [ozm-node guide](install.md) |
+| Build the Android test shell | [Android guide](android-install.md) — no phone/radio validation yet |
 
-Each component uses **Decided** (build around it), **Findings** (with sources), **Open** (unverified items/tests); **Proposed** means awaiting owner approval, not implemented. Provisional numerical policies are not measured safety guarantees. Repository rules and the `ths` issue log stay in [../AGENTS.md](../AGENTS.md). Original long-form research is in [../archive/](../archive/README.md), read-only. Throwaway feasibility crates live in [../poc/](../poc/): `escrowcheck` (FROST co-signing on the Zakura 2.2.0 pins) and `mmr-anchor-poc` (ZIP 221/258 anchor proofs against the live `ths` chain).
+## What is available now
+
+- **Basecamp on macOS and Linux:** one shared service and three apps: wallet,
+  Organiser and Gateway. Wallets create their own keys without invites; Organiser
+  exports one gateway invite. Every device pays, receives and relays.
+- **Automatic readiness:** per-device scan starts, startup/discovery/new-tip sync,
+  automatic economical note splitting, Pay during catch-up, durable incoming
+  verification and pending incoming balances. Simple wallet first; technical
+  controls under Debug.
+- **Recovery:** Leave session backs up rather than deletes. A same-network
+  invite-free restart restores a used wallet, including queued incoming payments;
+  empty backups get fresh keys. Start a new wallet explicitly keeps the old backup.
+- **Latest fixes:** v0.7.6 makes presence/tip notices replaceable so they cannot
+  exhaust the sender's mesh quota; v0.7.7 bounds slow chain work and lets mesh
+  submissions wait for a busy gateway. Upgrade the service before the apps.
+- **Distribution:** releases publish four Basecamp packages for each of
+  `darwin-arm64`, `linux-amd64` and `linux-arm64`, plus four merged catalogue
+  packages and checksums. CLI/APK downloads stop at v0.7.3; build current source
+  for later behavior. Packages remain unsigned.
+
+Funded Linux Basecamp runs exercised splitting, offline delivery, Max, restart,
+recovery and ten gateway-reported confirmations ([dated evidence](open-work.md#built)).
+The owner tested v0.5.1 on three Macs; current Mac versions need retesting.
+Physical BLE, native Android screens and independent chain proofs remain open.
+
+## Architecture and components
+
+[System design](design.md) separates the shipped testnet application from the
+mainnet target. **Built** means implemented, **Decided** means an agreed design,
+**Proposed** awaits a decision, and **Open** names unfinished work. Dated findings
+retain their original versions and test scope; a research PoC is not an app feature.
+
+| Component | Owns |
+|---|---|
+| [Chain](components/chain.md) | Network parameters, transaction format, fees, service observations and Regtest gaps |
+| [Offline builder](components/offline-builder.md) | Common 4.0 pins, local proving, reservations, sync and note preparation |
+| [Payee verifier](components/payee-verifier.md) | Current offline checks and receipts; planned independent chain verification |
+| [Mesh](components/mesh.md) | Flooding, sealed envelopes, store-and-forward, compact sync, BLE implementation and hardware gates |
+| [Gateway](components/gateway.md) | TLS lightwalletd submission, retries, reports, admission limits and future proof bundles |
+| [Pending tier](components/pending-tier.md) | Invited-payer admission; planned binary formats, enrollment and nullifier sharing |
+| [Double-spend controls](components/double-spend.md) | Acceptance tiers and the unbuilt payer + 3-of-4 co-signer group |
+| [Expiry and re-issue](components/expiry-reissue.md) | Expiry measurements, accepted repair design and unbuilt payment-family protocol |
+
+## Source, builds and historical evidence
+
+| Path or guide | Contents |
+|---|---|
+| [zcash-offline-core](../crates/zcash-offline-core) | Wallet, builder, verifier, sealing and signed messages; no transport |
+| [ozm-mesh](../crates/ozm-mesh/README.md) | Transport library and wire format |
+| [ozm-node](../crates/ozm-node) | Shared device engine, gateway, local API and web UI |
+| [Logos developer guide](../logos/README.md) | Shared module API, package builds and Basecamp evidence |
+| [Bench guide](../bench/README.md) | Regtest mesh, LAN, invite-free and Kotlin-link checks |
+| [Catalogue submission](logos-catalogue-submission.md) | Draft official-catalogue contribution; nothing submitted |
+| [v0.1.0](mvp-v0.1.0.md), [v0.2.0](mvp-v0.2.0.md) | Historical multi-hop and LAN results, not current setup instructions |
+| [Prior art](prior-art.md) | External research at the stated 25 October cutoff |
+| [Archive](../archive/README.md) | Read-only superseded reports and plans; current docs take precedence |
+
+[Repository guidance](../AGENTS.md) holds development rules and the `ths` issue log.
+[PoCs](../poc/) hold research-only FROST and MMR experiments.

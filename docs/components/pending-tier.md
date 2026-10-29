@@ -1,8 +1,20 @@
 # Pending tier: statement, receipt, nullifier sharing, policy
 
-The pending tier is how MVP v1 accepts a payment before it is mined: the payer signs a fixed-size **PaymentStatement** with a device-bound key, the payee answers with a signed **Receipt**, payees in the same mesh partition share pending nullifiers, and card-style limits bound the loss.
-Nothing here prevents a double-spend. It makes a conflict attributable to a known device key and keeps the exposure per payer and per payee small. Pending applies below the floor only; above it, prevention is the v1.1 co-signer group in [double-spend.md](double-spend.md).
-Decided 25 October 2026 from R3 pending tier; the full spec with sources is kept at `.amp/in/artifacts/pending-tier-spec.md` in this thread's orb. Checks that consume these formats are in [payee-verifier.md](payee-verifier.md); the builder that emits the statement is in [offline-builder.md](offline-builder.md).
+The pending tier lets a known payer obtain an IOU receipt before mining. **Current
+implementation: v0.7.7.** Open/unknown payers never get pending acceptance.
+Invited known payers have local admission caps: 3 outstanding payments / 1 ZEC
+per payer and 3 ZEC total per payee. The configured floor is 0.5 ZEC; the current
+verifier rejects amounts **above** it, while the future design below requires
+escrow **at or above** it. Neither policy prevents a double-spend.
+
+Current signed JSON statements/receipts use the mesh Ed25519 identity and sealed
+`ozm1` envelopes. Device-keystore enrollment, the fixed-size binary formats below,
+invoice matching, shared nullifiers and escrow are **unbuilt**. Local caps bound
+new admission at one honest payee, not total fleet loss or reorg-restored debt.
+
+The remaining sections specify the 25–26 October **MVP v1 design**, not the
+current wire contract. Checks: [payee-verifier.md](payee-verifier.md); builder:
+[offline-builder.md](offline-builder.md); future co-signers: [double-spend.md](double-spend.md).
 
 Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its family, A-initiated repair and expired-unresolved policies were **accepted 26 October** (B-initiated repair requests deferred). Counter reset is `confirmed` on both networks; single-source is a flag bit in the Receipt state byte (both decided 26 October).
 
@@ -15,7 +27,7 @@ Research update: [problem #3](expiry-reissue.md) corrects assumptions below. Its
 | Who signs the statement | A dedicated per-device **Ed25519 payment key**, stored in the keychain as `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, enrolled in person at setup and cross-signed by the device's BitChat Ed25519 key (which BitChat binds to the Noise static key) |
 | What it covers | A 276-byte body: fleet, branch ID, payer and payee keys, txid, auth digest, invoice hash, amount, expiry, payer tip height, timestamp, sequence number, previous-statement hash, superseded txid, tier flag |
 | Receipt | A 260-byte body signed by the payee's payment key: state, reason, H and block hash at H, statement hash |
-| Nullifier sharing | Built in MVP v1. About 104 B per payment as a BitChat group message to a fleet-payee group, carrying txid, expiry and nullifiers only. A hit makes the payee refuse pending acceptance |
+| Nullifier sharing | Required for complete MVP v1, not built. About 104 B per payment in the original BitChat-group design, carrying txid, expiry and nullifiers only. Re-specify the carrier for `ozm-mesh`; a hit should refuse pending acceptance |
 | Sequence number | `seq` and `prev_stmt_hash` in the statement; the payee enforces only that `seq` increases per payer. No cap is based on it |
 | Initial policy | Floor 0.5 ZEC; per payer 3 payments and 1.0 ZEC outstanding; 3.0 ZEC outstanding per payee. Thirty-minute freshness is provisional, not a sourced safety bound. Counters reset at `confirmed` (10, provisional) on harness and mainnet |
 | Harness roles | Four Macs: A payer, B payee, C second payee (both offline), D gateway (online, signs bundles with its enrollment payment key). Co-signer processes for v1.1 run across the Macs ([double-spend.md](double-spend.md) open 6) |
@@ -77,9 +89,9 @@ stmt_hash = H("OZC_PayStmt_v1__", body)
 
 - The v6 txid commits to nullifiers, outputs, value balance, expiry and branch ID, and the anchor is auth data ([ZIP 229](https://zips.z.cash/zip-0229)), so the statement does not repeat the nullifiers; a verifier reads them from the tx bytes. `auth_digest` records exactly which bytes B checked; a re-anchored copy keeps its txid, so the payer sends a new statement.
 - The invoice is made unique by a nonce in the ZIP 321 `memo`, which check 6 compares with the decrypted memo.
-- **Re-issue** (`flags.bit0`): retain `supersedes_txid`, payer/payee, amount and invoice binding. Correction: adjacent “at least one shared nullifier” does **not** ensure family-wide exclusion (`{a} → {a,b} → {b}`). Fresh rebuilds change dummy nullifiers, but retained state can keep actions/padding identical. Proposed #2 preserves canonical effects for ordinary renewal; any relaxed family rule requires a common nullifier across **all** versions. Count the obligation once, never remove/reset its exposure on renewal; any family version's inclusion settles it. **Awaiting owner decision**, including same-txid authorization refresh semantics; no wire change approved ([findings and proposals](expiry-reissue.md)).
+- **Re-issue** (`flags.bit0`): retain `supersedes_txid`, payer/payee, amount and invoice binding. Correction: adjacent “at least one shared nullifier” does **not** ensure family-wide exclusion (`{a} → {a,b} → {b}`). Fresh rebuilds change dummy nullifiers, but retained state can keep actions/padding identical. Accepted proposal #2 preserves canonical effects for ordinary renewal; any relaxed family rule requires a common nullifier across **all** versions. Count the obligation once, never reset exposure on renewal; any family version's inclusion settles it. **Decided 26 October, unimplemented**; exact repair wire fields and same-txid authorization refresh semantics remain open ([decisions](expiry-reissue.md)).
 - **Fee check:** `valueBalanceIronwood` of an Ironwood-only tx (v6 has no fee field) must equal the fleet fee for its action count, 10,000 zats for 2 actions. This blocks a transaction built never to be mined.
-- Framing: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB. Needs the fork's `privateMessageV2`: stock private text is capped at 255 bytes ([archived transport plan](../../archive/docs-2026-10-27/transport-bitchat.md), approved 26 Oct; `ozm-mesh` carries the same bytes in fragmented frames, [mesh.md](mesh.md)).
+- Original framing proposal: BitChat `privateMessage` text `"ozc1:pay:" + base64(kind 0x01 ‖ u32 tx_len ‖ tx ‖ body ‖ sig)`, about 12.7 KB, requiring the fork's `privateMessageV2` because stock private text is capped at 255 bytes ([archived transport plan](../../archive/docs-2026-10-27/transport-bitchat.md)). That carrier is superseded by [ozm-mesh](mesh.md); its current fragmented `ozm1` payload uses JSON, not this proposed binary layout.
 
 ### Receipt v1 (B → A) [decided]
 
@@ -110,7 +122,7 @@ off len field
 
 - `state = checked` renders as **"passes checks at height H; pending"**. B sends it only after the tx, the statement and the counter update are fsynced. Framing `"ozc1:rcpt:" + base64`, a BitChat `privateMessage`.
 - The receipt lets A prove later that B accepted the IOU.
-- State 6 is `expired-unresolved` [decided 26 Oct], not proof of non-inclusion or cancellation: the verified tip reached expiry when verified tip reaches expiry with no inclusion known; debt/reservations remain. Repair reasons/state encoding are pending (#4–5). `checked (single-source)` also has no slot: new state byte versus flag bit remains undecided.
+- State 6 is `expired-unresolved` [decided 26 Oct], not proof of non-inclusion or cancellation: the verified tip reaches expiry with no inclusion known; debt/reservations remain. Repair-message fields remain open. `checked (single-source)` uses bit 0x80, as recorded above; the receipt stays 260 bytes.
 
 ### Nullifier sharing between payees [decided]
 
@@ -149,13 +161,13 @@ Initial values, **provisional** until measured and owner-approved; on the harnes
 | Expiry margin | Historical initial `expiry_height ≥ H + 20`; **provisional, insufficient against allowed stale H** | 30 min ≈72 NU7 target blocks; replaced by lag + uplink + confirmations + margin (#6, decided 26 Oct) |
 | Anchor set | Last 100 blocks for **new-payment acceptance**, provisional | Not consensus; 10,375-block-old root mined. Existing-family repair may use a historical root or re-anchor (#6) |
 | Share wait | 5 s, only if another payee is connected | Nullifier sharing |
-| Counter reset | `confirmed` (10 confirmations) on both harness and mainnet [decided 26 Oct] | Ten is provisional low-value demo policy, not universal finality ([prior art](../prior-art.md)); no reset rule chosen here |
+| Counter reset | `confirmed` (10 confirmations) on both harness and mainnet [decided 26 Oct] | Ten is provisional low-value demo policy, not universal finality ([prior art](../prior-art.md)) |
 | `expired`, not re-issued | Stays counted; payer blocked for new obligations | Expiry does not erase debt. Proposed #5 keeps family counted through repair; proposed #6 permits valid existing-family repair/evidence despite block |
 | `conflicted` | Payer blocked at this payee; unblocked by hand; evidence kept | Never hot-list keys automatically |
 | Go online if possible | Past ⌈C/2⌉ outstanding, if the gateway is reachable, wait for `submitted` before handing over goods | EMV LCOL analogue |
 | Single-source cap | While the chain view comes from one verified gateway (`checked (single-source)`, [payee-verifier.md](payee-verifier.md)), the ⌈C/2⌉ threshold is the hard cap: no further pending acceptance from that payer until a second gateway's tip agrees | One gateway cannot prove no conflict exists |
 
-Demo script: (1) pay 0.6: refused by the floor; (2) pay 0.3 three times: accepted, a 4th refused; (3) mine to the **owner-selected reset threshold** (pending); (4) pay the same note to B then C while connected: C refuses with reason 8; (5) repeat with C disconnected: both accept, one mines, the other ends `conflicted`.
+Planned demo: (1) pay 0.6: refused by the floor; (2) pay 0.3 three times: accepted, a 4th refused; (3) mine to **confirmed (10)** and reset; (4) pay the same note to B then C while connected: C refuses with reason 8; (5) disconnect C: both accept, one mines, the other ends `conflicted`. The shared-nullifier steps are not implemented.
 
 ### Policy: fleet formula [decided]
 
@@ -234,12 +246,12 @@ Pattern: a per-transaction cap is ¼ to ⅕ of the total cap, and only an online
 ## Open
 
 1. [unverified] Ed25519 edge-case agreement between CryptoKit and dalek `verify_strict`.
-2. [finding / pending design] Fresh rebuild randomness changes dummy nullifiers; retained construction state can preserve them. Adjacent overlap is insufficient; family-wide exclusion/canonical effects and count-once rules await owner approval ([expiry-reissue.md](expiry-reissue.md)).
+2. [decided, unimplemented] Fresh rebuild randomness changes dummy nullifiers; retained construction state can preserve them. Adjacent overlap is insufficient; family-wide exclusion/canonical effects and count-once rules were accepted 26 October ([expiry-reissue.md](expiry-reissue.md)).
 3. [unverified] BitChat group-message API, 16-member roster and 6 h gossip retention at `04995f68`; framing overhead (350–450 B estimate); whether a group message reaches 15 peers within 5 s on BLE.
 4. [finding] Pinned Zakura rejected same-input renewal while the original was resident and mined it after expiry eviction. Live Zebra and application retry remain open ([expiry-reissue.md](expiry-reissue.md#consensus-expiry-versus-mempool-policy)).
 5. [unverified] Secure Enclave monotonic counter availability; keychain behaviour when a Mac disk image is cloned.
 6. [unverified] Courier envelope size; ZIP 304 status; UPI Lite X figures (secondary sources).
-7. Policy numbers remain provisional; measure amounts, uplink intervals, partition counts and stale-view risk. Owner must decide problem #3 and unify the exposure reset threshold; do not advertise the initial values as mainnet safety guarantees.
+7. Policy numbers remain provisional; measure amounts, uplink intervals, partition counts and stale-view risk. Problem #3 decisions and the ten-confirmation reset are recorded, but do not make these values mainnet safety guarantees.
 8. Decide when evidence fetching (`ozc1:evq/evr`) ships; it is after MVP v1 by default.
 9. Tests that gate MVP v1 for this tier: the demo script above runs end to end; a statement with a wrong `auth_digest`, wrong `amount_zat`, replayed `seq` or wrong fee is refused with the right reason; a receipt is only sent after the payee's store is fsynced (kill the payee between check and receipt); with one gateway the ⌈C/2⌉ cap is hard and a second agreeing gateway lifts it.
 10. Resolved 26 Oct: `checked (single-source)` is state bit 0x80; the receipt stays 260 bytes.

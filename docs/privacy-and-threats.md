@@ -1,16 +1,23 @@
 # Privacy and threat model
 
-Amounts and recipients are well protected: Ironwood hides them on chain, and BitChat private messages hide the payment details from relays.
-Metadata is the weak point: who sent, when and from where leaks through the gateway, mesh peer IDs, radio and fleet-specific transaction shapes.
-With four devices the anonymity set is tiny. The design target is mainnet in a shutdown; the local chain and the four Macs are a harness, so no mitigation below is dropped because the harness cannot exercise it. Where the harness cannot test a control, the assumptions table says so and the control is tested with mainnet vectors.
+**Current app: v0.7.7, public testnet / Regtest, test coins only.** Ironwood hides
+amounts/recipients on chain; signed and sealed `ozm1` payloads hide payment
+details from relays. Headers, timing, sizes and public txid/status notices still
+expose metadata. Gateway/lightwalletd chain reports are trusted, not proved.
 
-**v0.7.0 trust assumptions by party, with what each party can learn and do and the top risks, are in [Trust assumptions at v0.7.0](#trust-assumptions-at-v070). Where older statements here conflict with that section, it wins.**
+The [implementation trust inventory](#trust-assumptions-at-v070) takes precedence
+over the earlier mainnet design below. Its baseline audit is v0.7.2, with named
+v0.7.3–v0.7.7 amendments, **not a new whole-codebase security audit**. Co-signers,
+Tor, independent chain proofs and encrypted-at-rest keys remain unbuilt.
 
 Related: [design.md](design.md), [components/double-spend.md](components/double-spend.md), [components/mesh.md](components/mesh.md), [components/gateway.md](components/gateway.md), [components/payee-verifier.md](components/payee-verifier.md). Deep sources: [threat_model.md](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/threat_model.md), [report §Metadata](../archive/reports/Offline%20Zcash%20over%20Logos%20mesh.md), [reconciliation](../archive/reports/Design%20review%20reconciliation.md).
 
 ## Decided
 
-Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Design%20review%20reconciliation.md) G1, G2, G4, G6).
+Mainnet design agreed in the 25–26 October 2026 reviews
+([reconciliation](../archive/reports/Design%20review%20reconciliation.md) G1, G2, G4, G6).
+BitChat/Noise references record the original carrier, superseded by `ozm-mesh`;
+these tables are requirements/research, not claims that every mitigation ships.
 
 | # | Finding | Decision |
 |---|---|---|
@@ -35,7 +42,7 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 |---|---|---|
 | On chain | Nullifiers, note commitments, action count, anchor, expiry height, `valueBalance`, exact size; no fee field. 820 B per action | [ZIP 229](https://zips.z.cash/zip-0229), [ZIP 225](https://zips.z.cash/zip-0225) |
 | On chain | Ironwood formal verification covers soundness and balance, not privacy | [crypto.news](https://crypto.news/zcash-ironwood-upgrade-whats-changed-after-the-orchard-bug/) |
-| On chain | ZIP 315 recommends anchor H−3 for its wallet policy; expiry defaults are version/height dependent: pinned Common 2.2.0 uses target+40, NU7 upstream default target+120 (~50 min). Long expiry/old anchors distinguish classes, not proof a tx was offline; fees also fingerprint | [ZIP 315](https://zips.z.cash/zip-0315), [ZIP 218](https://zips.z.cash/zip-0218), [ZIP 317](https://zips.z.cash/zip-0317), [prior art](prior-art.md) |
+| On chain | ZIP 315 recommends anchor H−3 for its wallet policy; expiry defaults depend on library/height: `ths` Common 2.2.0 uses target+40, the app's Common 4 NU7 default is target+120 (~50 min), overridden by fleet policy. Long expiry/old anchors distinguish classes, not proof a tx was offline; fees also fingerprint | [ZIP 315](https://zips.z.cash/zip-0315), [ZIP 218](https://zips.z.cash/zip-0218), [ZIP 317](https://zips.z.cash/zip-0317), [prior art](prior-art.md) |
 | Broadcast | The first node to broadcast is the apparent origin; Zcash txs deanonymized from timing "with a high level of accuracy" (pre-Zebra) | [Biryukov & Tikhomirov 2019](https://orbilu.uni.lu/bitstream/10993/39724/1/biryukov-tikhomirov-deanonymization-and-linkability) |
 | Broadcast | Long-lived nodes over Tor face exit-banning and fingerprinting; a global passive adversary defeats Tor | [Biryukov & Pustogarov 2015](https://arxiv.org/abs/1410.6079), [Kappos & Piotrowska 2019](https://arxiv.org/pdf/1902.07337) |
 | Light client | lightwalletd learns IP, sync height and full-tx fetches; may show fake payments if headers are not validated | [ZIP 307](https://zips.z.cash/zip-0307), [Hornby deck](https://defuse.ca/downloads/Fixing%20Privacy%20Problems%20in%20the%20Zcash%20Light%20Wallet%20Protocol.pdf) |
@@ -63,7 +70,7 @@ Agreed in the 25 October 2026 reviews ([reconciliation](../archive/reports/Desig
 
 ### Top threats and residual risk
 
-Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/threat_model.md), updated for the BitChat design).
+Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/threat_model.md), updated for the original BitChat design). These residuals assume the named design mitigations; current-app risks are listed in the implementation inventory below.
 
 | Threat | Mitigation | Residual |
 |---|---|---|
@@ -80,16 +87,18 @@ Ratings are qualitative (from [threat_model.md §7](../archive/research_notes/Of
 
 ### Assumptions: harness versus the design target
 
-The design is written for the right-hand column. The left-hand column says only what the harness can exercise.
+The design is written for the right-hand column. The left-hand column describes
+the planned harness checks, not a passed test inventory. The current app trusts
+chain reports; see the implementation inventory below for controls that ship.
 
-| Assumption | Harness (local Regtest, 4 Macs) | Mainnet (design target) |
+| Assumption | Local Regtest harness (planned chain-proof checks) | Mainnet (design target) |
 |---|---|---|
 | Payers are known and accountable | Closed fleet | Holds only inside a fleet; fails with strangers |
-| Gateway is honest | The design does not assume it, here or on mainnet. The harness gateway is a Mac we control, so lying-gateway tests inject forged bundles deliberately | Assume ADV-G: every bundle fact verified; ≥ 2 gateways |
-| Proof of work on headers | Cannot be exercised: Regtest has `with_disable_pow(true)` (issue log #8). Checked with mainnet header vectors under the `regtest-no-pow` flag ([chain.md](components/chain.md)) | Equihash and difficulty against a pinned floor on every header the payee accepts |
+| Gateway is honest | Planned lying-gateway tests inject forged bundles deliberately; current app does not verify bundles | Assume ADV-G: every bundle fact verified; ≥ 2 gateways |
+| Proof of work on headers | Regtest has `with_disable_pow(true)` (issue log #8). Production checker and explicit `regtest-no-pow` exception with mainnet vectors are planned, not shipped ([chain.md](components/chain.md)) | Equihash and difficulty against a pinned floor on every header the payee accepts |
 | Gateway can reach the network | Loopback to `ths` | Intermittent; Tor is often blocked in shutdowns, so the gateway may be exposed or absent |
-| Uplink comes before expiry | Explicit mining exercises block age, not real outage availability | Profile not selected: proposed 3-day courier assumes ≤1-day uplink; proposed 21-day shutdown assumes ≤7 days. Neither covers arbitrary shutdowns. Re-issue needs A even under 2-of-2; debt remains ([expiry/re-issue](components/expiry-reissue.md)) |
-| No radio adversary | BLE, one room | Fails: ADV-L can locate and jam transmitters |
+| Uplink comes before expiry | Explicit mining exercises block age, not real outage availability | Shutdown profile selected: 72,576 blocks (~21 days), assuming ≤7-day uplink. Not an availability guarantee or cover for arbitrary shutdowns. Renewal needs A; debt remains ([expiry/re-issue](components/expiry-reissue.md)) |
+| No radio adversary | TCP/container checks do not exercise radios | Fails: ADV-L can locate and jam transmitters |
 | Anonymity set | Worthless coins, so untested | Fleet users only; small |
 | Keys | Public dev keys (all-zero entropy, P8) | Real seeds, hardware or FROST-held |
 | Legal exposure | None | Operators may face money-transmission or radio charges |
@@ -116,15 +125,15 @@ The design is written for the right-hand column. The left-hand column says only 
 - Threat note "rotate peer IDs per session" vs report "stable `--nodekey`": both written for Logos; the BitChat transport keeps stable peer IDs for now, a stated limitation (P5).
 - Report and MVP v1 design "gateway over Tor and PoW-validated headers in a later mainnet stage" → part of the design, with a build order (P3, P7; [gateway.md](components/gateway.md)).
 - Report and card note: hot list of payer keys → nullifiers only (P2).
-- Threat note §1 says NU7 "not yet active": NU7 is active from height 1 on the local chain and from 3,543,405 on mainnet.
+- Threat note §1 says NU7 "not yet active": active from height 1 on the local chain and 4,465,026 on public testnet; mainnet activation is scheduled at 3,543,405 (around 5 November 2026), not yet reached at this document's update.
 - This file, 25 October morning, P6 "FROST participants hold the escrow FVK": not required (R1, R2); the co-signer works from the sighash alone.
 
 ## Trust assumptions at v0.7.0
 
-**v0.7.2 audit:** every row was rechecked against v0.7.1 (`9651853`) before
-changing code. The status columns below now describe v0.7.2; older line numbers
-are historical, not current source locations. This release fixes contained
-controls, not the mainnet design gates. See the deferred-work list below.
+**v0.7.2 audit baseline:** every row was rechecked against v0.7.1 (`9651853`)
+before the contained fixes. Older line numbers refer to historical revisions,
+not current source locations. Later amendments below update known behavior
+through v0.7.7; they do not claim a fresh audit of every row or close mainnet gates.
 
 Wallet/history/cache writes and upgrades enforce Unix 0600. Mesh memory, store,
 sender, fragment, link and handler queues are bounded; packets more than five
@@ -145,13 +154,14 @@ authenticated nothing. This removes the fleet-membership marker from S4/PO2; the
 stable peer ID, IP address and the fact that a device runs Offline Zcash remain
 visible.
 
-**v0.7.0 implementation update:** compact sync and new-tip/control messages use
+**v0.7.0 traffic evidence; v0.7.5 cadence amendment:** compact sync and new-tip/control messages use
 512 B / 4 KiB / 16 KiB padding buckets; `pay`, `sub` and `rcpt` retain their old
 padding. **Sync and payment traffic are distinguishable by size.** Their timing
 already distinguished them; no cover traffic or recipient hiding is claimed.
-Mesh sync follows signed height/hash tips coalesced for 15 minutes or 200 blocks,
-with a 15-minute fallback backing off to an hour when unchanged, rather than
-polling blindly every 30 seconds. Normal requests omit checkpoint history; only
+Mesh sync now follows signed height/hash pushes on every observed new tip
+(five-second gateway poll). v0.7.0 coalesced for 15 minutes or 200 blocks; its
+dated replay below is **not current traffic evidence**. A 15-minute fallback
+backs off to an hour when unchanged. Normal requests omit checkpoint history; only
 a predecessor mismatch exchanges the retained hashes. Payment results still
 push immediately. Full signed presence is hourly on stable links (three-hour
 expiry), and immediate on link-up; gateway role/change or loss may take up to an
@@ -169,6 +179,21 @@ the source count and display a single-source warning. Zaino returned 503 on
 27 October; a single source is accepted for this testnet release. Tasks 7–9 are
 still mainnet gates. Refusal is not cancellation, and expiry unlock uses the
 locally scanned tip (itself gateway-reported), not a standalone status message.
+
+**v0.7.6–v0.7.7 amendments:** device/backup/export folders are owner-only on
+Unix (0700), files 0600, including migration of old folders. They are plaintext
+and included in backups; same-user malware/other modules can read them. Leave
+keeps keys/history; used invite-free backups, including deferred incoming queues,
+can be restored. Organiser now exports only a gateway invite by default; it
+does not hold keys generated by invite-free wallets. Old presence/tip notices
+are replaceable; held payment custody is preserved during normal admission.
+The upgrade drops this device's old unmarked directed messages once and the app
+retries them; it retains other devices' custody. Events rotate above 8 MiB.
+Deferred incoming checks survive sender disappearance/restart but are not
+acceptance or spendable funds. Chain checks/connections/submission work have
+deadlines ([gateway limits](components/gateway.md#v077-busy-gateway-fix)). The
+watcher stops polling `mined` entries; saved ten-confirmation reports do not
+continuously monitor later reorgs. None of these controls proves chain truth.
 
 ### v0.7.5 readiness: unresolved security work
 
@@ -205,20 +230,20 @@ Originally written 27 October 2026 at `3395bd1` (v0.5.1), then rechecked after v
 
 Paths: `core/` = `crates/zcash-offline-core/src/`, `mesh/` = `crates/ozm-mesh/src/`, `node/` = `crates/ozm-node/src/`, `kt/` = `android/app/src/main/java/org/zcash/offline/`.
 
-Status (v0.7.2): **Enforced** (the stated control is in code), **Partial** (named limits remain), **Not / Deferred** (no complete control), **Unverified** (not demonstrated). Enforced controls do not mean an entire adversary is defeated.
+Status (v0.7.2 baseline, later amendments named in rows): **Enforced** (the stated control is in code), **Partial** (named limits remain), **Not / Deferred** (no complete control), **Unverified** (not demonstrated). Enforced controls do not mean an entire adversary is defeated.
 
 ### Code facts behind most rows
 
 - **F1. Identities authenticate, outer metadata does not.** v0.6.0 signs every inner envelope and payload-bound destination ack. v0.7.2 adds a fresh key/peer-ID proof before inventory. The outer sender/recipient and hello remain cleartext; live forwarding permits strangers and Sybils.
 - **F2. Offline chain views are unverified.** Signed, role/pin-checked sync authenticates the source, not the chain. Common-height hashes, frontier roots and inclusion answers are compared across reachable configured lightwalletd sources; v0.7.5 downloads compact contents only once. Collusion and a single source remain trusted.
-- **F3. Results are rollback-aware, but gateway-reported.** v0.7.0 accepts newer signed downgrades and exactly classifies submission errors. v0.7.2 also removes the cached-mined fallback when the testnet source no longer finds the transaction. No chain proof or finality claim follows.
+- **F3. Results are rollback-aware, but gateway-reported.** v0.7.0 accepts newer signed downgrades and exactly classifies submission errors. v0.7.2 removes the cached-mined fallback when an actively tracked transaction disappears. v0.7.7 stops recurring polling of entries already `mined`; those saved results are not continuous later-reorg monitoring. No chain proof or finality claim follows.
 - **F4. Explicit party-pair disclosure is reduced.** v0.7.2 sends only `notify: ["nonce:<128-bit random>"]` and broadcasts a signed nonce/result binding. Legacy requests still work. The gateway sees each authenticated submitter, can correlate identical txids, and enrolled gateways hold the public fleet directory. P12 exposes nonce/txid/status to mesh observers.
 - **F5. Refusal cannot cancel a submitted transaction.** Since v0.7.0 the warning says it may still mine until expiry, refusal is not final, and gateway results can supersede it.
-- **F6. The organiser holds every key.** `fleet-init` generates every device's spending and Ed25519 keys in the organiser's folder (`node/lib.rs:142-175`, `core/fleet.rs:210-217`); invites carry raw private keys (`node/lib.rs:109-113`); fleet file and invites are unsigned (`node/lib.rs:196-214`).
+- **F6. The organiser holds invited keys, not invite-free wallet keys.** `fleet-init` generates spending and Ed25519 keys for its named devices; invites carry raw private keys and remain unsigned. v0.7.6 Organiser exports only a gateway invite by default. Other wallets generate keys locally; the organiser does not receive them. CLI/module callers can still export additional invited devices.
 - **F7. UI/API controls already shipped.** v0.6.0 uses text-only rendering, a per-run API token and loopback Host validation. They do not protect against same-user malware reading keys or the token.
-- **F8. Mesh resource limits now apply.** v0.7.2 caps stored packets at 4,096 / 64 MiB, each claimed sender at 512 / 16 MiB, seen/acked IDs at 32,768 each, messages at 2 MiB, partial reassembly at eight / 4 MiB, links at 32, and queued payloads at 64 MiB. Five-minute future skew is rejected before dedup. Held messages are not evicted to admit new work. Since v0.7.4 a sender's own old acks (and, on the device that sends, its own old broadcasts) give way to that sender's new packets: every received sync chunk leaves an ack that nothing acknowledges, which filled the per-sender quota during long mesh catch-ups. A packet that spoofs a sender can therefore evict that sender's stored acks at a relay, which only delays delivery confirmation. Headers can spoof senders; global caps, not identity quotas, bound Sybils. Storage is still rewritten on admission; sustained floods can deny service.
+- **F8. Mesh resource limits now apply.** v0.7.2 caps stored packets at 4,096 / 64 MiB, each claimed sender at 512 / 16 MiB, seen/acked IDs at 32,768 each, messages at 2 MiB, partial reassembly at eight / 4 MiB, links at 32, and queued payloads at 64 MiB. Five-minute future skew is rejected before dedup. Normal admission preserves held messages, evicting that sender's oldest acks first; at the originating device its own broadcasts and (v0.7.6) directed replaceable notices can also give way. The one-time v0.7.6 migration drops this device's old unmarked directed messages; app state retries them. Other senders' custody remains. Spoofed headers can evict a claimed sender's acks at a relay, delaying confirmation; global caps, not identity quotas, bound Sybils. Storage is still rewritten on admission; sustained floods can deny service.
 - **F9. Expiry unlock is already implemented.** v0.7.0 releases reservations only after local scan passes inclusive expiry, and relocks on rollback; reported expiry alone is insufficient. The scanned source is still trusted.
-- **F10. Plain files have private modes, not encryption.** v0.7.2 enforces Unix 0600 on keys, wallet, payment history, events, trust pins and mesh cache, including old files and temporary replacements. Windows relies on its account ACLs. `verify_strict` was already used in v0.7.1. Static X25519 keys still provide no forward secrecy.
+- **F10. Plain files have private modes, not encryption.** v0.7.2 enforces Unix 0600 on keys, wallet, payment history, events, trust pins and mesh cache, including old files and temporary replacements; v0.7.6 adds 0700 device/backup/export folders and tightens older folders. Same-user access and system/cloud backups still expose keys. Windows relies on its account ACLs. `verify_strict` was already used in v0.7.1. Static X25519 keys still provide no forward secrecy.
 
 ### 1. Payer (Alice)
 
@@ -291,7 +316,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 |---|---|---|---|---|---|---|---|
 | Z1 | Consensus mines at most one conflicting spend | S | — | — | Duplicate nullifiers rejected by nodes | **Enforced** (network) | — |
 | Z2 | 10 confirmations mean final | S | Testnet minimum-difficulty blocks after 450 s gaps make cheap reorgs feasible | Medium / Low (test coins) | — | **Not** | Testnet is a functional test only |
-| Z3 | Common 4.0 output is valid on public testnet | S | All payments rejected | Medium / Medium | Regtest acceptance; public compact scan/format checks only | **Unverified** (also v0.7.2; no funded wallet; owner directed skip) | Funded split/payment smoke test remains open; exact faucet errors in offline-builder.md |
+| Z3 | Common 4.0 output is valid on public testnet | S | Payments rejected | Medium / Medium | Regtest acceptance plus funded v0.7.5 Linux Basecamp split/offline payment/restart/reconnect | **Exercised 28 Oct** (gateway-reported ten confirmations, not independent proof) | Broader adversarial/platform tests remain; [dated evidence](open-work.md#built) |
 | Z4 | The fleet fee fits every transaction shape | S | Large splits need more than 10,000 zat | High / Medium | Builder and verifier use max(fleet floor, ZIP 317 padded-action fee); optional change included | **Enforced** (v0.7) | Keep 10,000 zat for two actions, not all shapes |
 | Z5 | On-chain privacy | P | Fingerprints: 72,576-block expiry (`core/fleet.rs:37`), anchor age, 2-action shape, split outputs | High / Medium | Accepted (P4) | **Partial** | Accept on testnet |
 | Z6 | Testnet stays live through the expiry window | S | A reset or upgrade kills unmined txs | Low / Medium | — | **Not** | — |
@@ -300,7 +325,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.2 | Fix and when |
 |---|---|---|---|---|---|---|---|
-| O1 | The organiser doesn't keep or misuse device keys | S+P | Holds every key (F6): steals all funds, signs as anyone, decrypts every envelope | Low / High | A doc warning only | **Not** | Keys generated on the device; organiser signs public enrollment only |
+| O1 | The organiser doesn't keep or misuse invited keys | S+P | Can steal/sign/decrypt for devices whose invites it generated (F6), not locally created invite-free wallets | Low / High | Gateway-only export by default since v0.7.6; invite-free keys stay on device | **Partial** (invited-key custody remains) | On-device invited keys and organiser-signed public enrollment |
 | O2 | Invites stay confidential in transit | S | An intercepted invite gives every key | Medium / High | 0600 on disk | **Not** | As O1 |
 | O3 | Fleet file and invites are authentic | S | A tampered `fleet.json` swaps payee addresses or gateway keys | Low–Medium / High | Consistency only `node/lib.rs:196-214` | **Not** | Organiser signature and fingerprint check |
 | O4 | Policy values are sane | S | Bad floor, fee, branch or expiry (`core/fleet.rs:15-44`) | Low / Medium | — | **Partial** | Signed policy |
@@ -322,7 +347,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | # | Assumption | S/P | What breaks if violated | L / I | Existing mitigation | Status v0.7.2 | Fix and when |
 |---|---|---|---|---|---|---|---|
 | FA1 | The public faucet doesn't link requesters | P | Learns requester IP and address | High / Low | — | **Not** | Request via the gateway or Tor, fresh address |
-| FA2 | The faucet pays Ironwood addresses on NU7 testnet | S | No funds reach devices | Medium / Medium | Valar queued then failed `the wallet cannot pay this address`; zecpages timed out | **Unverified** (funded run deferred by owner) | Preserve test wallet; complete funded split/payment when TAZ arrives |
+| FA2 | The faucet pays Ironwood addresses on NU7 testnet | S | No funds reach devices | Medium / Medium | Valar failed and zecpages timed out on 27 Oct; owner supplied TAZ for the later Linux run | **Faucet unverified** (funded app flow exercised separately) | Do not equate owner-funded testing with faucet reliability |
 | FA3 | The gateway faucet can't be drained | S | Fresh identities evade the per-device throttle | Medium / test coins only | Existing v0.6.0 one request/device/60 s, ten notes and configured total cap; Regtest mining gateways only, disabled on testnet | **Partial** (limits/off-on-testnet already fixed) | Sybil-resistant enrollment deferred; never use this development faucet for real value |
 
 ### 10. Software distribution
@@ -367,7 +392,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | Gateway | No | Public fleet directory if enrolled; no explicit notify pair | Submitters/duplicate txids/timing remain correlatable (F4) | Yes, first spy | Partly | No |
 | lightwalletd | No | No | No, but sees the fleet's whole tx set | Yes | **Gateway IP** | No |
 | Network / miners | No | No | Nullifier linkage on chain | Yes | No | No |
-| Organiser | **Yes** | **Yes** | **Yes** | With captures | If on the mesh | **Yes** (holds keys) |
+| Organiser | Invited wallets only | Invited directory | Invited wallets/captures | With captures | If on the mesh | Invited wallets only (holds their keys) |
 | Open-mode stranger | Size only | Bindings are privately exchanged, but addresses can be shared publicly | **Yes**, header IDs/result txids | Yes | **Yes**, plus IPs | No |
 | Faucet | Its payout | Requester's | No | Yes | Requester IP | No |
 | Software distribution | Everything, via a malicious build | | | | | |
@@ -384,7 +409,7 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | Gateway | No | Can hide conflicts | **Yes** | **Yes** | **Yes** | Yes | Open-mode announcement |
 | lightwalletd | No | Can hide conflicts | **Yes** | Yes | **Yes**, fleet-wide | **Yes** | It is the chain |
 | Network / miners | No | Enables it (testnet reorgs) | Yes | Yes | Reorgs undo confirmations | Yes | No |
-| Organiser | **Yes** | **Yes** | Yes | Yes | **Yes** | Yes | **Yes** |
+| Organiser | Invited keys only | Invited keys only | Yes | Yes | If trusted as gateway | Yes | Invited identities only |
 | Open-mode stranger | Not through the fixed XSS/API paths | Never offered pending | Yes | Yes | If initially picked as gateway | Yes, within caps | Own names/Sybils, not another key's signed body |
 | Faucet | No | No | Withholds funds | Yes | No | — | No |
 | Software distribution | **Yes** | **Yes** | Yes | Yes | Yes | Yes | **Yes** |
@@ -406,12 +431,12 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 | OS2/OS3 | Keystore/Keychain/Secure Enclave and Windows ACL integration need platform-specific storage and recovery design. Unix 0600 does not defeat same-user malware. |
 | L5 | SPKI requires operator-agreed keys and rotation/recovery policy. Strict HTTPS/WebPKI is already mandatory; inventing an opportunistic leaf pin would create brittle trust-on-first-use. |
 | R5/R6, G9, OS6, PO5 | Sybil-resistant membership, trusted time and independent routes are wider designs; finite quotas/key possession do not guarantee availability or radio privacy. |
-| Z3/FA2 | Funded public split/payment-to-mined remains unverified for v0.7.2: no funded wallet, failing faucets, owner-directed skip. No wallet state is transferred for this release. |
+| Z3/FA2 | The v0.7.2 unfunded gap is historical: owner-funded v0.7.5 Linux split/payment/restart/reconnect reached ten gateway-reported confirmations on 28 Oct. Independent chain proof, Android/current Mac/radio checks and faucet reliability remain unverified. |
 
-### Top 10 residual risks at v0.7.2
+### Top 10 residual risks (v0.7.2 baseline, amended through v0.7.7)
 
 1. **Trusted chain reports** (L1–L4, B1/B3): proofs are unbuilt and only the primary public endpoint was reachable. A selected source still decides chain state.
-2. **Organiser custody and unsigned invites** (O1–O3): compromise exposes all fleet keys.
+2. **Organiser custody and unsigned invites** (O1–O3): compromise exposes generated invited-device keys; invite-free wallets keep their own keys.
 3. **First-contact Sybil/eclipse** (G4, S2): pins prevent silent replacement, not dishonest initial selection.
 4. **Pending double-spend** (A1, B2): capped per honest payee; no shared nullifier list or co-signer.
 5. **Unsigned packages/public APK key** (D1–D3): pinned CI dependencies do not authenticate downloads.
@@ -419,13 +444,13 @@ testnet.zec.rocks; the Zaino backup returned HTTP 503 on 27 October 2026.
 7. **Metadata and first-spy correlation** (A9, B7/G5/G6, PO1–PO4): nonce broadcasts trade the explicit party pair for public txid/status and do not hide timing.
 8. **Censorship/resource denial** (R1/R5/R6, G1/G9): bounded stores and authenticated inventory are not Sybil resistance or independent routes.
 9. **No forward secrecy** (R3, OS7): a later key seizure exposes captured private traffic.
-10. **Public-testnet/hardware validation gaps** (Z2/Z3, FA2): cheap reorgs, no funded mined payment, no real-phone/radio or current Mac verification.
+10. **Public-testnet/hardware gaps** (Z2/Z3, FA2): cheap reorgs; funded Linux app flow is exercised but not independently chain-proved, and current Mac/phone/radio checks remain open.
 
 ### Statements earlier in this file that are out of date for v0.7.2
 
-The sections above were written for the BitChat-fork design. Until they are rewritten, this section wins where they conflict:
+The earlier design/research sections use the original BitChat carrier. The implementation inventory and named amendments above win where they conflict:
 
-1. The intro and P1 describe BitChat/Noise private messages. The transport is `ozm-mesh` with `ozm1` envelopes, whose headers expose sender and recipient.
+1. P1 describes BitChat/Noise private messages. The transport is `ozm-mesh` with `ozm1` envelopes, whose headers expose sender and recipient.
 2. P1 says the gateway gets tx bytes only; it also sees an authenticated submitter and nonce, and can correlate identical txids. The explicit `notify: [payer, payee]` list is gone from new submissions (F4).
 3. P3 and the threat table assume PoW, MMR paths and two gateways (residual Medium). v0.7.2 authenticates sources and compares reachable servers, but does not verify those chain proofs; the residual is High.
 4. P7 assumes Tor and our own node; Tor is unbuilt and lightwalletd is a third party.
@@ -448,7 +473,10 @@ All inner envelopes (including sync, faucet and submission requests/replies) are
 signed by their sender and bound to the intended recipient. Mesh delivery acks
 are signed by the original destination. Sealing alone is not authentication.
 Gateway announcements and address bindings are individually sealed; only mesh
-IDs and public routing keys are broadcast. A fresh announcement lasts 35 seconds.
+IDs and public routing keys are broadcast. Presence is immediate on link-up,
+refreshes hourly on stable links and expires after three hours (the old v0.6.0
+35-second lifetime no longer applies). Gateway loss/change may take an hour to
+notice, or up to three hours to expire after missed presence.
 Before first use, open devices choose fewest hops, then highest advertised tip,
 then mesh ID. **First use pins the gateway's key** in `data/trust.json`, across
 restarts. A nearer or newer gateway cannot silently replace it. An unavailable pin

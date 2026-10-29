@@ -2,7 +2,7 @@
 
 Three apps share **one Offline Zcash service per device**. Install the apps for
 the jobs you do; installing several does not create extra identities, wallets,
-mesh nodes or listening ports. v0.7.5 targets Basecamp on **macOS (Apple silicon)
+mesh nodes or listening ports. v0.7.7 targets Basecamp on **macOS (Apple silicon)
 and Linux (x86_64, arm64)**, on NU7 public testnet (TAZ) or the local Regtest
 chain, with **test coins only**, never real ZEC.
 
@@ -13,11 +13,11 @@ chain, with **test coins only**, never real ZEC.
 | Connect the mesh to the chain | Service + **Offline Zcash Gateway** (`zcash_offline_gateway`) |
 
 Every device can pay and receive, and every device relays. The only role is
-**gateway**: the organiser marks which devices are gateways, and only a device
-whose invite makes it a gateway can run one. Installing the Gateway app does not.
-Invites contain private test keys: give each one only to its named owner, and
-never accept invites from strangers. The invite format is trusted setup from the
-organiser, not organiser-signed enrollment.
+**gateway**: Organiser exports one gateway invite; other wallets start without
+invites and generate their own keys. Only a device whose invite makes it a
+gateway can run one. Installing the Gateway app does not. Invites contain private
+test keys: give each one only to its named owner, and never accept invites from
+strangers. The invite format is trusted setup, not organiser-signed enrollment.
 
 ## Requirements
 
@@ -95,6 +95,10 @@ you create a session, and Leave session shows the backup folder it created. Back
 the persistence path before upgrading or reinstalling Basecamp; never delete `ozm`
 or a backup that held funds.
 
+Files remain plaintext. v0.7.6 restricts Unix device/backup folders to the current
+user, but malware running as that user and cloud/system backups can still read
+keys. Treat both wallet backups and organiser exports as secrets.
+
 ## Join a session
 
 One Basecamp user directory holds one device, on one network (Regtest or testnet).
@@ -152,8 +156,11 @@ payee receipt or ten-confirmation result. Later mesh history replaces that
 entry; self-change and preparation outputs do not appear as new received funds.
 
 `submitted` is not inclusion. `included` is 1 confirmation and `mined` is 10.
-**Both are reported by the gateway, not proved**, and a reorg can downgrade them.
-Received coins are spendable after `mined` and a sync.
+**Both are reported by the gateway, not proved.** Reports can change during
+tracking, but the gateway stops polling a transaction once it reports `mined`;
+that saved report does not continuously monitor later reorgs. Received coins
+need a local scan with witnesses before they are spendable; wait for `mined`
+and a completed sync before going offline.
 
 **Max** fills the largest amount the builder can send after its ZIP 317 fee. It
 skips locked notes, unmined change and dust that would cost more than it adds.
@@ -232,8 +239,9 @@ There is no gateway faucet on testnet.
 
 1. Start without an invite on `testnet` (or join a testnet invite), then copy the
    `utest1` address to a public TAZ faucet such as
-   [Valar](https://faucet.testnet.valargroup.dev). Faucet claims have failed in our
-   tests ([details](components/offline-builder.md#v070-testnet-note-plan)).
+   [Valar](https://faucet.testnet.valargroup.dev). Earlier orb claims failed;
+   owner-funded Linux tests subsequently exercised the payment flow
+   ([dated evidence](open-work.md#built)). Faucet availability is not guaranteed.
 2. Funds appear automatically. While a gateway is reachable the wallet prepares
    smaller notes itself; the wallet shows when funds are being prepared, and
    **Debug → Offline readiness** shows details. No Prepare click
@@ -267,7 +275,8 @@ switch from Regtest to testnet.
 **without an invite on the same network**, it restores the keys, address, wallet
 (notes and sync height) and payment history from the newest backup that holds an
 invite-free wallet on that network **and has notes or payment history**. The balance
-shows again after the next sync. After v0.7.5 an empty backed-up wallet is not
+shows again after the next sync. Saved deferred incoming payments also count as
+used history and return for rechecking. Since v0.7.6 an empty backed-up wallet is not
 restored: the device creates new keys whose scan starts near the chain tip, instead
 of resuming an old wallet's scan from far behind (for example from NU7 at 4,465,026).
 To force a new wallet even when the current one holds funds, open **Debug** in the
@@ -323,9 +332,11 @@ Use a trusted local operator and test coins only. Full details:
 | RPC URL refused on Regtest | Use the `http://` JSON-RPC URL from `ths endpoints`, not `https://` or lightwalletd `:9067`; for testnet, Leave session and join a testnet invite |
 | RPC check fails | Keep `ths start` running on the gateway machine |
 | Wallet never synced | Check the Gateway app's chain status; discovery starts sync automatically. **Refresh balance (optional)** retries it |
+| Payment waits for a busy gateway or appears to hang after signing | Upgrade the service on every device to v0.7.7. Slow chain work is bounded and mesh submissions wait for a busy check; keep the original transaction for retry, do not pay again |
+| Send fails after many departed peers or a long session | v0.7.6 makes old presence/tip notices replaceable and migrates the device's old store automatically. Upgrade the service; do not delete wallet data |
 | Test funds fail | Regtest only: enable mining, fund the gateway address, wait 60 seconds between requests |
 | Wrong network or wrong invite installed | [Leave session](#leave-session), then start again |
-| Header says "Regtest session (local ths chain)" but you wanted testnet | Before v0.7.4 the Organiser and the wallet started on Regtest unless you changed the network, so a session or invite made then (for example the default "Three laptops") is Regtest. [Leave session](#leave-session) on every device, create a new session in Organiser v0.7.4 (testnet by default) and join with its new invites |
+| Header says "Regtest session (local ths chain)" but you wanted testnet | Old sessions/invites retain Regtest; a missing `network` also means Regtest. [Leave session](#leave-session), create a testnet gateway session in the current Organiser and start the other wallets without invites |
 | Need to find keys, wallet or exported invites | See [Where the data lives](#where-the-data-lives) |
 | Several Basecamp instances on one Linux host | Use separate user directories and different mesh listen ports |
 

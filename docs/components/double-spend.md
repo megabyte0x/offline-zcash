@@ -2,6 +2,13 @@
 
 Decided 26 October 2026 by the owner. This replaces the 25 October design (single 2-of-2 co-signer C), now in [archive](../../archive/reports/Double-spend%20design%202026-10-25.md). Its "Co-signer facts verified in source" section remains the line-level reference for PCZT, sighash, α, `rk` and FVK APIs.
 
+**Design, not a v0.7.7 feature.** The shipped app has local reservations and
+conflict checks, invited-payer admission caps, and no pending acceptance for
+open/unknown payers. It has no co-signer service or independently verified chain
+receipts. The FROST results below are research PoCs on their stated older pins;
+the application now uses Common 4.0. Ten gateway-reported confirmations are not
+the independently verified final tier in this design.
+
 ## The constraint
 
 The chain accepts any validly signed spend, and A's spending key alone is enough. So A, or an online friend with A's seed, can sweep a note to itself while B's tx1 is still on the mesh, even **before** paying B. Mesh state, witness signatures and bonds are invisible to consensus. Only three things stop that sweep: splitting the spending key, trusted hardware, or waiting for the chain. The owner chose native ZEC with no special hardware and no mint, which leaves **key splitting** as the only prevention.

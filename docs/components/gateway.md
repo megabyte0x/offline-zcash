@@ -1,6 +1,6 @@
 # Gateway submitter
 
-## Built in v0.7.0
+## Built (v0.7.0–v0.7.7)
 
 A gateway is a device with internet whose invite names it the fleet's gateway.
 Since v0.7.3 `gateway` is the only role: every device can pay, receive and relay,
@@ -24,8 +24,9 @@ bytes and notification recipients, and watches the server's tip. It reconciles
 GetTransaction before retrying the same bytes every three blocks. Signed result
 transitions are pushed to payer and payee; mesh storage carries them through
 disconnects. `submitted` is not acceptance or inclusion. `included` means one
-server-reported confirmation, `mined` means ten on testnet. A later reorg can
-downgrade either state. Expiry and conflict reports do not independently prove
+server-reported confirmation, `mined` means ten on testnet. Newer signed reports
+can downgrade tracked states, but v0.7.7 stops recurring polling once `mined`:
+a saved report is not continuous monitoring of later reorgs. Expiry and conflict reports do not independently prove
 anything or release locks; only local wallet sync beyond expiry releases unspent
 reservations. Refusal does not cancel bytes already submitted.
 
@@ -61,7 +62,20 @@ targets and active workers are bounded. Exact held-byte retries reuse proof
 verification. A missing testnet transaction no longer inherits cached `mined`.
 Submission sends unchanged bytes concurrently to every connected configured
 server, not only the first. Strict HTTPS/WebPKI remains mandatory; no SPKI pin,
-Tor, chain proof or funded public payment-to-mined is established by this release.
+Tor or chain proof is established by v0.7.2. Funded Linux Basecamp payment-to-mined
+was subsequently exercised with v0.7.5 ([dated evidence](../open-work.md#built)).
+
+### v0.7.7 busy-gateway fix
+
+A hung chain check could hold the shared submission lock indefinitely; even
+healthy checks caused immediate mesh-submission refusals while holding it.
+Each gateway tick now has a 60-second deadline; DNS/TLS/info connection setup
+has 15 seconds per server. A mesh submission waits up to 90 seconds for the
+lock, then processing has its own 90-second deadline. Concurrent identical-byte
+requests join one in-flight result. Gateway-owned sends return busy while
+retaining their original bytes for retry. These bounds restore progress, not
+guaranteed delivery or chain truth. No wallet reset is needed; upgrade the
+service package first.
 
 ## Decided
 

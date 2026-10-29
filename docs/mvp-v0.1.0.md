@@ -1,5 +1,11 @@
 # v0.1.0: offline payment over a multi-hop mesh, mined on the local chain
 
+**Historical evidence, not current setup.** Measurements below describe v0.1.0
+on 26 October. Current v0.7.7 uses Common 4, public testnet, invite-free wallets
+and authenticated acks; plaintext txid/status notices now intentionally leak
+metadata that test 6 below did not cover. Use the [current flow](how-it-works.md),
+[install guide](basecamp-install.md) and [bench guide](../bench/README.md).
+
 **Status:** built and passing, 26 October 2026. Code: [`crates/`](../crates/), bench: [`bench/`](../bench/README.md).
 
 v0.1.0 combines the two plans written on 26 October:

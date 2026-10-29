@@ -1,5 +1,9 @@
 Scratch proof of concept (not production code). Run against a live `ths` v0.4.1 chain:
 
+The v0.7.7 app does not yet consume these proofs. It still trusts gateway chain
+reports; this dated Regtest experiment establishes path construction, not
+mainnet proof-of-work security. See the [planned verifier](../../docs/components/payee-verifier.md).
+
     cargo build --release
     ROOTREV=sapling ./target/release/mmrpoc x <anchor-block-height>   # z_gettreestate returns the Sapling root byte-reversed
     ./target/release/eqbench                                          # Equihash (200,9) verify timing, mainnet block 415000

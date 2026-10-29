@@ -4,6 +4,11 @@ The payer's builder creates, proves and signs a v6 Ironwood-only transaction wit
 The application uses Zakura Common `=4.0.0`, with UniFFI/Kotlin Android bindings and one shared Logos Basecamp engine. `ths` v0.4.1 still uses Common 2.2.0; compatible NU7 transaction bytes cross that process boundary, not Rust types. iOS and the upstream wallet-DB path remain unbuilt. Historical scratch research below uses its stated older versions.
 Chain and protocol constants are in [chain.md](chain.md). Checking the result on the payee side is in [payee-verifier.md](payee-verifier.md).
 
+**Current implementation: v0.7.7.** `builder.rs` and the separate payee path
+have end-to-end Regtest and funded public-testnet evidence. The `Decided`
+sections also retain future binary statements, keystore keys and renewal rules;
+these are not the application's current JSON statement / sealed `ozm1` format.
+
 ## v0.7.0 testnet note plan
 
 Choose fleet `network: "testnet"`. Fresh keys record their creation time; each
@@ -49,6 +54,12 @@ This was local viewing-key scanning of compact actions, not a GitHub or
 transparent-balance query. A's keys and wallet remain in the orb. The owner
 approved release with the funded split → offline payment → ten-confirmation
 public run and independent public confirmation **unverified**.
+
+**Subsequent funded run, 28 October:** v0.7.5 Linux Basecamp automatically split
+owner-provided TAZ, paid offline from a mined split note, recovered after restart
+and reconnect, and showed ten gateway-reported confirmations on both wallets.
+See [exact cases and limitations](../open-work.md#built). This closes the earlier
+unfunded application-flow gap, not independent chain verification or phone tests.
 
 **v0.7.5 automatic preparation:** with fewer than four spendable notes and a
 reachable gateway, try 8, then 4, then 2 smaller notes, choosing the largest
@@ -107,7 +118,7 @@ The 2.x, 3.x and 4.x type families cannot be mixed in one binary; pin every crat
 
 Import under upstream names, for example `zcash_primitives = { package = "zakura-primitives", version = "=4.0.0" }`. `ProvingKey::build` now returns a Result. Relock the Basecamp module independently after migration. The optional PCZT family is rc9; it is not linked by the application.
 
-### Function sequence [decided as the plan; direct path exercised in scratch research]
+### Function sequence [direct path built; wallet-DB path is research only]
 
 1. **Network:** `LocalNetwork { .., nu6_3: Some(1), nu7: Some(1) }` to match the `ths` chain. `BranchId::for_height` then selects NU7.
 2. **Direct path:** `Builder::new(net, target_height, BuildConfig::Standard { ironwood_anchor: Some(anchor), .. })` → `add_ironwood_spend(fvk, note, merkle_path)` (notes must be `NoteVersion::V3`) → `add_ironwood_output(ovk, addr, value, memo)` → `with_expiry_height(h)` → `build(..)` → `BuildResult::transaction()` → `Transaction::write`.
@@ -143,7 +154,7 @@ Import under upstream names, for example `zcash_primitives = { package = "zakura
 - **Unmined change is unspendable:** `zakura-client-backend` rc7 `wallet.rs` L1414–1418 refuses it. Chained offline payments wait for each parent to be mined. The protocol itself allows signing such a spend, but it cannot be proven until a witness exists ([ZIP 374](https://zips.z.cash/zip-0374)).
 - **`DeferredPcztBuilder`** (sign before choosing the anchor; zakura-primitives `builder.rs` L469, `new` L491, `add_ironwood_spend` L597) accepts v6 only. PCZT v2 permits signing without anchors/witnesses/proofs because v6 txid/sighash exclude the anchor. Re-anchoring needs fresh witnesses/proof, not new applicable signatures. The rc4 setter **rejects** an existing proof/conflicting anchor; it does not clear automatically: explicit redaction/update/re-proving is needed. Expiry changes need new signatures but can retain actions/proof ([ZIP 374](https://zips.z.cash/zip-0374); [source lines and experiments](expiry-reissue.md#expiry-renewal-is-not-re-anchoring)).
 - **FROST on this stack is proven offline:** [`poc/escrowcheck`](../../poc/escrowcheck/README.md) builds a PCZT at branch 0x77190AD9 on the 2.2.0 pins, co-signs it with a rerandomized FROST 2-of-2 aggregate through `zakura-reddsa`'s `frost` feature, and extracts a valid 9,166-byte v6 transaction. frost-tools cannot be reused: upstream crates map NU7 to `0xffffffff` and cannot link against the Zakura 2.2.0 type family ([double-spend.md](double-spend.md)).
-- **No Swift or uniffi bindings exist.** The iOS wrapper is ours.
+- **No upstream Swift or UniFFI bindings exist.** This repo provides UniFFI/Kotlin through `ozm-ffi`; an iOS wrapper is not built.
 - **Inputs needed offline:** spend authorizing key, full viewing key, each spent note's plaintext and position, a 32-level Merkle path (about 1 KB) to any earlier final Ironwood root plus that anchor, the recipient receiver (from a ZIP 321 URI), a current-height estimate, branch ID, fee and a fresh OS RNG ([zcash_ironwood_testnet.md Q3](../../archive/research_notes/Offline%20Zcash%20over%20Logos%20mesh/zcash_ironwood_testnet.md)).
 - **Proving key:** Halo 2 at K=11, generated locally with nothing to download. Key preparation takes about 25–29 MiB (zakura-orchard 2.2.0 `benches/README.md`).
 - **Measured Ironwood research:** two-action proof median 729 ms, direct re-sign 1.254 ms on a two-vCPU orb Xeon, not phone performance. Expiry renewal retained identical actions/proof; retained pre-IO PCZT FROST variants validated on a synthetic tree. Fresh construction randomness changes dummy nullifiers; retained state can keep them fixed. No production crash-safe snapshot exists ([evidence, samples and source lines](expiry-reissue.md#expiry-renewal-is-not-re-anchoring)).
@@ -162,9 +173,9 @@ Import under upstream names, for example `zcash_primitives = { package = "zakura
 
 ## Open
 
-- [unverified] Production offline app plus separate payee process and wallet-DB path. Scratch direct-path compilation/mining and 9,166-byte v6 shape are established; they do not implement the end-to-end app.
-- [unverified] Phone proving time and memory on the Ironwood circuit with Zakura 2.2.0 (open check 9). Test: run the `ironwood_k11_prover` bench and an iOS build.
-- [unverified] Crash safety of reservations. Test: kill the app between reserve and sign, and between sign and send. The note must stay Reserved.
+- [built] Offline app and separate payee process: multi-hop Regtest benches and funded Linux Basecamp testnet flow. The upstream wallet-DB path remains unbuilt; the app uses its own persisted wallet and direct builder.
+- [unverified] Phone proving time and memory on the Ironwood circuit with the current Common 4.0 stack (open check 9). Host timings are not phone measurements.
+- [partial] Reservations persist before transmission and survive tested restart/reorg flows. Exhaustive process-kill injection at every reserve/sign/send boundary remains a durability gate.
 - [decided 26 Oct] Fleet expiry profile: shutdown, 72,576 blocks for ≤7-day uplink ([proposal #1](expiry-reissue.md#proposals-and-owner-decisions-26-october)).
 - [unverified] Whether to use a shared boundary anchor height (ZIP 318) to reduce anchor fingerprinting.
 - [decided, unimplemented] Family protocol and A-initiated repair; encrypted pre-IO snapshot deferred (minimal renewal re-proves from the same notes). Ordinary-signature renewal mined; real-funded FROST renewal, persistence and family-wide invariants remain [gating tests](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research).

@@ -12,6 +12,9 @@ It is not security reviewed and does not support real funds.
 ### Added
 - The homepage at [offlinezcash.com](https://offlinezcash.com) (source in `site/`, deployed as a Cloudflare Worker) explains the payment flow and gives step-by-step Basecamp install instructions for wallet users and for gateways.
 
+### Changed
+- Shortened the README to the product proposition and documentation links; refreshed the guides, architecture, component status and roadmap for v0.7.7. Regenerated the three hand-drawn payment/mesh/gateway diagrams for the current testnet light-client flow. Documentation distinguishes implemented controls from mainnet plans and preserves dated test evidence.
+
 ## [0.7.7] - 2026-10-29
 
 ### Fixed

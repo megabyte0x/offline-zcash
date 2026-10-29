@@ -1,87 +1,101 @@
-# MVP v1 design
+# System design
 
-Status: 28 October 2026. Built and released: v0.1.0 (multi-hop mesh on four containers), v0.2.0 (installable `ozm-node`, LAN discovery, sync and test funds over the mesh) and v0.3.0 (Logos Basecamp module and app) on the local NU7 chain, through **v0.7.4**: public testnet with a TLS lightwalletd light-client gateway whose `included`/`mined` reports are trusted, not proved ([open-work.md](open-work.md#built)). In the built app every device pays, receives and relays; `gateway` is the only device role. Payer, payee and relay below name a device's part in one payment, not a setting. The design below targets mainnet; most chain-trust and double-spend parts are designed but not built. #1 re-decided 26 October (pending below the floor, payer + 3-of-4 co-signer group above it); #2 settled 25 October; #3 decided 26 October for a minimal build.
+The mesh moves a finished Zcash transaction, not coins or spending keys. The
+payer builds, proves and signs locally; the payee checks and stores; a gateway
+submits the same bytes. Value moves on the selected chain, not on delivery.
 
-**Rule: design for mainnet; the local chain is the harness.** Every check is specified for Zcash mainnet under NU7 with an untrusted gateway. The `ths` Regtest chain and the four Macs exist to run that design, not to simplify it. Where Regtest cannot exercise a check (proof of work), an explicit test flag covers the gap and mainnet vectors test the check itself ([chain.md](components/chain.md)). Phases below are a build order, never a security downgrade.
+**Current application: v0.7.7, public testnet and Regtest only.** The intended
+mainnet system treats gateways as untrusted, but its independent chain proofs
+and double-spend controls are not all built. Do not read a design decision below
+as a security property of the shipped app. [User-facing flow](how-it-works.md).
 
-The mesh never moves coins. It moves a finished transaction, already signed and proven, from device to device until one with internet submits it. Value moves only when the transaction is mined.
+## Current system
 
-## Harness: demo setup
+Basecamp runs one shared `zcash_offline_module` engine and three thin QML apps:
+wallet, Organiser and Gateway. The CLI and Android shell use the same node
+library. Every device pays, receives and relays; **gateway is the only role**.
+Installing an app never grants it. Organiser now exports one gateway invite;
+wallets normally generate their own keys without invites. Named invited devices
+remain available through `fleet-init`.
 
-Four Macs (macOS 13+), each running the BitChat fork, plus the local chain. A, B and C are offline; only D has internet. C is the second payee for the nullifier-sharing test. In v1.1 four co-signer processes run across the Macs (two on one Mac for the demo only). On mainnet D is any fleet device with backhaul, and the design runs two of them.
+| Component | Shipped behavior | Still missing |
+|---|---|---|
+| [Chain](components/chain.md) | NU7 public testnet, configurable TLS lightwalletd; `ths` v0.4.1 for local Regtest | Mainnet support and independent chain evidence |
+| [Builder](components/offline-builder.md) | Common 4.0.0 v6 Ironwood proving, configured expiry, ZIP 317 fee, durable reservations | Phone proving measurements, escrow signing and automatic repair |
+| [Wallet sync](components/mesh.md#v070-compact-sync) | Per-device scan starts; local compact scanning; 200 checkpoints; deep-fork recovery; sync on startup, discovery and tips | Authenticated history/frontier proofs and immediate spending of unscanned receipts |
+| [Transport](components/mesh.md) | `ozm-mesh` flooding, sealed `ozm1`, acks, finite store-and-forward, TCP/LAN discovery; Android/Linux BLE links implemented | Physical-radio gates, macOS BLE and iOS |
+| [Payee](components/payee-verifier.md) | Proof/signature/output checks, local anchor/expiry/conflict policy, durable catch-up queue and incoming notes | Independent anchor/inclusion proofs, invoices and shared nullifier evidence |
+| [Gateway](components/gateway.md) | Bounded raw-byte submission, exact-byte retry, signed nonce/status notices, compact sync and tips | Tor, proof bundles and independently verified chain selection |
+| [Pending tier](components/pending-tier.md) | No open/unknown pending acceptance; invited-payer local caps | Device-bound keystore enrollment, binary v1 protocol and nullifier sharing |
+| [Double-spend controls](components/double-spend.md) | Local reservations and conflict checks; no prevention against a dishonest owner | Payer + 3-of-4 co-signer group, durable exclusive locks and recovery |
+| [Expiry/repair](components/expiry-reissue.md) | Configured finite expiry; exact bytes retained; local scan past expiry unlocks unspent notes | Payment families, safe replacement and signer fences |
 
-```diagram
-┌─────────────────────┐  private msg  ┌─────────────────────┐  private msg  ┌─────────────────────┐
-│ A: payer (offline)  │──────────────▶│ B: payee (offline)  │──────────────▶│ D: gateway (online) │
-│ offline builder     │ tx + statement│ verifier + pending  │  tx bytes     │ submitter, no keys  │
-│ outbox / re-issue   │◀──────────────│ policy, stores tx   │◀──────────────│ signed bundles      │
-└──────────┬──────────┘    receipt    └──────────┬──────────┘ headers/proofs└──────────┬──────────┘
-           │ redacted PCZT (v1.1)                │ group msg: pending nullifiers        │ sendrawtransaction
-           ▼                                     ▼                                      ▼
-┌─────────────────────┐                ┌─────────────────────┐               ┌─────────────────────┐
-│ Co-signers (v1.1):  │                │ C as 2nd payee      │               │ Local chain: ths    │
-│ any 3 of 4 + A,     │                │ (sharing test)      │               │ v0.4.1, NU7 at h=1  │
-│ nullifier locks     │                └─────────────────────┘               └─────────────────────┘
-└─────────────────────┘
-```
-
-| Component | Job | Doc | Status |
-|---|---|---|---|
-| Chain | Target: mainnet NU7 (`0x77190AD9`). Harness: local `ths` Zakura node, lightwalletd, funded dev accounts | [chain.md](components/chain.md) | Harness running |
-| Offline builder | Builds, proves and signs a v6 Ironwood transaction with no network; outputs raw bytes | [offline-builder.md](components/offline-builder.md) | Built (Rust); Zakura Common `=4.0.0` since v0.7.0 |
-| Transport | `ozm-mesh`: BitChat-style flooding, store-and-forward and acks over TCP links with LAN discovery; sealed `ozm1` envelopes. Android and Linux BLE links built | [mesh.md](components/mesh.md) | Built over TCP/LAN; no real-radio test yet |
-| Payee verifier | Offline checks, chain-state checks against PoW and Merkle paths (no trust in the gateway), pending policy, receipts and states | [payee-verifier.md](components/payee-verifier.md) | To build; anchor verifier proven in [`poc/mmr-anchor-poc`](../poc/mmr-anchor-poc/README.md) |
-| Pending tier | Device-bound PaymentStatement and Receipt formats, payee-to-payee nullifier sharing, limits | [pending-tier.md](components/pending-tier.md) | Spec decided |
-| Gateway | Untrusted. Submits (over Tor on mainnet), rebuilds the history MMR, returns signed bundles: tip, anchor paths, txid branches, conflict notices | [gateway.md](components/gateway.md) | To build; MMR rebuild proven in [`poc/mmr-anchor-poc`](../poc/mmr-anchor-poc/README.md) |
-| Double-spend controls | Pending below the floor; payer + 3-of-4 co-signer group (stock weighted FROST) above it in v1.1; reconfiguration in v1.2 | [double-spend.md](components/double-spend.md) | Decided 26 Oct; weighted group signing mined on `ths` (research) |
-| Expiry and re-issue | Settlement lifetime, families, repair, re-anchoring and signer fence | [expiry-reissue.md](components/expiry-reissue.md) | Decided 26 Oct for a minimal build; not implemented |
-| Privacy | Threat model and leaks | [privacy-and-threats.md](privacy-and-threats.md) | Reference |
+TCP/LAN and funded Linux Basecamp paths have dated evidence. Current Mac,
+physical-radio and Android-screen verification remain open. Releases publish
+only Basecamp packages; CLI/APK downloads stop at v0.7.3.
 
 ## One payment
 
-| # | Step | Network |
-|---|---|---|
-| 0 | Setup while online: sync, split funds into 10+ notes, exchange BitChat keys, load fleet settings (branch ID, expiry delta, fee, limits) | Once |
-| 1 | B sends a ZIP 321 payment request to A | Mesh |
-| 2 | A reserves notes and builds the transaction offline | None |
-| 3 | A sends the transaction plus its signed PaymentStatement (invoice hash, amount, txid, auth digest, seq) to B as a private message. Relays and D only ever see raw transaction bytes | Mesh |
-| 4 | B checks it, posts the pending nullifiers to the fleet-payee group, waits 5 s if another payee is connected, and replies with a signed Receipt: "passes checks at height H; pending" | Mesh |
-| 5 | A and B both send the bytes to D as separate private messages; D broadcasts its signed ack and tip to the mesh; D submits and returns a mempool receipt; the node mines | Gateway |
-| 6 | A signed bundle returns: tip header, txid branch, anchor paths, conflict notices. B verifies signature, PoW (mainnet) and paths, then `included`, later `confirmed` (ten is provisional demo policy). Expiry is not proof of non-inclusion; exact repair/debt states await problem #3 | Mesh |
-| 2′ | v1.1, escrow notes above the floor: A sends the redacted PCZT to nearby co-signers; any 3 of 4 lock the nullifiers and return FROST shares before A continues at step 3 | Mesh |
+1. **Prepare while connected.** Create local keys, sync and obtain mined notes.
+   Economical note splitting runs automatically; wait for mining and scanning
+   before going offline. Never spend unmined change.
+2. **Build offline.** Alice reserves notes and builds/proves/signs the v6
+   transaction with configured branch, expiry and action-count fee.
+3. **Deliver and submit independently.** Alice seals transaction + signed
+   statement to Bob and submits raw bytes to the gateway without waiting for a
+   receipt. An off-mesh destination still submits without a payee receipt.
+4. **Check and persist.** Bob authenticates the sender/statement and verifies
+   against his scanned chain view. Catch-up can defer verification durably.
+   An open/unknown payer waits for inclusion; a known invited payer can receive
+   a pending receipt under local caps. Bob also submits the original bytes.
+5. **Report and scan.** The testnet gateway reports inclusion at 1 and mined at
+   10 confirmations, then wallets sync. Incoming outputs stay non-spendable
+   until scanning supplies positions and witnesses. Refusal never cancels a
+   signed transaction. Ten confirmations are not finality.
 
 ## Finalized decisions
 
-Both independent reviews agreed on these; build around them.
+These are the retained design requirements, with their implementation boundaries.
 
-- A builds, proves and signs; B checks and stores; D (the gateway) submits bytes and holds no spending or viewing key. Each v1.1 co-signer holds one FROST share and no viewing key.
-- Payer and payee each have a device-bound Ed25519 payment key, enrolled in person; it signs the PaymentStatement and Receipt. The keys and formats are in [pending-tier.md](components/pending-tier.md).
-- Exact-byte resubmission is idempotent. Caches/delivery dedupe use **(txid, auth_digest)** because a v6 re-anchor keeps txid. One-obligation payment families are proposed, not ratified (#3).
-- A stuck payment uses the same real notes, so at most one conflicting version can mine on **one valid chain**, not across orphaned histories. Never re-pay from unrelated notes. Canonical-effects/family-wide rules and reservation resolution await #3.
-- Received funds cannot be re-spent offline; pre-split notes cap the number of offline payments.
-- "Pending" is an IOU from a known payer. "Final" only after mining.
-- Branch ID, expiry delta and fee come from configuration. Fee is 10,000 zats for 2 actions (what the wallet emits). A transaction unmined at a network upgrade dies and is re-issued.
-- Design for mainnet; the local `ths` NU7 chain is the harness. Mainnet transactions only after NU7 activates (height 3,543,405), each send approved.
-- The gateway is untrusted (ADV-G). B verifies every chain fact itself: tip by Equihash and difficulty against a pinned floor from a setup checkpoint, anchors by MMR path to header N+1, inclusion by txid branch, conflicts by targeted notices that carry the conflicting tx and its branch. Bundles are signed with the gateway's enrollment payment key. ≥ 2 gateways must agree on the tip; with one, the state is `checked (single-source)` with the stricter cap. Only the Equihash/difficulty/timestamp check is disabled on Regtest, under the tested `regtest-no-pow` flag. Decided 25 October 2026 ([payee-verifier.md](components/payee-verifier.md), [gateway.md](components/gateway.md)).
-- Submission over Tor with a fresh circuit per transaction is part of the design, built once the loopback path works.
-- Transport: our own `ozm-mesh` (BitChat semantics) over TCP/LAN today, a BLE link later; phones after laptops, iOS or Android first (not decided). The same device also runs inside Logos Basecamp as a core module and QML app ([../logos/README.md](../logos/README.md)).
-- Only key splitting stops A's online sweep with native ZEC and no special hardware. The next phase is the **co-signer group**: A plus any 3 of 4 co-signers near the payer; co-signers alone cannot sign. The payee as sole co-signer stays a configuration for recurring pairs ([double-spend.md](components/double-spend.md)).
-- The app persists and re-queues every payment until final proof (#3 proposal 12, approved 26 Oct). Gateways sit at hubs; no carrier protocol yet.
-- The wallet has two kinds of notes: escrow notes (double-spend-proof, need a co-signer quorum) and ordinary notes (pending tier, or receipt-gated near a gateway).
+- **Local secrets and proving.** Gateways receive no peer spending/viewing keys
+  or private proving material. The current gateway may also operate its own
+  wallet; separating broadcaster identity remains privacy work.
+- **Trust is explicit.** Invited devices trust their named gateway; invite-free
+  devices pin the first used gateway key and block silent changes. First contact
+  can be hijacked. Signed reports and reachable-source consistency do not prove
+  chain truth. See [threat model](privacy-and-threats.md#trust-assumptions-at-v070).
+- **Mainnet chain evidence.** The design requires PoW/difficulty checks from a
+  pinned checkpoint, MMR anchor paths, txid inclusion branches and independent
+  gateways. Sampled-header security is a labelled heuristic. These checks are
+  unbuilt; `regtest-no-pow` is a planned explicit harness exception, not a shipped
+  validator switch. [Verifier](components/payee-verifier.md).
+- **Durability before release.** Persist reservations and payment state before
+  sending; persist on the payee before a receipt. Delivery acks alone do not
+  establish durable payment acceptance. Future replacement variants must dedupe
+  by `(txid, auth_digest)`; current payment records are keyed by txid.
+- **No double payment as repair.** Retry identical bytes. The approved family
+  design repairs with the same real notes and counts one obligation once; never
+  repay with unrelated notes. Family accounting and automatic renewal remain
+  unbuilt. Expiry does not erase an accepted debt.
+- **Conditional offline prevention.** Native ZEC without trusted hardware needs
+  split spending authority: payer plus any 3 of 4 co-signers above the chosen
+  floor, with exclusive durable nullifier locks. FROST research is not a deployed
+  co-signer protocol. Ordinary pending payments remain IOUs.
+- **Configuration and privacy.** Branch, expiry and fee come from policy. Tor
+  with per-transaction isolation and encrypted result notices are mainnet gates,
+  not current features. Finite resource limits do not guarantee availability.
 
 ## Stages
 
-Stages are a build order. Every stage is designed for mainnet and run on the harness until the mainnet launch.
+| Stage | State |
+|---|---|
+| Local proof of concept | v0.1–0.6 established offline building, multi-hop TCP, receipts, restart and LAN/invite-free operation on `ths` |
+| Public-testnet experiment | v0.7 uses Common 4.0 and TLS lightwalletd; v0.7.5 adds readiness/recovery, v0.7.6 notice/store and session fixes, v0.7.7 gateway responsiveness. Chain reports remain trusted |
+| Complete MVP v1 | Finish pending enrollment/nullifier sharing, chain proof bundles and Tor; satisfy [gating tests](open-work.md#tests-that-gate-mvp-v1) |
+| MVP v1.1 / v1.2 | Build and test the co-signer group, then safe group replacement; designs/PoCs only |
+| Mainnet | Unsupported. Common 4 already knows NU7 at 3,543,405, but activation parameters alone do not close proof, security, hardware or real-value approval gates |
 
-| Stage | Runs on | Change |
-|---|---|---|
-| MVP v1 | Harness (local NU7 chain, ths v0.4.1) | Everything above: pending tier with PaymentStatement, Receipt, nullifier sharing, gateway mempool receipt. Chain-state checks in three steps: (1) signed bundle format with every slot, anchor-in-window, expiry margin, txid branch, MMR anchor verifier; (2) Equihash/difficulty checker with the pinned floor and mainnet header vectors; (3) two-gateway agreement and `checked (single-source)` degradation. Tor submission path after loopback works |
-| MVP v1.1 | Harness | Co-signer group (payer + 3-of-4); escrow notes; bilateral configuration |
-| MVP v1.2 | Harness | Co-signer reconfiguration: replace a lost co-signer by sweeping escrow notes to a new group key (proposed) |
-| Public testnet | Testnet, NU7 from height 4,465,026 | Move once to Common 4.0 (PCZT rc9, clients rc9.3, `zakura-reddsa-frost`) before this stage. Same rules as the harness and mainnet; only difference is the testnet minimum-difficulty rule (block > 450 s after its parent) in the header verifier. Planned: own Zebra + lightwalletd gateway node. Built in v0.7.0: the gateway is a light client of public TLS lightwalletd servers, with chain state trusted ([gateway.md](components/gateway.md#built-in-v070)) |
-| Mainnet launch | Mainnet, NU7 from height 3,543,405 | Library step only: Zakura Common 4.x or custom mainnet params; public endpoints over Tor; `regtest-no-pow` off; real ZEC, each send approved. No design change (the earlier "MVP v2" row that deferred Tor and header validation to this stage is superseded) |
-| Logos phase | Mainnet | Basecamps and Logos Delivery; Zebra module as gateway; quorum committees |
-
-What to work on next: [open-work.md](open-work.md).
-
-Current design order: #1 double-spend re-decided 26 Oct and #2 chain trust settled; #3 expiry/re-issue decided for a minimal build (26 Oct); **#4 gateway protocol next**, then #5 BitChat durability, #6 fleet fingerprint, #7 stack compatibility, #8 offline limits/phone proving, #9 policy values. #2 leftovers decided: reset at `confirmed` on both networks; single-source is Receipt state bit 0x80. [Dated community prior art](prior-art.md) informs the remaining work.
+The design order and implementation backlog are separate in [open-work.md](open-work.md).
+Historical BitChat-fork and full-node gateway plans remain in the read-only
+[archive](../archive/README.md); the current transport is our own `ozm-mesh` and
+the testnet gateway is a light client.

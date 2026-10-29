@@ -4,6 +4,12 @@ Research cutoff: **25 October 2026**. Sources were fetched then, not re-verified
 
 This inventory supports the [design](design.md) and [expiry/re-issue proposals](components/expiry-reissue.md); it ratifies no new policy. A builds/proves/signs; B accepts pending; C is the v1.1 nullifier-lock co-signer; D broadcasts raw bytes.
 
+**Current-app boundary (v0.7.7):** this is dated external research, not an
+implementation inventory. The app has migrated to Common 4 and uses `ozm-mesh`,
+not a BitChat fork. Open/unknown payers cannot receive pending acceptance;
+co-signers, Tor and independent chain proofs remain unbuilt. See
+[current architecture](design.md) and [accepted repair decisions](components/expiry-reissue.md#proposals-and-owner-decisions-26-october).
+
 ## Already built or in production: borrow instead of build
 
 | Project / evidence / visible licence | What to take | What not to take; adaptation needed |

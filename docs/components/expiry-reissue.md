@@ -2,10 +2,17 @@
 
 Status: decided 26 October for a minimal build: proposals 1 (shutdown profile), 2, 3, 5–9, 11 and 12 **accepted**; 4 accepted for A's automatic re-issue only; 10 and the B-initiated `ozc1:rq:` request **deferred**; 13 rejected. Not implemented. Proposals that name C now apply to each co-signer of the [group](double-spend.md). Problems #1 (re-decided 26 October) and #2 (chain-state trust) remain settled; their expiry-related assumptions are corrected here, not silently promoted into new decisions. Next: problem #4, [gateway protocol](gateway.md).
 
+**Current implementation: v0.7.7.** The builder uses configured finite expiry
+(default delta 72,576); the app persists/retries unchanged bytes and unlocks
+unspent reservations only after its locally scanned tip passes inclusive expiry.
+A gateway expiry report alone cannot unlock them. This is not debt cancellation.
+Payment families, automatic renewal, immutable co-signer fences and the
+`expired-unresolved` accounting below remain unbuilt.
+
 ## Decided
 
 - Existing design: A builds, proves and signs offline; D submits raw bytes without spending or viewing keys. Branch ID, expiry and fee come from fleet configuration. Never repay a stuck payment from unrelated notes ([offline-builder.md](offline-builder.md)).
-- No expiry profile, repair-message schema or payment-family state machine has been approved. The owner must accept or reject the proposals individually; the review guide is linked from [open-work.md](../open-work.md).
+- The shutdown profile, family accounting and A-initiated repair were accepted on 26 October; exact repair-message layouts and same-txid refresh semantics remain open. The accepted policy is not a claim that renewal/family accounting has shipped. See the numbered decisions below and [open work](../open-work.md).
 
 ## Findings
 
@@ -111,7 +118,7 @@ Numbering follows the owner's twelve-decision walkthrough, not the research repo
 
 ### Eight research open items
 
-1. Owner approval of uplink envelope/profile and merchant willingness to hold that debt.
+1. Validate the chosen ≤7-day uplink assumption and merchant willingness to hold debt; the 72,576-block shutdown profile was accepted 26 October, not measured as an availability guarantee.
 2. Whether to relax thirty-minute new acceptance; recompute detection windows and loss caps if so.
 3. Absolute signer-epoch fence, signing cessation/rotation and recovery reconciliation.
 4. Repair wire schema, reasons/states and same-txid refresh statement semantics.
@@ -135,4 +142,4 @@ Numbering follows the owner's twelve-decision walkthrough, not the research repo
 9. Lifetime budget at maximum view lag/uplink delay, including activation/fence truncation.
 10. Mac/iPhone proving time and memory, witness-update bytes, repair delivery and restart/retry beyond BitChat's 24-hour TTL.
 
-No controlled auto-mining test was run; [AGENTS.md issue #7](../../AGENTS.md) stays unverified. Explicit `generate` mined the test transactions. The failed 120-second rolled-back-block replay had no diagnosed upstream cause; coinbase-only scratch blocks replaced it. The maximum-expiry error wording defect is logged separately; none of these establishes a new consensus restriction.
+The expiry research used explicit `generate`; the subsequent v0.1.0 bench confirmed external submissions need explicit mining ([AGENTS.md issue #7](../../AGENTS.md)). The failed 120-second rolled-back-block replay had no diagnosed upstream cause; coinbase-only scratch blocks replaced it. The maximum-expiry error wording defect is logged separately; none of these establishes a new consensus restriction.

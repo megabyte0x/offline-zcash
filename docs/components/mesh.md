@@ -31,7 +31,8 @@ System view: [../design.md](../design.md). Gateway side: [gateway.md](gateway.md
 
 ### v0.7.0 compact sync
 
-- Fleet network defaults to Regtest. Testnet identities use `utest1` and a birthday
+- New desktop/CLI sessions default to testnet; old fleet files without `network`
+  load as Regtest. The Android shell still defaults to Regtest. Testnet identities use `utest1` and a birthday
   chosen per device automatically, seeded from GetTreeState at birthday−1 and
   checked against the block's Ironwood commitment-tree size. Regtest uses RPC
   tip−100, at least 1. Offline-created devices retain creation time until chain
@@ -162,6 +163,22 @@ before local delivery. Local addressed messages and broadcasts now reach the
 application even if relay custody is full. The relay still refuses new custody
 and never evicts held messages to make room; application authentication, bounded
 queues and resource limits remain in force.
+
+### v0.7.6 replaceable notices and upgrade migration
+
+Presence and tip notices use `send_replaceable`: newer packets may evict this
+device's older notices to absent peers. They no longer consume its entire
+512-packet quota and silently block sync or payments. Held payment/submission/
+sync-request messages remain protected during normal admission. Tip pushes keep
+going to other devices if one send fails.
+
+On the first upgrade from the old store format, the device drops its own
+unmarked directed messages once; the app resends payments, submissions, results
+and sync requests. Other devices' held custody is retained. This migration does
+not clear the wallet, keys or payment book. Deferred incoming verification now
+uses the saved signed statement/mesh sender after discovery loss or restart;
+failed rechecks wait for chain progress rather than logging every second.
+`events.jsonl` rotates above 8 MiB into one `events.1.jsonl`.
 
 ## BLE link (Android first)
 

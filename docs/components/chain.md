@@ -1,5 +1,10 @@
 # Chain: public testnet, Regtest harness, Ironwood v6 rules, fees
 
+**Current implementation: v0.7.7 / Zakura Common 4.0.0.** New desktop/CLI
+sessions default to testnet. Old fleet files without `network` still mean
+Regtest. The tables below retain dated protocol research and mainnet design;
+the proposed `regtest-no-pow` validator and independent chain proofs are unbuilt.
+
 ## v0.7.0 public-testnet operation (27 October 2026)
 
 Public testnet is now the experiment target: NU7 from **4,465,026**, branch
@@ -64,10 +69,10 @@ This file holds the chain and protocol facts the other components depend on: siz
 | Dev accounts | Accounts 1–5 come from a fixed public mnemonic; `ths` prints each account's unified spending key (hex). Account 1 starts with 5 Ironwood ZEC. `ths wallet faucet` and `ths wallet send` move funds between them | [decided] |
 | Reorg tools | `ths reorg --depth N`, `ths rollback --depth N` | [decided] |
 | Configuration | Branch ID, expiry delta and fee come from configuration, never hard-coded | [decided] |
-| Fleet fee | 10,000 zats for 2 actions, which is what the wallet emits | [decided] |
+| Fleet fee | 10,000-zat floor for 2 actions; larger splits and Max use the ZIP 317 padded-action fee | [built] |
 | Branch epoch | A tx is bound to its branch ID. Anything unmined at an upgrade dies and is re-issued. Expiry must never straddle a known activation height | [decided] |
 | `lock_time` | Ignored on fully shielded v6. Transparent P2SH + CLTV is enforced on v6 (measured 26 Oct); CSV is not implemented. Neither stops a self-sweep (see Findings) | [decided] |
-| Mainnet | NU7 at height **3,543,405** (~5 Nov 2026, [ZIP 259](https://zips.z.cash/zip-0259)), so mainnet uses the same branch ID. Each mainnet send needs explicit approval. The library step (Common 4.x or custom params) is below | [decided] |
+| Mainnet | NU7 at height **3,543,405** (~5 Nov 2026, [ZIP 259](https://zips.z.cash/zip-0259)), so mainnet uses the same branch ID. Common 4 already has this height, but the app does not support mainnet. Each real-value send needs explicit approval | [decided] |
 
 Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` produced a v6 tx with only Ironwood actions: 2 actions, **9,166 bytes**, a **10,000-zat fee** (5,000 per action) and expiry about 40 blocks out (mined at height 106 with `expiryheight` 146). The same send on v0.3.0 under NU6.3 was also 9,166 bytes with a 10,000-zat fee.
 
@@ -137,23 +142,23 @@ Measured on v0.4.1 (2026-10-25): `ths wallet send --from 1 --to 2 --amount 1` pr
 
 - **Measured:** official Zebra 7.0.0 (`e8db87e`) on a fresh NU7 Regtest accepted to its mempool, and mined at height 103, a Common 2.2.0 payer + 3-of-4 FROST 9,166-byte v6 spend (txid `72beac5d82834891b0d286a05af0272487774e3fe960519309476385e3bd49d7`). All 5 saved transactions verify identically under Common 2.2.0, Common 4.0 and Zebra's upstream crates (`orchard` 0.16, `zcash_primitives` 0.31, `zcash_protocol` 0.11), and corruptions are rejected. Weighted DKG passes all 5 valid signer subsets on both 2.2.0 and 4.0. Not tested: 4.0-built transactions mined, public networks. #7 research
 - **Testnet needs no library change:** Common 2.2.0 `TEST_NETWORK` already sets NU7 = 4,465,026 (`zcash_protocol/src/consensus.rs` L491–536 at `b6cf4ce`); only `MAIN_NETWORK` has `None`.
-- **4.0 migration:** Common 4.0, PCZT rc9, wallet clients rc9.3. FROST moves to `zakura-reddsa-frost` 4.0 (`pallas-pasta` feature), still frost-core 3.0. The `use_qsk` FVK helper stays ours. Default expiry changes 40 → 120, so keep the explicit fleet expiry and fee. Types from different families can't be mixed directly, but serialized transactions cross between them (measured).
+- **4.0 migration completed in v0.7.0:** the app pins Common 4.0.0 and client-backend rc9.5; PCZT rc9 is research-only, not linked by the app. Research FROST moves to `zakura-reddsa-frost` 4.0 (`pallas-pasta` feature), still frost-core 3.0. The `use_qsk` FVK helper stays ours. Default expiry changes 40 → 120, so the app keeps explicit fleet expiry and fee. Types from different families cannot be mixed directly; serialized transactions cross between them. Funded v0.7.5 Common 4 payments ran on public testnet ([evidence](../open-work.md#built)); the earlier FROST research above is a separate experiment.
 - **Testnet difficulty:** a block more than 450 s after its parent may use the PoW-limit difficulty (ZIP 218). The testnet verifier must allow that rule; testnet results never stand in for mainnet sampled-header security.
 - Testnet endpoints: the configurable public TLS lightwalletd list above; no VPS or own node. Funding and the live-run limitations are in [install.md](../install.md#public-testnet-v070).
 
 ### Mainnet step
 
-- Common 2.2.0's `MAIN_NETWORK` has `Nu7 => None`. Before mainnet, move to Common 4.x (which sets 3,543,405) or supply custom mainnet parameters with the NU7 height. This is a library step, not a design change, and does not block the harness work.
+- The app already uses Common 4.0.0, which sets mainnet NU7 at 3,543,405. The old Common 2.2 migration prerequisite is closed; this does not enable mainnet in the application.
 - A tx signed under NU6.3 and still unmined at activation becomes invalid.
 - Ironwood itself arrived with NU6.3: mainnet 3,428,143, testnet 4,134,000 (branch `0x37A5165B`). Testnet NU7 activated at 4,465,026 ([ZIP 258](https://zips.z.cash/zip-0258), Zebra releases). Public testnet is the v0.7.0 experiment target.
-- Moving to mainnet changes libraries, endpoints and the PoW flag only: same builder, transport, verifier, gateway duties and bundle format; Tor submission and ≥ 2 gateways are already in the design ([gateway.md](gateway.md)); real ZEC. The archive's "mainnet stage" wording ([MVP v1 design, Stages](../../archive/reports/MVP%20v1%20design.md)) that deferred Tor and header validation is superseded.
+- Mainnet still needs application network support, independent chain proofs, Tor, independently operated gateways and security/hardware gates, not just changed endpoints. These are design requirements ([gateway.md](gateway.md)), not current features. The archive's "mainnet stage" wording ([MVP v1 design, Stages](../../archive/reports/MVP%20v1%20design.md)) that deferred Tor and header validation is superseded.
 
 ## Open
 
 - [unverified] A mainnet-like chain (NU6.3 active, NU7 not) needs a patched `ths` (issue log #1). It is needed for two tests: a tx unmined across activation dies and is re-issued, and an anchor from before the activation is proved against the pre-activation history tree.
 - [unverified] `regtest-no-pow` test vectors: a real mainnet header passes the Equihash (200,9) and difficulty check and a corrupted one fails, both with the flag off; with the flag on, a live 177-byte Regtest header is accepted and the rest of the bundle checks still run.
 - [unverified] Zakura's history-tree commitment in the mainnet NU7 activation block; Zebra 7 RPC behaviour for `getblock h 0`, `z_gettreestate` and verbose `getrawtransaction`.
-- [unverified] Zebra 7 accepts v6 bytes built with Zakura 2.2.0 (gap G7; [reconciliation §2](../../archive/reports/Design%20review%20reconciliation.md)). Test: submit the same bytes to a Zebra 7 Regtest node.
+- [resolved 26 Oct] Zebra 7 accepted and mined Common 2.2.0 v6 bytes; see Stack compatibility above. This does not cover every future format or upgrade.
 - [unverified] Live Zebra expiry boundaries/mempool and old-anchor acceptance with the same bytes; Zakura results are in Findings, not open. Real multi-day wall-clock residence, restart/congestion policy and mainnet reorg risk remain untested.
 - [unverified] Upstream librustzcash (`zcash_primitives` 0.31) transactions are accepted by Zakura, and the reverse (issue log #4).
-- Pending owner decisions, eight research open items and ten renewal/reorg/activation gates: [expiry-reissue.md](expiry-reissue.md#open). Recheck upgrade schedules at signing/renewal; no activation-crossing experiment was run.
+- Accepted repair decisions, remaining research items and ten renewal/reorg/activation gates: [expiry-reissue.md](expiry-reissue.md#open). Recheck upgrade schedules at signing/renewal; no activation-crossing experiment was run.

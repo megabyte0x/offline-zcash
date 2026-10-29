@@ -2,6 +2,12 @@
 
 `ozm-node` runs on macOS (Apple silicon and Intel) and Linux (x86_64 and arm64, glibc 2.35 or newer, for example Debian 12 or Ubuntu 22.04).
 
+**Current source: v0.7.7. Latest released CLI binary: v0.7.3.** Releases since
+v0.7.4 publish only Basecamp packages. Use [Basecamp](basecamp-install.md) for
+the current packaged app, or build the CLI below. The workflow sections describe
+current source; automatic scan starts, readiness and later fixes are not in the
+v0.7.3 binary. Testnet TAZ and Regtest only; no mainnet.
+
 ## Option 1: install script
 
 Run:
@@ -61,6 +67,20 @@ xattr -d com.apple.quarantine ~/.local/bin/ozm-node
 
 The install script does this for you.
 
+## Option 3: build current source
+
+With Git, Rust 1.97.1 and a native C/C++ build toolchain installed:
+
+```sh copy Copy CLI Build
+git clone https://github.com/megabyte0x/offline-zcash.git
+cd offline-zcash
+cargo install --locked --path crates/ozm-node --force
+ozm-node --version
+```
+
+Keep the repository checkout for updates. Building `main` includes changes after
+the latest release; check its version and changelog before testing.
+
 ## Next: find a gateway and pay by address
 
 With a funded Regtest gateway on your LAN, start without an invite:
@@ -94,7 +114,8 @@ Wait for funding and a spendable balance before paying. `max` quotes `amount`
 and `fee_zat` using the builder's ZIP 317 action count; the web UI's **Max** fills
 that amount. Locked notes and unmined change cannot be spent. Uneconomic inputs
 can remain after Max. Unknown mesh addresses still submit and display **no payee
-receipt**; only Regtest unified addresses with Ironwood receivers are supported.
+receipt**. Unified addresses must match the saved network and have an Ironwood
+receiver: Regtest here, or `utest1` on public testnet.
 
 The faucet allows one request/device/60 seconds, at most ten notes and the gateway's
 configured total cap. First gateway use is trust-on-first-use, not trusted enrollment.
@@ -116,8 +137,10 @@ role except `gateway` is ignored.
 
 The CLI has no Leave session. To start over or switch network, keep the old home
 and use a new one with `--home`; never delete a funded wallet.
-For operator setup see [Basecamp](basecamp-install.md) or the older invited
-[CLI session guide](mvp-v0.2.0.md#running-a-session).
+For a Regtest operator, fund the gateway address with `ths faucet`, then run its
+joined home with `--rpc http://127.0.0.1:18232 --mine`. `ths start` must remain
+running. See [Basecamp operator setup](basecamp-install.md#gateway-on-regtest)
+or the historical [invited CLI session](mvp-v0.2.0.md#running-a-session).
 
 ## Public testnet (v0.7.0)
 
@@ -139,8 +162,9 @@ The gateway defaults to TLS `testnet.zec.rocks:443`, then
 `zaino.testnet.unsafe.zec.rocks:443`. Set `fleet.json`'s `servers` list or pass
 `--rpc 'https://server-a:443,https://server-b:443'` to override it. This option is
 a lightwalletd list on testnet, JSON-RPC on Regtest. No node/VPS is needed.
-Zaino returned HTTP 503 on 27 October; the primary remains usable with a
-**single-source** warning. `--mine` and gateway `fund` are refused on testnet.
+On 27 October, Zaino returned HTTP 503 and the primary was usable with a
+**single-source** warning; that is dated evidence, not a live service check.
+`--mine` and gateway `fund` are refused on testnet.
 
 On each wallet laptop, create its own identity and discover the LAN gateway:
 
@@ -163,7 +187,8 @@ ozm-node prepare --notes 10 --amount 0.0101
 ozm-node pay --to '<recipient-utest1-address>' --amount 0.01
 ```
 
-These client commands target the default local API; use `--api` if you changed
+Automatic economical splits already prepare sufficiently large funding; the
+`prepare` command is an optional explicit split. These client commands target the default local API; use `--api` if you changed
 its port. Prepare waits for gateway-reported mining, then requests sync. Confirm
 the split notes are spendable **before going offline**. Larger splits pay ZIP 317
 fees by padded action count; two-action payments retain the 10,000-zat floor.
@@ -173,7 +198,8 @@ The internet gateway watches blocks, resubmits unchanged bytes every three block
 until expiry, and pushes results to payer/payee: `submitted` → `included` (1
 confirmation) → `mined` (10). All chain facts are **gateway-reported**; TLS and
 agreement between reachable servers are not inclusion/PoW/MMR proofs. Reorgs can
-downgrade results even after ten confirmations. Refused payments may still mine
+downgrade tracked results, but recurring polling stops at `mined`; a saved
+ten-confirmation report is not continuous reorg monitoring. Refused payments may still mine
 until expiry. Keep wallet files and signed transaction history for recovery.
 
 ## Bluetooth on Linux

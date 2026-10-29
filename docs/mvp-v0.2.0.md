@@ -1,5 +1,11 @@
 # v0.2.0: install it and pay offline on a shared LAN
 
+**Historical evidence, not the recommended setup.** Results and UI labels below
+describe v0.2.0. Current v0.7.7 defaults to public testnet, needs an invite only
+for the gateway, removes the fleet discovery tag and syncs automatically. Use
+the [Basecamp guide](basecamp-install.md) or [current CLI guide](install.md).
+The invited Regtest example remains a record of the original workflow.
+
 **Status:** built and passing in containers, 26 October 2026. Not yet run on real laptops or real Wi-Fi. v0.1.0 proved the payment path on a four-container line mesh ([mvp-v0.1.0.md](mvp-v0.1.0.md)). v0.2.0 makes the same code installable by testers on their own laptops.
 
 ## What v0.2.0 adds

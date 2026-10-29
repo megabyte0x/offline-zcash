@@ -1,6 +1,10 @@
-# Android test app (v0.7.5, not released)
+# Android test app (v0.7.7 source, not released)
 
 **Public testnet TAZ / Regtest coins only.** Android 10+ (API 29), **arm64-v8a**, Bluetooth LE central and peripheral support. This is an experimental test shell, not a mainnet wallet. The APK builds and the Kotlin↔Rust link contract is tested on a host JVM; **no real phone, radio, screen-off behaviour or phone proving cost has been verified**. B2–B7 in [mesh.md](components/mesh.md#milestones-and-gating-tests) are hardware gates, not passed tests.
+
+The instructions describe current source. The last released APK is v0.7.3;
+it needs manual sync/preparation and lacks v0.7.5–v0.7.7 recovery/gateway fixes.
+Build current source for those features and use a current gateway.
 
 ## Install and join
 
@@ -8,8 +12,8 @@
 2. Transfer the APK to the phone, open it in Files, and allow installation from that source. Alternatively, over USB: enable Developer options and USB debugging on the phone; install [Android Platform-Tools](https://developer.android.com/tools/releases/platform-tools) (`adb`) on the laptop; connect and unlock the phone, accept the debugging prompt, check `adb devices`, then run `adb install -r offline-zcash-0.7.3-arm64-v8a.apk`. No invite is needed. Optional invites contain private keys: only import your own and never reuse it on two devices.
 3. Enable Bluetooth and open **Offline Zcash**. Allow **Nearby devices** on Android 12+, or **Location** on Android 10/11 (also enable the system Location switch there). Allow notifications on Android 13+ so the foreground mesh notification is visible. No location permission is requested on 12+. The notification prompt only appears together with the Bluetooth prompt; if you denied it, enable notifications for Offline Zcash in Android Settings. If a permission was denied, tap **Start mesh without invite / grant permissions** to retry.
 4. Tap **Start mesh without invite / grant permissions**. This creates keys/address locally after permissions are granted and starts open BLE and LAN discovery. Alternatively, before first start tap **Join with invite file** and select your own JSON. Subsequent service restarts reuse the installed identity and wallet automatically. Never clear app storage or uninstall a funded device just to change fleets.
-5. Join the laptop gateway's Wi-Fi. Internet is not needed on the phone or access point. At least one phone must share the laptop's LAN to bridge BLE-only phones. Laptops use TCP/LAN, **not BLE**. Neighbours show `TCP` for the laptop. Phones show `BLE` or `TCP`: phones on the same Wi-Fi also find each other over LAN, and the mesh keeps whichever direct link survives. To test the radio, keep at least one phone off the Wi-Fi so it can only reach the others over `BLE`; only direct neighbours are listed, not every reachable device. AP/guest-network client isolation must be off. Allow TCP 7777 and UDP 7778 through the laptop firewall on this trusted LAN. The phone holds a Wi-Fi multicast lock; it never needs access to lightwalletd or the node RPC.
-6. Status shows the selected gateway's name, mesh ID, hops and tip. Tap **Sync from gateway**, then **Request 3 × 0.1 test ZEC**. Wait for nonzero tip and `0.3 ZEC` spendable (may take minutes). Copy/share your address outside the app. Paste the recipient's Regtest unified address, enter `0.01` or tap **Max**, then **Build and send payment** once. Max uses the builder's ZIP 317 action fee, excluding locked/unmined notes and uneconomic dust. First proving can be slow. Open/unknown payers are never accepted pending: the payee waits at `awaiting-inclusion` for a gateway-reported inclusion receipt, then `mined`; fast transfers may skip states. An address not on the mesh still submits/mines, explicitly **no payee receipt**. Inclusion, `mined` and sync are **gateway-reported, not independently verified chain proofs**. Balances change after a later sync.
+5. Join the laptop gateway's Wi-Fi. Internet is not needed on the phone or access point. At least one phone must share the laptop's LAN to bridge BLE-only phones. macOS uses TCP/LAN; Linux also has an experimental BLE backend, still without physical-radio validation. Neighbours show `TCP` for LAN links. Phones show `BLE` or `TCP`: phones on the same Wi-Fi also find each other over LAN, and the mesh keeps whichever direct link survives. To test the radio, keep at least one phone off the Wi-Fi so it can only reach the others over `BLE`; only direct neighbours are listed, not every reachable device. AP/guest-network client isolation must be off. Allow TCP 7777 and UDP 7778 through the laptop firewall on this trusted LAN. The phone holds a Wi-Fi multicast lock; it never needs access to lightwalletd or the node RPC.
+6. Status shows the selected gateway's name, mesh ID, hops and tip. The Android shell still defaults to **Regtest**; select `testnet` before first start for public testnet. Sync starts automatically; **Sync from gateway** is a manual retry. On Regtest, tap **Request 3 × 0.1 test ZEC** and wait for a spendable balance. Copy/share your address outside the app. Paste a recipient address for the same network, enter `0.01` or tap **Max**, then **Build and send payment** once. Max uses the builder's ZIP 317 action fee, excluding locked/unmined notes and uneconomic dust. First proving can be slow. Open/unknown payers are never accepted pending: the payee waits at `awaiting-inclusion` for a gateway-reported inclusion receipt, then `mined`; fast transfers may skip states. An address not on the mesh still submits, explicitly **no payee receipt**. Inclusion, `mined` and sync are **gateway-reported, not independently verified chain proofs**. Incoming outputs need scanning before they are spendable.
 7. Keep the mesh notification running to relay. Background scanning is 5 s on / 15 s off; foreground scanning is continuous. Vendor battery restrictions can still stop it. **Stop mesh** stops BLE and LAN; pending sealed packets/payments persist for restart. To restart it, tap **Start mesh without invite / grant permissions** and wait for `running`; this reuses an existing invited or open identity. Reopening the app from Home or Recents does not restart a stopped mesh. After toggling Bluetooth or changing permissions, tap **Stop mesh**, then the same Start button. Report phone model/Android version, link kind, times, and errors; never send private invite files.
 
 Open mode initially picks fewest hops, then highest advertised tip, from fresh self-signed announcements. First use pins the gateway and blocks silent changes; status warns if it disappears. First contact can still select a Sybil: verify the mesh ID with the operator. Address bindings prove receiving authority (not spending authority), reveal no viewing key, and pin the mesh key at first receipt routing; they never change the typed destination. The faucet limits one request/device/60 seconds, at most ten notes and its total cap; fresh identities can evade it. Use a trusted local operator and test coins. [Full trust model](basecamp-install.md#open-mode-trust-and-faucet-limits).
@@ -20,12 +24,12 @@ Both APK variants use the same BLE service UUID. They are **not compatible with 
 
 For the Regtest harness, install `ths` **v0.4.1**, Docker, `jq` and `ozm-node` v0.7.3 ([CLI install](install.md)); keep the gateway online during funding/mining. Alternatively use the [Basecamp Organiser and Gateway apps](basecamp-install.md) on the laptop. These commands run on the **laptop**, not the phone; run from an empty session directory. `ths start` stays running in a separate terminal. In an Amp orb use `amp orb services ensure` instead (an orb is not a phone's local LAN). For public testnet use the [TLS gateway and external faucet](install.md#public-testnet-v070); no ths is needed.
 
-Before the release exists, build/install the CLI from this repository's `main`: `cargo install --locked --path crates/ozm-node --force`. This requires Rust and does not require the Android SDK. Then change to the empty session directory for the commands below.
+For current behavior, build/install the CLI from this repository's `main`: `cargo install --locked --path crates/ozm-node --force`. This requires Rust and does not require the Android SDK. Then change to the empty session directory for the commands below.
 
 ```bash copy Copy Gateway Setup
 ths start --no-open
 # In a second terminal, in the session directory:
-ozm-node fleet-init --out invites --name android-test --device Gateway:gateway
+ozm-node fleet-init --out invites --name android-test --network regtest --device Gateway:gateway
 ozm-node join invites/Gateway.invite.json --home "$PWD/gateway-home"
 address=$(jq -r '.devices[] | select(.name=="Gateway") | .address' invites/fleet.json)
 ths faucet "$address" --amount 1 --json
@@ -77,23 +81,24 @@ v0.6.0 APK, Android screen or physical radio was tested locally.
 
 ## Public testnet in v0.7.0
 
-Before first Start, select `testnet`; an existing fleet/home keeps its saved
-network. Testnet uses `utest1`, birthday 4,465,026 by default, and the same TLS
-gateway as the [testnet session guide](install.md#public-testnet-v070).
+Before first Start, select `testnet` explicitly; unlike current desktop setup,
+the Android shell still defaults to Regtest. An existing fleet/home keeps its saved
+network. Testnet uses `utest1`, an automatic per-device scan start for new keys,
+and the same TLS gateway as the [testnet session guide](install.md#public-testnet-v070).
 Use Valar for TAZ, not the gateway-fund button. After funding and sync, **Prepare
 for offline** splits a mined note into equal notes (default 10 × 0.0101), with
 the ZIP 317 action-count fee. Wait for gateway-reported `mined` and synced
 spendable notes before going offline. No unmined change can be spent.
 
 The app labels inclusion/mining as gateway-reported (1/10 confirmations), not
-chain proofs; one-source operation is a trust limitation. Public funded testing
-is blocked by the documented [faucet errors](components/offline-builder.md#v070-testnet-note-plan).
+chain proofs; one-source operation is a trust limitation. Funded Linux Basecamp
+verification is recorded in [open work](open-work.md#built); it does not verify Android.
 Native Android screens, permissions, radios and phone proving remain unverified;
 host-JVM checks are not phone tests.
 
-Versions: workspace, Logos metadata/module and Android `versionName` are `0.7.5`, `versionCode` is `14`. Releases from v0.7.4 do not publish the APK for now; v0.7.3 is the newest released APK. CI builds the APK and checksum on pushes and pull requests that change `android/` or `crates/ozm-ffi`. Hardware gates remain open. Use `offline-zcash-0.7.3-arm64-v8a.apk` and its checksum instead of the older filenames in the historical setup examples above.
+Versions: workspace, Logos metadata/module and Android `versionName` are `0.7.7`, `versionCode` is `16`. Releases from v0.7.4 do not publish the APK for now; v0.7.3 is the newest released APK. CI builds the APK and checksum on pushes and pull requests that change `android/` or `crates/ozm-ffi`. Hardware gates remain open. Use `offline-zcash-0.7.3-arm64-v8a.apk` and its checksum for the released binary, or build current source for newer behavior.
 
 v0.7.2 disables Android's platform cleartext opt-in; native Rust mesh TCP and BLE
 remain plaintext at the link layer. Inventory sync needs v0.7.2 on both peers;
 older peers can only live-forward. Funded public payment-to-mined remains
-unverified because no funded testnet wallet exists.
+unverified **on Android**, as do permissions, background behavior and radios.

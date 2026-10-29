@@ -2,6 +2,10 @@
 
 Ordered. Each item names the component doc that owns it. Update this list as items close.
 
+**Current release: v0.7.7 (29 October 2026).** The evidence below stays attached
+to the version/platform that produced it. Design decisions are not shipped
+controls; the application still trusts gateway chain reports. [Current flow](how-it-works.md).
+
 ## Built
 
 v0.1–0.6 were exercised on the local `ths` NU7 chain. v0.7 adds public-testnet light-client operation; v0.7.5 was exercised with owner-funded TAZ in Linux Basecamp. Releases currently ship only the macOS and Linux Basecamp packages (four `.lgx` per platform plus merged catalogue packages and checksums); CLI tarballs and the Android APK are not released for now. **Current focus: the Basecamp apps on macOS and Linux.** Android is not the current focus; its version tracks releases and CI builds the APK when `android/` or `crates/ozm-ffi` change, but no Android work is planned for now. Releases are on GitHub.
@@ -146,6 +150,9 @@ report as a spend witness. Normal scanning remains the spendability gate.
 | v0.7.2 | Contained hardening: Unix 0600 files, bounded mesh and gateway resources, key-possession proof before inventory, nonce-addressed gateway results (P12), invited pending caps, multi-server submission. Older v0.7.x peers only live-forward. Android 0.7.2/code 11 | [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [gateway](components/gateway.md#v072-contained-hardening) |
 | v0.7.3 | Scope: Basecamp apps on macOS and Linux. Gateway is the only role: every device pays, receives and relays; Organiser has one gateway checkbox per device and requires at least one; invited devices trust the fleet's named gateway; legacy roles in old invites are accepted and ignored. LAN/BLE fleet tag and hint are zero (v0.7.2 peers still connect); Android `fleetHint()` removed. Leave session in all three Basecamp apps moves `ozm` to a timestamped backup (not available on Android or in the `ozm-node` CLI; use another `--home`). Regtest Gateway accepts only `http://` JSON-RPC; testnet Gateway shows the fleet's lightwalletd servers. Android 0.7.3/code 12 | [basecamp-install](basecamp-install.md#leave-session), [mesh](components/mesh.md), [privacy-and-threats](privacy-and-threats.md#trust-assumptions-at-v070), [changelog](../CHANGELOG.md) |
 | v0.7.4 | Patch: a device's own delivery acks for received sync chunks no longer fill its mesh-store quota, so long catch-ups over the mesh and later payments keep working; Leave session keeps the invite-free wallet (the next invite-free start on the same network restores it); Basecamp upgrade troubleshooting. Releases ship only the macOS and Linux Basecamp packages. Android 0.7.4/code 13 (not released) | [mesh](components/mesh.md), [basecamp-install](basecamp-install.md#leave-session), [changelog](../CHANGELOG.md) |
+| v0.7.5 | Automatic scan starts/sync, Pay during catch-up, durable incoming notes/verification, faster scans/deep-fork recovery, economical note preparation and simple/Debug wallet. Funded Linux evidence above. Android code 14 (not released) | [builder](components/offline-builder.md), [mesh](components/mesh.md), [changelog](../CHANGELOG.md) |
+| v0.7.6 | Replaceable presence/tip notices and store migration; bounded events; deferred verification without live sender; owner-only folders. Gateway-only Organiser, used-wallet backup selection and explicit fresh-wallet control. Android code 15 (not released) | [mesh](components/mesh.md#v076-replaceable-notices-and-upgrade-migration), [recovery](basecamp-install.md#leave-session), [changelog](../CHANGELOG.md) |
+| v0.7.7 | Chain checks and server connections have deadlines; mesh submissions wait for a busy check; duplicate in-flight requests join; stop repeatedly polling mined entries. Android code 16 (not released) | [gateway](components/gateway.md#v077-busy-gateway-fix), [changelog](../CHANGELOG.md) |
 
 **v0.7.0:** configurable TLS lightwalletd gateway (no full node/viewing-key scanning),
 fleet network/birthday, Common 4.0, compact Ironwood chunks and empty runs,
@@ -160,6 +167,8 @@ The dated 3,457-block replay measures **2.40 MB/day total stable BLE-link framin
 control. Presence remains immediate on link-up and expires after three hours;
 gateway changes/loss may take an hour to notice on stable links. These are
 lossless serialization/framing results, not physical-radio measurements.
+Since v0.7.5 tips push on every observed height/hash (five-second gateway poll),
+not the replay's 15-minute coalescing; that traffic number is not a current budget.
 See [chain evidence](components/chain.md#dated-service-checks),
 [testnet installation](install.md#public-testnet-v070) and
 [funding failures](components/offline-builder.md#v070-testnet-note-plan).
@@ -178,12 +187,12 @@ packages built on Linux x86_64. Android release Kotlin compilation and lint
 passed; no arm64 APK/device or macOS run is implied. Web screenshots use the live
 testnet wallet; QML screenshots/interaction use a fixture bridge, not Basecamp.
 
-The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (including this v0.7.5 candidate)
+The owner tested **v0.5.1 on three real Macs successfully**. v0.7.x (including v0.7.7)
 still needs real-Mac retesting. Basecamp Local Network
 permission support is pending [logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527);
 fallback: dial `<operator-ip>:7777`. Linux/Xvfb runs do not verify macOS or radios.
 
-Not built yet: pending-tier limits and conflict detection (task 5), nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group and iOS. **Next transport steps** (after the Basecamp macOS/Linux focus): real Android phones ([mesh.md BLE link](components/mesh.md#ble-link-android-first), B2–B7) and Linux desktop adapters ([D1/D2/D5](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)): one-hop Linux↔Linux/Android, Basecamp, forced multi-hop, BLE→LAN gateway, durability and capture. D3 adds macOS; D4 waits for Basecamp's Bluetooth usage-description support (issue filed upstream). The gateway's result is "gateway-reported", not proved.
+Task 5 is **partial**: signed statements/receipts, fee/sequence checks, local conflicts and invited pending caps are built; device-bound enrollment, binary formats, invoices and family accounting are not. Still unbuilt: nullifier sharing (6), chain-state bundles (7–9), Tor (10), the co-signer group and iOS. **Next transport steps** (after the Basecamp macOS/Linux focus): real Android phones ([mesh.md BLE link](components/mesh.md#ble-link-android-first), B2–B7) and Linux desktop adapters ([D1/D2/D5](components/mesh.md#linux-desktop-ble-implementation-radio-gates-open)): one-hop Linux↔Linux/Android, Basecamp, forced multi-hop, BLE→LAN gateway, durability and capture. BLE links are implemented, radios unverified. D3 adds macOS; D4 waits for Basecamp's Bluetooth usage-description support. The gateway's result is "gateway-reported", not proved, and v0.7.7 stops recurring polling after `mined` rather than continuously tracking later reorgs.
 
 ## Design problems (in order)
 
@@ -195,9 +204,9 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 | 2 | Chain-state trust at B | **Settled**; leftovers decided 26 Oct ([payee-verifier](components/payee-verifier.md)) |
 | 3 | Transaction expiry and re-issue | **Decided 26 Oct** for a minimal build (10 and B-initiated repair deferred); not implemented ([expiry-reissue](components/expiry-reissue.md)) |
 | 4 | Gateway protocol | **Spec v1 written 26 Oct** ([gateway Protocol v1](components/gateway.md#protocol-v1-owner-decisions-26-october-byte-layouts-proposed-not-implemented)): anyone submits, tip/conflicts broadcast mesh-wide, pulled catch-up; timing, PMv2, Tor isolation, limits and forwarding wording decided; header delivery = sampled proofs (heuristic, λ 64, 100-header suffix, post-NU7 checkpoint), byte layout still to write; must also run on public testnet; bundle/receipt wire encoding, signature coverage, retries/idempotency and lag/fork handling; also how one gateway orders and submits many payers' transactions arriving together (A→B, Y→Z) while each faces its own online-sweep race, which is not yet researched ([gateway](components/gateway.md)) |
-| 5 | BitChat durability | **Decided 26 Oct:** `privateMessageV2` (≤44,000 B), gateway broadcast type, app retry queue, A and B both submit ([archived transport plan](../archive/docs-2026-10-27/transport-bitchat.md)); superseded for the build by our own `ozm-mesh` ([mesh](components/mesh.md)); BLE link and radio tests remain; [Offline Protocol](https://www.offlineprotocol.com/docs/tech/networking) 0.30 evaluated 26 Oct: **stay on the BitChat fork for MVP** (Swift package iOS-only, custody refuses DMs, forged-ACK risk R10, AGPL/commercial); optional later Wi-Fi/gateway experiment (research) |
+| 5 | Transport durability | Original BitChat-fork plan superseded by `ozm-mesh`: persisted sealed packets, inventory/acks, app retries and A/B submissions are built. Android/Linux BLE streams are implemented; radio gates remain. Offline Protocol sidecar was rejected after research (custody refuses DMs, forged-ACK risk, AGPL/commercial); no current BitChat-fork dependency |
 | 6 | Fleet fingerprint | **Researched 26 Oct:** keep expiry, immediate send and standard tx shape; P12 plaintext acks kept for MVP/testnet (least work), encryption is a mainnet gate ([privacy-and-threats](privacy-and-threats.md)); was: expiry/anchor/shape/uplink privacy tradeoff ([privacy-and-threats](privacy-and-threats.md)) |
-| 7 | Stack compatibility | **Gate 5 passed 26 Oct** on Zebra 7 regtest; decided: stay on 2.2.0 for MVP, move to Common 4.0 once before public testnet ([chain](components/chain.md)); was: pinned Zakura bytes accepted by Zebra/upstream, deliberate library migration ([chain](components/chain.md)) |
+| 7 | Stack compatibility | **Gate 5 passed 26 Oct** on Zebra 7 Regtest; Common 4 migration completed for v0.7.0. Funded v0.7.5 payments exercised current bytes on public testnet; older FROST research remains separately scoped ([chain](components/chain.md)) |
 | 8 | Offline limits and phone proving cost | **Decided 26 Oct** (32-note inventory, ≥ floor needs escrow, 3 ZEC escrow cap per payee, foreground-only on iOS, co-signers on B/C/D; [offline-builder](components/offline-builder.md)); was: note budget, no unmined change, real Ironwood phone time/RAM ([offline-builder](components/offline-builder.md)) |
 | 9 | Policy values | **Decided 26 Oct** for harness/testnet (#9 research): current limits kept, 1 ZEC escrow cap per payer and per group, 3 ZEC combined ceiling, defaults in [pending-tier](components/pending-tier.md) and [gateway](components/gateway.md), fleet owner key signs checkpoints. Mainnet loss budget and delivery target still needed before launch; was: measured exposure, freshness, anchor window, confirmations and loss appetite ([pending-tier](components/pending-tier.md)) |
 
@@ -210,16 +219,16 @@ Status saved 26 October 2026. “Settled” means design agreed, not implemented
 
 ## Build MVP v1 (in order)
 
-This is the implementation backlog, distinct from the problem-by-problem design order above. Do not treat pending problem #3 policies as approved build requirements. Research PoCs do not implement the app.
+This is the implementation backlog, distinct from the problem-by-problem design order above. Problem #3's accepted/deferred items are recorded in its component doc; exact repair layouts remain open. Research PoCs do not implement the app.
 
 | # | Task | Done when | Doc |
 |---|---|---|---|
 | 1 | Offline builder: one v6 Ironwood transaction with Zakura Common 2.2.0, no network, fleet expiry and fee | Raw bytes written; mined on `ths` — **done in v0.1.0** ([mvp-v0.1.0](mvp-v0.1.0.md)) | [offline-builder](components/offline-builder.md) |
 | 2 | Payee verifier in a separate process: read, decrypt own output, proofs and signatures, v6/Ironwood-only/branch ID/expiry/anchor checks | Accepts the tx from 1; receipt says "passes checks at height H; pending" — **done in v0.1.0** (offline checks; chain-state bundle checks are task 7) | [payee-verifier](components/payee-verifier.md) |
 | 3 | Gateway submitter: `sendrawtransaction`, then a signed bundle back (tip header, txid branch) | Idempotent resubmission; B verifies the branch and moves to "included" — **v0.1.0: idempotent submit and a signed "gateway-reported" result; the txid branch is not built yet** | [gateway](components/gateway.md) |
-| 4 | Mesh transport: tx + statement A→B, B persists, B→D forward, receipts back | The restart test below passes — **done in v0.1.0 with `ozm-mesh` over TCP (four containers), LAN discovery in v0.2.0; a BLE link and real radios remain** | [mesh](components/mesh.md) |
-| 5 | Pending tier on payer and payee: device-bound payment keys and enrollment, PaymentStatement and Receipt, fee check, seq, limits, conflict detection | Floor refusal, 4th payment refused, reset at owner-selected threshold (pending), non-family spend ends "conflicted"; repair/family rules await #3 | [pending-tier](components/pending-tier.md) |
-| 6 | Payee-to-payee nullifier sharing over BitChat group messages, with C as second payee; gateway mempool receipt | Same note paid to B then C while connected: C refuses with reason 8 | [pending-tier](components/pending-tier.md) |
+| 4 | Mesh transport: tx + statement A→B, B persists, B→D forward, receipts back | **Built:** TCP v0.1.0, LAN v0.2.0, Android BLE stream v0.4.0 and Linux backend v0.4.1. Physical-radio gates open | [mesh](components/mesh.md) |
+| 5 | Complete the pending tier: device-bound enrollment, binary statements/receipts, invoices and family accounting | **Partial:** fee/sequence/local conflict checks and invited admission caps built. Complete the approved ten-confirmation reset/repair model and durability gates; never grant open pending acceptance | [pending-tier](components/pending-tier.md) |
+| 6 | Payee-to-payee nullifier sharing over `ozm-mesh` (replace the archived BitChat-group carrier), with C as second payee; gateway mempool receipt | Same note paid to B then C while connected: C refuses with reason 8 | [pending-tier](components/pending-tier.md) |
 | 7 | Chain state, step 1: bundle wire format with every slot, signed with the gateway's enrollment payment key; gateway rebuilds the history MMR from `getblock h 0` + `z_gettreestate`, persists leaves, rebuilds on reorg; payee checks signature, anchor-in-window, expiry margin, txid branch, MMR anchor path to header N+1 | Tests 8–14 pass on `ths` | [gateway](components/gateway.md), [payee-verifier](components/payee-verifier.md) |
 | 8 | Chain state, step 2: Equihash (200,9) and difficulty checker against a pinned floor from a setup checkpoint; `regtest-no-pow` flag | Tests 15–16 pass | [payee-verifier](components/payee-verifier.md), [chain](components/chain.md) |
 | 9 | Chain state, step 3: two-gateway tip agreement; `checked (single-source)` with the stricter cap; targeted conflict notices; full nullifier list on request | Tests 17–19 pass with a second gateway process | [payee-verifier](components/payee-verifier.md), [pending-tier](components/pending-tier.md) |
@@ -227,13 +236,13 @@ This is the implementation backlog, distinct from the problem-by-problem design 
 
 ## Problem #2, decided 25 October 2026: chain state without trusting the gateway
 
-B is offline and learns the tip, anchors, nullifier spends and inclusion only from D. D is untrusted (ADV-G) on every network, so each chain fact is checked against proof of work and Merkle paths; the table is in [payee-verifier.md](components/payee-verifier.md), the gateway duties and bundle contents in [gateway.md](components/gateway.md). Three sub-decisions:
+B is offline and learns the tip, anchors, nullifier spends and inclusion only from D. The **unbuilt design** treats D as untrusted (ADV-G) on every network and requires proof of work and Merkle paths; the current testnet app instead trusts gateway reports. The design table is in [payee-verifier.md](components/payee-verifier.md), gateway duties in [gateway.md](components/gateway.md). Three sub-decisions:
 
 1. **Single-gateway degradation.** With one gateway reachable, B still verifies PoW and paths but marks the state `checked (single-source)` and applies the stricter ⌈C/2⌉ cap until a second source confirms. [decided]
 2. **Nullifier delivery.** Targeted conflict notices (`nf → T′` with T′'s bytes and txid branch) by default; the full nullifier list for the fleet window on request. [decided]
 3. **Gateway signing key.** D signs bundles with its enrollment payment key, the same per-device Ed25519 scheme as payer and payee, so two conflicting signed tips from one gateway are portable evidence. [decided]
 
-The Regtest harness has no proof of work, so only the Equihash/difficulty/timestamp check is disabled there, under an explicit `regtest-no-pow` flag that is itself tested with mainnet header vectors. Everything else runs unchanged on the local chain.
+The Regtest harness has no proof of work. The planned validator therefore needs an explicit `regtest-no-pow` exception tested with mainnet vectors, leaving the other bundle checks unchanged. That production validator/flag is not yet built.
 
 ## Tests that gate MVP v1
 
@@ -272,5 +281,5 @@ The Regtest harness has no proof of work, so only the Equihash/difficulty/timest
 - Headers cannot prove the heaviest chain; the pinned difficulty floor must track mainnet. ([payee-verifier](components/payee-verifier.md))
 - Fleet transactions are fingerprintable on chain. ([privacy-and-threats](privacy-and-threats.md))
 - Shutdown profile chosen (21 days, assumes ≤7-day uplink). Neither covers arbitrary shutdowns, and thirty-minute **new-acceptance** freshness remains provisional/separate. Renewal needs A even in 2-of-2 escrow; refusal leaves a debt claim. ([expiry-reissue](components/expiry-reissue.md))
-- Mainnet needs Common 4.x or custom params with the NU7 height (library step). ([chain](components/chain.md))
+- Common 4 already knows mainnet NU7, but application mainnet support, proofs, privacy, hardware/security gates and explicit real-value approval remain. ([chain](components/chain.md))
 - Unmeasured: Equihash and Ironwood proving on Mac/iPhone; mainnet proof sizes. The 100-block new-payment anchor window, 20-block initial expiry margin, thirty-minute freshness and ten confirmations are **provisional** with the reasons above, not validated mainnet safety bounds. ([gateway](components/gateway.md), [pending-tier](components/pending-tier.md))

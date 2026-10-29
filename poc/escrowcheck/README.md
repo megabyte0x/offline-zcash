@@ -2,6 +2,11 @@
 
 Throwaway feasibility check for the bilateral 2-of-2 FROST escrow ([docs/components/double-spend.md](../../docs/components/double-spend.md)). One binary, `src/main.rs`, that signs an Ironwood v6 spend with a rerandomized FROST group key on the Zakura Common 2.2.0 stack.
 
+This historical PoC is not linked by the v0.7.7 application (Common 4.0).
+Its pins and one-process limitations below are intentional. The later payer +
+3-of-4 group design and mined research results are recorded in the component doc;
+neither turns this PoC into a deployed co-signer or recovery protocol.
+
 ## Crate pins
 
 | Dependency | Package | Version | Features |

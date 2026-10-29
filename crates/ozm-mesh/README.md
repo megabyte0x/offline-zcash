@@ -1,6 +1,6 @@
 # ozm-mesh
 
-BitChat-style mesh semantics over TCP links between neighbours: TTL flooding, MTU-sized
+BitChat-style mesh semantics over TCP or attached BLE streams between neighbours: TTL flooding, MTU-sized
 fragments, dedup, store-and-forward with inventory sync, and end-to-end delivery acks. Who is a
 neighbour is decided by the network (for example Docker networks forming a line A–R–B–D). There is
 no encryption at this layer; the application seals payloads.
@@ -10,8 +10,8 @@ let (mesh, mut events) = Mesh::start(MeshConfig {
     listen: Some("0.0.0.0:7777".parse()?),
     dial: vec!["relay:7777".into()],
     store_path: Some("/data/mesh.json".into()),
-    // Optional: find same-fleet nodes on the LAN without `dial`.
-    discovery: Some(Discovery { tag: *b"fleet-01", ..Discovery::default() }),
+    // Optional: open LAN discovery without `dial` (the wallet's current policy).
+    discovery: Some(Discovery::default()),
     ..MeshConfig::default()
 }).await?;
 let id = mesh.send(gateway, sealed_tx).await?;
@@ -87,6 +87,18 @@ tests; wallet nodes never use that mode. v0.5.x nodes drop new acks without cras
   once an Ack for it is seen. When a link comes up, each side sends an inventory and then sends
   the other side every stored packet it lacks. Stored copies already carry the decremented ttl.
   The sender gets `MeshEvent::Delivered` the first time it sees the Ack for its own message.
+- **Quota relief, not payment eviction.** New packets may evict that sender's
+  oldest acks. On the originating device they may also evict its own broadcasts
+  and directed notices sent with `send_replaceable` (presence/tips in the app).
+  Ordinary held messages and other senders' custody remain protected. The v0.7.6
+  store-format migration drops this device's old unmarked directed messages once;
+  the wallet app retries its payments/submissions/results/sync requests. Transport
+  callers must retain important application state independently of this cache.
+- **Backpressure.** Packets beyond the 128-item authenticated link queue wait on
+  its pending list and drain without reconnecting. After a full application
+  event queue drops delivery, the next ten-second sweep repairs via inventory.
+  Local addressed messages/broadcasts still reach the application when relay
+  custody is full; that does not accept new custody or bypass app authentication.
 - **Persistence.** If `store_path` is set, the store, seen ids and acked ids are written as JSON
   (0600 on Unix, temp file, fsync, rename) after every change and on `shutdown`. A restarted relay keeps
   forwarding, and a restarted recipient does not deliver again.
@@ -101,8 +113,8 @@ tests; wallet nodes never use that mode. v0.5.x nodes drop new acks without cras
 ## LAN discovery
 
 Off by default. With `MeshConfig.discovery = Some(Discovery { port, tag, interval, advertise_port })`
-(defaults: UDP port 7778, tag all zero, interval 2 s, advertise the bound listen port) nodes of
-one fleet on the same Wi-Fi or LAN find and link to each other without `dial`.
+(defaults: UDP port 7778, tag all zero, interval 2 s, advertise the bound listen port) nodes on
+the same Wi-Fi or LAN find and link to each other without `dial`.
 
 **Beacon** (one UDP datagram, 23 bytes, sent every `interval`):
 
@@ -115,8 +127,8 @@ one fleet on the same Wi-Fi or LAN find and link to each other without `dial`.
 | TCP port to dial, `u16` (0 = the node does not listen) | 2 |
 
 Receivers ignore anything shorter or with another magic/version. Nonzero tags
-match the same fleet; a zero tag on either side enables open discovery. Wallet
-gateways advertise zero so both open and invited devices can find them. Tags are
+match the same fleet; a zero tag on either side enables open discovery. Since
+v0.7.3 every wallet device advertises zero, not just gateways. Tags are
 discovery filters, not authentication. Extra bytes after the 23 are ignored so a
 later version can append fields.
 

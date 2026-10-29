@@ -1,8 +1,32 @@
 # Payee verifier and receipts
 
-The offline payee checks the received bytes, decrypts its own output, applies the pending policy and replies with a signed receipt: "passes checks at height H; pending".
-No offline check proves the inputs are unspent or that the payer will not double-spend, so a pending payment is an IOU from a known payer. It becomes final only once mined and confirmed.
-The payee learns the tip, anchors, inclusion and conflicts only from the [gateway](gateway.md), which the design treats as untrusted (ADV-G). Every chain fact it acts on is therefore checked against proof of work and Merkle paths, on mainnet and on the local harness alike. The builder that produces the bytes is in [offline-builder.md](offline-builder.md).
+The payee authenticates the received bytes, decrypts its own output and checks the
+transaction before saving it. **Current implementation: v0.7.7, test coins only.**
+No offline check proves unspent inputs or prevents a payer double-spend. A
+pending receipt is an IOU, and ten confirmations are not finality.
+
+## Built
+
+- `verify.rs` checks v6, configured branch, Ironwood-only components, the
+  action-count fee, proofs/signatures, decrypted amount, expiry, local anchor
+  window and conflicts. Anchors come from locally scanned **gateway-reported**
+  chain data, not PoW/MMR proofs.
+- Only known invited payers can receive pending acceptance under local caps.
+  Open/unknown payers wait for gateway-reported inclusion; the app does not apply
+  the pending floor to that non-pending route. It does not yet implement invoice
+  matching, binary Receipt v1, device-keystore enrollment or shared nullifiers.
+- A catching-up recipient saves authenticated envelopes in a durable queue
+  (32 entries / 4 MiB) and rechecks on chain progress. v0.7.6 rechecks their saved
+  statement against the original mesh sender even after it disappears from
+  discovery or the app restarts. A queued envelope is not acceptance.
+- Verified outputs persist as incoming, never spendable until a scan supplies
+  positions/witnesses. An exact already-scanned transaction reconciles even
+  after its old anchor root is pruned. Refusal cannot cancel independently
+  submitted bytes.
+
+The sections below specify the **unbuilt mainnet chain-proof and receipt design**,
+which treats the [gateway](gateway.md) as untrusted (ADV-G). Current gateway
+signatures authenticate a report, not chain truth. Builder: [offline-builder.md](offline-builder.md).
 
 ## Decided
 
@@ -22,7 +46,7 @@ The payee learns the tip, anchors, inclusion and conflicts only from the [gatewa
 | 10 | No nullifier of the tx matches a pending share from another payee with a different txid | nullifier index |
 | 11 | Pending policy: floor, per-payer count and value caps, payee total, stale-view limit, payer not blocked | payee state |
 
-Code path for 1–7 (functions read in source, not compiled): `Transaction::read(bytes, branch)` → `ironwood_bundle()` → `decrypt_outputs_with_keys(&[ivk])` → `signature_hash(.., SignableInput::Shielded, ..)` → `BatchValidator::new(&vk)`, `add_bundle`, `validate`. Formats, reason codes and policy values for 8–11 are in [pending-tier.md](pending-tier.md).
+Code path for the transaction checks (used by the app; the additional chain-proof and invoice checks above are unbuilt): `Transaction::read(bytes, branch)` → `ironwood_bundle()` → `decrypt_outputs_with_keys(&[ivk])` → `signature_hash(.., SignableInput::Shielded, ..)` → `BatchValidator::new(&vk)`, `add_bundle`, `validate`. Planned formats, reason codes and policy values for 8–11 are in [pending-tier.md](pending-tier.md).
 
 - Checks 6–7 alone prove only that the tx is well formed against **the anchor it states**, which the payer can fabricate (gap G3, [reconciliation §2](../../archive/reports/Design%20review%20reconciliation.md)). Checks 1–5 are required.
 - **Escrow tier (v1.1):** when the statement's tier flag is set, the payee also checks that each spend's `rk` equals the certified group key randomized by the α the payer sent privately ([double-spend.md](double-spend.md)).
@@ -87,7 +111,7 @@ Store exact variants by `(txid, auth_digest)`: re-anchoring keeps txid but chang
 | The chain shown is the heaviest | **No** | Headers show work, not that a heavier chain does not exist. Cross-check bundles from ≥ 2 gateways and validate Equihash PoW against the pinned floor |
 
 - No light-client MMR proof code exists in Zcash libraries: `zcash_history` `tree.rs` only appends, truncates and returns the root; nodes keep only peaks ([gateway.md](gateway.md#findings)). The gateway rebuilds the tree and the payee runs the 15-line path verifier from the prototype.
-- Regtest blocks carry no proof of work: Zakura sets `with_disable_pow(true)` (`zakura-network/src/parameters/testnet.rs` L1424–1425 at `ebda15e`); live headers are 177 B with all-zero 36-byte solutions and nonces and synthetic 2011-epoch timestamps (issue log #8 in [AGENTS.md](../../AGENTS.md)). The `regtest-no-pow` flag exists only for this.
+- Regtest blocks carry no proof of work: Zakura sets `with_disable_pow(true)` (`zakura-network/src/parameters/testnet.rs` L1424–1425 at `ebda15e`); live headers are 177 B with all-zero 36-byte solutions and nonces and synthetic 2011-epoch timestamps (issue log #8 in [AGENTS.md](../../AGENTS.md)). The proposed `regtest-no-pow` flag is reserved for this; the production header validator is not built.
 - ZIP 307 light wallets check only `prevHash`, and a malicious server can show fake payments ([Hornby deck](https://defuse.ca/downloads/Fixing%20Privacy%20Problems%20in%20the%20Zcash%20Light%20Wallet%20Protocol.pdf)). This is the failure the chain-state checks above avoid.
 - Superseded: the old report's "proof a nullifier was never spent" and its "signed hot list of double-spending keys" ([reconciliation §5](../../archive/reports/Design%20review%20reconciliation.md)).
 
@@ -101,10 +125,10 @@ Store exact variants by `(txid, auth_digest)`: re-anchoring keeps txid but chang
 - [unverified] A tx proven against a fabricated anchor is rejected by check 5 (open check 3). Test: build against a made-up tree and feed it to the payee.
 - [unverified] A deliberate conflicting spend ends as conflicted, not confirmed (open check 4). Test: on `ths`, mine a second tx that spends the same note.
 - [unverified] Payee restarts between receipt and forwarding; the gateway appears later and submits (open check 6).
-- Superseded (25 October 2026): the earlier open item "have the payee trust the gateway's bundle in MVP v1". The payee never trusts the bundle; the chain-state checks above are the design and the build order inside v1 is in [open-work.md](../open-work.md).
+- Design decision (25 October 2026): complete MVP v1 must not trust the gateway's bundle. The current testnet app explicitly does trust gateway chain reports; the chain-state checks above and [build order](../open-work.md) remain unfinished.
 - Provisional values: recent-anchor set = last **100 blocks for new acceptance**, not consensus; expiry margin = **20 blocks**, inadequate against allowed thirty-minute (~72-target-block) view lag. Keep them visible, not as safety bounds; the expiry budget is [proposal #6](expiry-reissue.md#proposals-and-owner-decisions-26-october), decided 26 Oct; numbers stay provisional. Thirty-minute freshness and ten confirmations also remain provisional with separate risk models.
 - [unverified] Equihash (200,9) verify time on Mac and iPhone (96 µs/header on an orb Xeon); difficulty-floor pinning and refresh ([gateway.md](gateway.md#open)).
 - [unverified] Mainnet MMR path and txid-branch sizes; only Regtest is measured (1,109–2,778 B per anchor path).
-- Resolved 26 Oct: `checked (single-source)` is bit 0x80 of the Receipt state byte, not a new state value; Receipt v1 in [pending-tier.md](pending-tier.md) has no slot for it yet.
+- Resolved 26 Oct: `checked (single-source)` is bit 0x80 of the proposed Receipt state byte, not a new state value; the layout in [pending-tier.md](pending-tier.md) records it. Binary Receipt v1 itself is unbuilt.
 - Pending-tier open items (key edge cases, group messages, dummy-action nullifiers, gating tests) are in [pending-tier.md §Open](pending-tier.md).
 - Gating tests for the chain-state checks (merged in [open-work.md](../open-work.md)): new-payment anchors inside/outside the provisional 100-block window; historical-root renewal separately; tampered/unknown-signature bundle refusal; 3-tx inclusion branch and wrong txid/position; expiry on both sides of the **owner-approved lag/uplink/confirmation budget** (H+20 remains only the initial provisional boundary); flipped anchor/leaf/peak/`authDataRoot`; real/corrupted mainnet headers with PoW flag off and harness headers with flag on; disagreeing gateways; single-source cap; pre-activation anchor history. [Ten problem #3 gates](expiry-reissue.md#ten-gating-tests-not-completed-by-the-research) add family, crash, expiry, reorg and activation cases.

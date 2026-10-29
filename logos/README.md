@@ -2,6 +2,10 @@
 
 The same device as `ozm-node`, packaged for [Logos Basecamp](https://docs.logos.co/basecamp):
 
+**Current release: v0.7.7, macOS/Linux, test coins only.** For user setup start
+with the [Basecamp guide](../docs/basecamp-install.md); this page covers module
+APIs, builds and dated developer verification.
+
 | Module | Type | What |
 |---|---|---|
 | [`zcash_offline_module`](zcash_offline_module) | core (Rust, cdylib) | Runs the `ozm-node` device in-process: mesh with LAN discovery, wallet, paying, receiving, relaying and the gateway |
@@ -16,7 +20,8 @@ v0.6.0 rejects unsigned legacy envelopes and acks, including invited peers.
 Since v0.7.3 every device beacons a zero fleet tag and connects to any Offline
 Zcash device; v0.7.2 peers accept it.
 A three-laptop session can use only Basecamp for every device;
-the operator still runs the Docker-backed `ths start` chain outside Basecamp.
+on Regtest the operator still runs Docker-backed `ths start` outside Basecamp.
+Public testnet uses TLS lightwalletd and needs neither Docker nor a full node.
 Install the service once and any combination of the three apps. They all depend
 on the **same module name**, so Basecamp loads one core process/identity, wallet
 and mesh per user directory, not one per app. Closing an app leaves that shared
@@ -59,7 +64,7 @@ logosctl call zcash_offline_module status
 ```
 
 The catalogue selects the newest release; add `--version <version>` (for example
-`0.7.3`) to pin a CLI install. No GitHub authentication is required. Content roots
+`0.7.7`) to pin a `logosctl` package install. No GitHub authentication is required. Content roots
 bind the index to the downloaded packages but do not authenticate the publisher
 (`trustedSigners` is empty). Packages are unsigned experimental testnet/Regtest
 builds: expect a warning, not a trusted Logos publisher signature. The catalogue
@@ -77,6 +82,14 @@ The official-catalogue submission is [prepared separately](../docs/logos-catalog
 Every method returns a JSON string, and failures are `{"error": "..."}`. The device lives in `<instance persistence path>/ozm`; Basecamp sets that path to `<AppDataLocation>/module_data/zcash_offline_module/<instance-id>` ([per-platform paths](../docs/basecamp-install.md#where-the-data-lives)). `status()` also returns `sessions`, the default Organiser export parent.
 
 The module declares `concurrency: "multi"`, so calls run on a worker pool: `status` answers while a proof, a chain check or Leave runs. `start`, `join`, `leave` and a joining `fleet_init` are serialized with each other.
+
+v0.7.6 makes old presence/tip notices replaceable and migrates the mesh store;
+v0.7.7 bounds chain/submission work so a slow chain check cannot hold submission
+forever. Upgrade **the service first, then the apps**; no data-folder removal is
+needed. Leave backs up the whole device; a later same-network invite-free start
+restores the newest used wallet, including deferred incoming payments, but not
+its gateway pin/cache/events. Empty backups get fresh keys; `new_wallet` forces
+fresh keys while keeping backups. [Recovery details](../docs/basecamp-install.md#leave-session).
 
 | Method | Returns |
 |---|---|
@@ -128,7 +141,7 @@ Under `logosctl`, one daemon per device:
 logosctl --config-dir ./a daemon start --detach
 logosctl --config-dir ./a package install --file logos-zcash_offline_module-module-lib.lgx -y
 logosctl --config-dir ./a module load zcash_offline_module
-logosctl --config-dir ./a call zcash_offline_module start 'str:{"listen":"0.0.0.0:7801"}'
+logosctl --config-dir ./a call zcash_offline_module start 'str:{"network":"regtest","listen":"0.0.0.0:7801"}'
 logosctl --config-dir ./a call zcash_offline_module request_funds 3 str:0.1
 logosctl --config-dir ./a call zcash_offline_module pay 'str:<recipient-regtest-address>' str:0.05
 logosctl --config-dir ./a call zcash_offline_module max_payment
@@ -136,6 +149,10 @@ logosctl --config-dir ./a watch zcash_offline_module --json
 ```
 
 Strings need the `str:` prefix on the command line, because otherwise `0.05` is passed as a number.
+
+This example needs an already running, funded Regtest gateway. For testnet omit
+`network` (the new-wallet default), skip `request_funds` and fund the `utest1`
+address externally. Sync and economical note preparation run automatically.
 
 In Basecamp, follow [docs/basecamp-install.md](../docs/basecamp-install.md). For a dev build of Basecamp, install the `-dev` packages with `lgpm --modules-dir <basecamp dir>/modules --ui-plugins-dir <basecamp dir>/plugins install --file ...`.
 
@@ -187,7 +204,7 @@ QML file URL. A second UI payment of 0.0137 ZEC mined at height 135 on both
 wallets after reinstalling those packages, with the same gateway identity.
 
 The owner tested **v0.5.1 successfully on three real Macs**. Later versions,
-including this v0.7.5 candidate, need retesting on those machines. Local Network permission
+including v0.7.7, need retesting on those machines. Local Network permission
 support is pending upstream ([logos-basecamp#527](https://github.com/logos-co/logos-basecamp/issues/527));
 the fallback is **Dial address** = `<operator-ip>:7777`. Linux verification does
 not establish macOS discovery, sandbox permissions or BLE support.
