@@ -9,6 +9,9 @@ It is not security reviewed and does not support real funds.
 
 ## [Unreleased]
 
+### Fixed
+- A queued incoming payment can finish verification after its sender disappears from discovery or the recipient restarts, including queues saved by v0.7.5. Retries recheck the stored statement signature against its original mesh sender instead of requiring live presence. This does not grant gateway authority or pending acceptance to unknown payers, and existing wallet scan starts remain unchanged.
+
 ## [0.7.5] - 2026-10-28
 
 ### Added

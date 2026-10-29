@@ -1253,7 +1253,16 @@ impl App {
             return Ok(());
         }
         let t = std::time::Instant::now();
-        let payer = self.device(from)?;
+        // A durable queued payment outlives discovery. Its signature still binds the sender's
+        // mesh ID and sealing key; it grants neither a receiving address nor a gateway role.
+        let payer = self.device(from).or_else(|_| -> Result<DevicePublic> {
+            let mut payer = DevicePublic { name: from.into(), role: String::new(), peer_id: from.into(),
+                ed25519: statement.signer.clone(), x25519: String::new(), address: String::new() };
+            let vk = payer.verifying_key()?;
+            anyhow::ensure!(zcash_offline_core::fleet::peer_id_for(&vk) == from, "queued payment signing key does not match mesh sender");
+            payer.x25519 = hex::encode(vk.to_montgomery().to_bytes());
+            Ok(payer)
+        })?;
         statement.verify_key(&payer)?;
         anyhow::ensure!(s.payee == self.name() || s.payee == self.mesh.peer_id().to_string(), "statement names another payee");
         let pending = !self.cfg.fleet.open && self.cfg.fleet.by_peer(&payer.peer_id).is_some();
@@ -1345,7 +1354,7 @@ impl App {
                         txid: v.tx.txid.clone(),
                         auth_digest: v.tx.auth_digest.clone(),
                         direction: "received".into(),
-                        counterparty: payer.address,
+                        counterparty: if payer.address.is_empty() { payer.peer_id.clone() } else { payer.address.clone() },
                         amount: v.amount,
                         fee: v.tx.fee,
                         expiry_height: v.tx.expiry_height,
@@ -1369,7 +1378,7 @@ impl App {
                     self.persist(&st.0, &st.1)?;
                 }
                 self.event(if pending { "accepted" } else { "awaiting-inclusion" }, json!({"txid": v.tx.txid, "amount": v.amount, "from": from, "verify_ms": verify_ms}));
-                if let Some(receipt) = receipt { self.send_to(from, Body::Rcpt(receipt)).await?; }
+                if let Some(receipt) = receipt { self.send_device(&payer, Body::Rcpt(receipt)).await?; }
                 self.submit_payment(&v.tx.txid, tx).await?;
                 self.update(&v.tx.txid, |p| {
                     if pending && p.result.is_none() { p.state = "submitted".into(); }
@@ -1396,7 +1405,7 @@ impl App {
                     },
                     &self.cfg.me,
                 )?;
-                self.send_to(from, Body::Rcpt(receipt)).await?;
+                self.send_device(&payer, Body::Rcpt(receipt)).await?;
             }
         }
         Ok(())

@@ -188,7 +188,7 @@ async fn payment_during_sync_download_keeps_its_reservation_after_install() {
 #[tokio::test]
 async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender() {
     use ozm_mesh::{MeshEvent, MsgId};
-    use zcash_offline_core::{builder::build_payment, envelope::{self, Inner}, messages::{Body, Signed, Statement},
+    use zcash_offline_core::{builder::build_payment, envelope::{self, Inner}, messages::{now_ms, Body, Presence, Signed, Statement},
         sync::{Batch, CompactBlock}, wallet::{StoredNote, WalletState}, DeviceSecret, Policy};
     async fn deliver(app: &std::sync::Arc<ozm_node::App>, sender: &DeviceSecret, body: Body) {
         let recipient = app.cfg.me.public().unwrap().x25519().unwrap();
@@ -198,17 +198,18 @@ async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender(
             msg_id: MsgId::random(), payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
     }
     let dir = tempfile::tempdir().unwrap();
-    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "catchup".into(),
-        network: zcash_offline_core::fleet::Network::Regtest, birthday: 1,
-        devices: vec!["G:gateway".into(), "B".into()] }).unwrap();
-    let g: DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let g = DeviceSecret::generate("G", "gateway");
     let home = dir.path().join("B");
-    let invite = std::fs::read_to_string(&fleet.devices[1].invite_path).unwrap();
-    join_invite(&invite, &home).unwrap();
+    ozm_node::join_open_on(&home, zcash_offline_core::fleet::Network::Regtest, 1).unwrap();
     let mut opts = RunOpts::for_home(&home);
     opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
     let app = start(&opts).await.unwrap();
-    app.request_mesh_sync(true).await.unwrap(); // Pin the fleet's authorised gateway before its reply.
+    let invite = serde_json::to_string(&ozm_node::Invite { fleet: app.cfg.fleet.clone(), secret: app.cfg.me.clone() }).unwrap();
+    // An open wallet learns the sender from presence, not a permanent fleet entry.
+    deliver(&app, &g, Body::Presence(Signed::sign(Presence {
+        device: g.public().unwrap(), gateway: true, tip: 1, created_ms: now_ms(),
+        address_proof: zcash_offline_core::binding::prove(&g).unwrap(),
+    }, &g).unwrap())).await;
     let note = StoredNote { position: 0, height: 1, txid: "controlled funding".into(), value: 1_000_000,
         recipient: hex::encode(g.address().unwrap().to_raw_address_bytes()), rho: hex::encode([0;32]),
         rseed: hex::encode([7;32]), nullifier: String::new(), spent_in: None, locked_by: None };
@@ -230,10 +231,10 @@ async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender(
     payments.sort_by(|a, b| b.txid.cmp(&a.txid));
     let [p, second] = payments;
     let statement = Signed::sign(Statement { txid: p.txid.clone(), auth_digest: p.auth_digest,
-        amount: p.amount, fee: p.fee, expiry_height: p.expiry_height, payer: "G".into(), payee: "B".into(),
+        amount: p.amount, fee: p.fee, expiry_height: p.expiry_height, payer: "G".into(), payee: app.name().into(),
         seq: 1, created_ms: 1 }, &g).unwrap();
     let second_statement = Signed::sign(Statement { txid: second.txid.clone(), auth_digest: second.auth_digest,
-        amount: second.amount, fee: second.fee, expiry_height: second.expiry_height, payer: "G".into(), payee: "B".into(),
+        amount: second.amount, fee: second.fee, expiry_height: second.expiry_height, payer: "G".into(), payee: app.name().into(),
         seq: 2, created_ms: 2 }, &g).unwrap();
     // Coalesced announcements can still say "caught up" when the payer used a newer root.
     deliver(&app, &g, Body::Tip { height: 1, hash: "block1".into() }).await;
@@ -255,10 +256,27 @@ async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender(
     app.retry_tick().await;
     assert_eq!(app.status()["pending_checks"], 2);
     app.state.lock().unwrap().0 = caught_up;
+    // Restored statements still require a valid signature bound to the original mesh sender.
+    {
+        let mut st = app.state.lock().unwrap();
+        st.1.deferred_payments.get_mut(&p.txid).unwrap().statement.sig = hex::encode([0; 64]);
+        st.1.deferred_payments.get_mut(&second.txid).unwrap().from = DeviceSecret::generate("Impostor", "").public().unwrap().peer_id;
+    }
+    app.retry_tick().await;
+    assert!(app.payment(&p.txid).is_none());
+    assert!(app.payment(&second.txid).is_none());
+    {
+        let mut st = app.state.lock().unwrap();
+        st.1.deferred_payments.get_mut(&p.txid).unwrap().statement = statement.clone();
+        st.1.deferred_payments.get_mut(&second.txid).unwrap().from = g.public().unwrap().peer_id;
+    }
     app.retry_tick().await; // No second Pay message and no sender needed.
     assert_eq!(app.status()["pending_checks"], 0);
     assert!(app.state.lock().unwrap().1.refusals.is_empty());
     assert_eq!(app.payment(&p.txid).unwrap().amount, p.amount);
+    assert_eq!(app.payment(&p.txid).unwrap().tx_hex, hex::encode(&p.raw));
+    assert_eq!(app.payment(&p.txid).unwrap().counterparty, g.public().unwrap().peer_id);
+    assert_eq!(app.payment(&p.txid).unwrap().state, "awaiting-inclusion");
     assert_eq!(app.payment(&second.txid).unwrap().amount, second.amount);
     assert_eq!(app.status()["wallet"]["spendable"], 0);
     assert_eq!(app.status()["wallet"]["pending_incoming"], 40_010);
@@ -268,6 +286,10 @@ async fn incoming_payment_waits_for_catchup_and_survives_restart_without_sender(
     let other = dir.path().join("caught-up");
     join_invite(&invite, &other).unwrap(); opts.data = other.join("data"); opts.fleet = other.join("fleet.json"); opts.secret = other.join("secret.json");
     let app = start(&opts).await.unwrap();
+    deliver(&app, &g, Body::Presence(Signed::sign(Presence {
+        device: g.public().unwrap(), gateway: true, tip: 401, created_ms: now_ms(),
+        address_proof: zcash_offline_core::binding::prove(&g).unwrap(),
+    }, &g).unwrap())).await;
     early.tip_height = 401; early.tip_hash = "block401".into();
     app.state.lock().unwrap().0 = early;
     deliver(&app, &g, Body::Pay { tx: p.raw, statement }).await;
