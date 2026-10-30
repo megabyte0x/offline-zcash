@@ -177,7 +177,9 @@ impl Node {
             let o = saved_options(&home);
             v["rpc"] = json!(o.rpc);
             v["mine"] = json!(o.mine.unwrap_or(false));
-            v["direct"] = json!(o.direct.unwrap_or(false));
+            // Online mode lives only in ozm/data/online-mode.json, which the device restores itself.
+            v["direct"] = json!(std::fs::read(home.join("data/online-mode.json")).ok()
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|d| d["direct"] == true));
         }
         Ok(v)
     }
@@ -199,10 +201,6 @@ impl Node {
             if let Some(direct) = o.direct {
                 let _runtime = rt().enter();
                 app.set_direct(direct)?;
-                let h = home()?;
-                let mut saved = saved_options(&h);
-                saved.direct = Some(direct);
-                std::fs::write(h.join(OPTIONS_FILE), serde_json::to_vec_pretty(&saved)?)?;
             }
             return self.status_value();
         }
@@ -254,7 +252,7 @@ impl Node {
         *self.api.lock().unwrap() = api;
         let _ = app.on_event.set(Box::new(|event: &str, detail: &Value| emit_node_event(event, &detail.to_string())));
         *self.app.lock().unwrap() = Some(app);
-        let _ = std::fs::write(home.join(OPTIONS_FILE), serde_json::to_vec_pretty(&o)?);
+        let _ = std::fs::write(home.join(OPTIONS_FILE), serde_json::to_vec_pretty(&StartOptions { direct: None, ..o })?);
         self.status_value()
     }
 

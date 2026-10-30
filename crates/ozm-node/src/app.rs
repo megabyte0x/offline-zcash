@@ -527,7 +527,7 @@ impl App {
     }
 
     fn resolve_birthday(&self, tip: u32, time: u64) -> Result<u32> {
-        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet {
+        if self.cfg.fleet.network == zcash_offline_core::fleet::Network::Testnet && self.state.lock().unwrap().0.birthday == 0 {
             // The birthday is set once: refuse a claimed tip or time the local clock cannot reach.
             let (checkpoint, checkpoint_time) = WalletState::TESTNET_CHECKPOINT;
             let now = now_ms() / 1000;
@@ -1458,7 +1458,7 @@ impl App {
             // Replays are caught by txid above; a seq check would refuse valid payments that arrive out of order.
             let st = self.state.lock().unwrap();
             let tip = st.0.tip_height;
-            for p in st.1.payments.values().filter(|p| p.direction == "received" && p.state != "mined" && !(p.state == "expired" && tip > p.expiry_height)) {
+            for p in st.1.payments.values().filter(|p| p.direction == "received" && p.state != "mined" && tip <= p.expiry_height) {
                 if let Some(nf) = v.tx.nullifiers.iter().find(|n| p.nullifiers.contains(n)) {
                     return Err(Reject { code: code::CONFLICT, reason: format!("note {nf} already pays pending payment {}", p.txid) });
                 }
@@ -1483,8 +1483,6 @@ impl App {
                     let mut st = self.state.lock().unwrap();
                     st.1.deferred_payments.remove(&s.txid);
                     st.0.record_incoming(v.notes)?;
-                    let last = st.1.last_seq_in.entry(from.to_string()).or_default();
-                    *last = (*last).max(s.seq);
                     let mut p = Payment {
                         txid: v.tx.txid.clone(),
                         auth_digest: v.tx.auth_digest.clone(),
@@ -1975,9 +1973,10 @@ impl App {
             let st = self.state.lock().unwrap();
             st.1.payments
                 .values()
-                // Included payments are tracked to mined by the gateway's chain check; resending adds nothing.
-                .filter(|p| !p.is_final() && p.state != "included" && p.test_tamper.is_none())
-                .filter(|p| now.saturating_sub(p.last_send_ms) >= base * (1u64 << p.attempts.saturating_sub(1).min(5)))
+                .filter(|p| !p.is_final() && p.test_tamper.is_none())
+                // Included payments still resend, at the longest backoff: a payer told by the payee's receipt
+                // has no gateway nonce yet, and resending is how it learns (or relearns) mined.
+                .filter(|p| now.saturating_sub(p.last_send_ms) >= base * (1u64 << if p.state == "included" { 5 } else { p.attempts.saturating_sub(1).min(5) }))
                 .cloned()
                 .collect()
         };

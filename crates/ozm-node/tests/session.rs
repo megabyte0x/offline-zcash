@@ -954,3 +954,31 @@ async fn online_mode_switch_persists_and_moves_sync_between_servers_and_mesh() {
     off.stop().await;
     silent.abort();
 }
+
+#[tokio::test]
+async fn included_payments_keep_resending_at_the_longest_backoff() {
+    // A payer told "included" only by the payee's receipt has no gateway nonce yet; resending is how it
+    // learns mined, and a prepare stuck at included would block automatic preparation for good.
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "included".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A".into(), "B".into(), "G:gateway".into()] }).unwrap();
+    let a: zcash_offline_core::DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let home = dir.path().join("a");
+    join_invite(&std::fs::read_to_string(&fleet.devices[0].invite_path).unwrap(), &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    let app = start(&opts).await.unwrap();
+    let now = zcash_offline_core::messages::now_ms();
+    let mut p = recorded_payment(&a, &"ab".repeat(32), 1_000, "included");
+    p.direction = "sent".into();
+    p.attempts = 1;
+    // Ten minutes is past the first-attempt backoff (30 s) but inside the longest (32 × 30 s).
+    p.last_send_ms = now - 10 * 60_000;
+    app.state.lock().unwrap().1.payments.insert(p.txid.clone(), p.clone());
+    app.retry_tick().await;
+    assert_eq!(app.payment(&p.txid).unwrap().attempts, 1, "included waits for the longest backoff");
+    app.state.lock().unwrap().1.payments.get_mut(&p.txid).unwrap().last_send_ms = now - 17 * 60_000;
+    app.retry_tick().await;
+    assert_eq!(app.payment(&p.txid).unwrap().attempts, 2, "included is still resent");
+    app.mesh.shutdown();
+}
