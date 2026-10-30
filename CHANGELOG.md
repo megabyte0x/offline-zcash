@@ -12,6 +12,7 @@ It is not security reviewed and does not support real funds.
 ### Added
 - The homepage at [offlinezcash.com](https://offlinezcash.com) (source in `site/`, deployed as a Cloudflare Worker) explains why offline payments matter, how they work and how to install Offline Zcash as a user or a gateway, with an FAQ, social preview images, a favicon and cookieless Cloudflare Web Analytics.
 - `https://offlinezcash.com/basecamp` redirects to the package catalogue, so it can be pasted into Basecamp → Settings → Package Repositories instead of the long GitHub URL. The README and install guides now show it.
+- `https://offlinezcash.com/basecamp-pitch` (short alias `/pitch`) shows the Logos Basecamp pitch deck with present and PDF links.
 - **Online mode** for testnet wallets with internet: a switch in the wallet's Wallet card (module `start` option `direct`, `ozm-node run --direct`, `POST /api/direct`) makes the wallet sync from the public testnet lightwalletd servers and submit its own and received payments directly, tracking them to included and mined without a mesh gateway. It never becomes a gateway for others: it does not announce a gateway role, serve chain data or accept peers' submissions, so invite-free wallets cannot pin it. The header shows **online · direct**; if no server answers, the wallet shows the error and falls back to the mesh gateway, retrying every minute. The servers see the computer's IP address; only mined, scanned notes are spendable. Status adds `direct`, `sync_via` and `direct_error`.
 
 ### Changed

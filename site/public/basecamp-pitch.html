@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline Zcash: Logos Basecamp Pitch</title>
+<meta name="description" content="The Offline Zcash pitch for the Logos track: private Zcash payments that move over a local mesh with no internet and settle when a gateway gets online.">
+<link rel="canonical" href="https://offlinezcash.com/basecamp-pitch">
+<meta name="theme-color" content="#0a0c0b">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Offline Zcash">
+<meta property="og:url" content="https://offlinezcash.com/basecamp-pitch">
+<meta property="og:title" content="Offline Zcash: the Logos Basecamp pitch">
+<meta property="og:description" content="Private digital cash for when the network goes dark. Pay offline, pass it along, settle later.">
+<meta property="og:image" content="https://offlinezcash.com/og/og-1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Offline Zcash: Pay without the internet.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Offline Zcash: the Logos Basecamp pitch">
+<meta name="twitter:description" content="Private digital cash for when the network goes dark.">
+<meta name="twitter:image" content="https://offlinezcash.com/og/og-1200x630.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Instrument+Serif&family=Public+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --ink:#0a0c0b; --cream:#ececE4; --dim:rgba(236,236,228,.62); --faint:rgba(236,236,228,.32); --line:rgba(236,236,228,.16); }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--ink); color:var(--cream); font:400 17px/1.6 "Public Sans",system-ui,sans-serif; -webkit-font-smoothing:antialiased; min-height:100vh; display:flex; flex-direction:column; }
+a { color:inherit; }
+.kicker { font:400 12px/1.4 "Fira Code",monospace; letter-spacing:.14em; text-transform:uppercase; }
+.top { display:flex; justify-content:space-between; align-items:center; padding:14px 28px; }
+.brand { display:flex; align-items:center; gap:10px; text-decoration:none; }
+.brand b { font:italic 400 34px/1 "Instrument Serif",serif; }
+.brand span { color:var(--dim); }
+main { flex:1; width:min(1060px, 100%); margin:0 auto; padding:24px 28px 56px; }
+h1 { font:400 clamp(44px,6vw,84px)/1 "Instrument Serif",serif; letter-spacing:-.02em; margin:14px 0 10px; text-align:center; }
+.sub { text-align:center; color:var(--dim); margin:0 auto 36px; max-width:640px; }
+.frame { position:relative; height:calc((min(1060px, 100vw) - 56px) * .5625 + 30px); border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#000; }
+.frame iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+.actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:28px; }
+.btn { display:inline-flex; padding:11px 20px; border-radius:999px; background:var(--cream); color:var(--ink); font:500 11px "Fira Code",monospace; letter-spacing:.18em; text-transform:uppercase; text-decoration:none; }
+.btn.line { background:transparent; color:var(--cream); border:1px solid var(--faint); }
+.btn:hover { background:#fff; } .btn.line:hover { background:rgba(236,236,228,.06); border-color:var(--cream); }
+.foot { display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; padding:26px 28px; color:var(--faint); border-top:1px solid var(--line); }
+.foot a { color:var(--dim); text-underline-offset:3px; }
+@media (max-width:640px) { main { padding:16px 14px 40px; } .frame { height:calc((100vw - 28px) * .5625 + 30px); } .top { padding:14px 16px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/" aria-label="Offline Zcash home"><b>z</b><span class="kicker">Offline Zcash</span></a>
+  <a class="btn line" href="/">Website</a>
+</header>
+<main>
+  <div class="kicker" style="text-align:center">Logos track · Basecamp</div>
+  <h1>The pitch.</h1>
+  <p class="sub">Private Zcash payments that move through the people around you and settle when one gateway gets online.</p>
+  <div class="frame">
+    <iframe src="https://docs.google.com/presentation/d/1i18pJgDQkIeoPrprQKSC_PrtGYaSdGqg6gSu4uUNLc8/embed?start=false&amp;loop=false" title="Offline Zcash pitch deck" allowfullscreen loading="lazy"></iframe>
+  </div>
+  <div class="actions">
+    <a class="btn" href="https://docs.google.com/presentation/d/1i18pJgDQkIeoPrprQKSC_PrtGYaSdGqg6gSu4uUNLc8/present">Present full screen ↗</a>
+    <a class="btn line" href="https://docs.google.com/presentation/d/1i18pJgDQkIeoPrprQKSC_PrtGYaSdGqg6gSu4uUNLc8/export/pdf">Download PDF</a>
+    <a class="btn line" href="/#install">Install Offline Zcash</a>
+  </div>
+</main>
+<footer class="foot kicker">
+  <span>Built for Logos Basecamp · Built by <a href="https://megabyte.sh">megabyte</a></span>
+  <span>Experimental · testnet only · not security reviewed</span>
+</footer>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "4c4b21be45654eb7aebc55840c483d77"}'></script>
+</body>
+</html>

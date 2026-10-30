@@ -15,6 +15,9 @@ export default {
     if (url.pathname === "/basecamp" || url.pathname === "/basecamp/") {
       return Response.redirect(CATALOGUE, 302);
     }
+    if (url.pathname === "/pitch" || url.pathname === "/pitch/") {
+      return Response.redirect("https://" + PRIMARY + "/basecamp-pitch", 301);
+    }
     const res = await env.ASSETS.fetch(req);
     const h = new Headers(res.headers);
     h.set("X-Content-Type-Options", "nosniff");
