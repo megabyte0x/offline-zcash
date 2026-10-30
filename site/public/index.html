@@ -139,10 +139,7 @@ body::after {
 }
 .top.solid { background: rgba(10,12,11,.55); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.brand-mark {
-  font: italic 34px/1 var(--serif);
-  width: 34px; text-align: center;
-}
+.brand-mark { width: 34px; height: 34px; border-radius: 8px; box-shadow: 0 0 0 1px var(--cream-faint); }
 .brand-name { font: 400 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--cream-dim); }
 .pills {
   display: flex;
@@ -424,8 +421,7 @@ details.more .inner li { margin-bottom: 8px; }
 
 <header class="top" id="top">
   <a class="brand" href="#hero" aria-label="Offline Zcash home">
-    <span class="brand-mark">z</span>
-    <span class="brand-name">Offline Zcash</span>
+    <img class="brand-mark" src="/icon-192.png" alt="" width="34" height="34">
   </a>
   <nav class="pills" aria-label="Sections">
     <a href="#install" data-role-link="user">Install as user</a>
