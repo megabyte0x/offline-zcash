@@ -183,10 +183,7 @@ impl OfflineNode {
     }
 
     pub fn list_payments(&self) -> String {
-        out(self.app().map(|a| {
-            let s = a.state.lock().unwrap();
-            json!({"payments": s.1.payments.values().collect::<Vec<_>>(), "refusals": s.1.refusals, "gateway": s.1.gateway.values().collect::<Vec<_>>()})
-        }))
+        out(self.app().map(|a| a.payments_json()))
     }
 
     /// Handles must be unique for the lifetime of this object, including reconnects.

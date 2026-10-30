@@ -24,6 +24,7 @@ It is not security reviewed and does not support real funds.
 - A device drops mesh packets that claim its own ID as sender. About 512 forged packets could otherwise fill its own store quota and block every payment and sync request it sends for a day.
 - A payee refuses an offline payment whose expiry is beyond the fleet policy (tip + anchor window + expiry delta), instead of issuing a receipt for a transaction that stays pending for years.
 - A testnet wallet ignores a chain clock whose tip or time is ahead of what its own clock allows, so one bad first gateway reply can no longer set a birthday past the real chain and stop sync for good.
+- A wallet keeps only its last 100 refusals and sends refusal receipts as replaceable messages, so a stranger's junk payments can no longer grow the payment book without limit or fill the wallet's own mesh quota and stop it sending for a day.
 - Joining an invite into a home that already holds the same device identity but a different spending key is refused instead of silently replacing the key. `fleet.json` is now written atomically.
 
 ### Fixed
@@ -31,6 +32,13 @@ It is not security reviewed and does not support real funds.
 - A payment is marked delivered only when the payee acknowledges that payment's own message, not any message from the payee.
 - Notes from a received payment that expired (local scan past its expiry) no longer block a new payment from the same notes as a conflict.
 - Very large typed amounts are refused instead of wrapping to a small value.
+- A gateway's 5-second chain check no longer stops at the first transaction it cannot check or resubmit. One bad entry (for example a different variant of the same txid on chain) used to stop tip pushes, pruning and every later entry for all wallets; it is now logged as `gateway-watch-error` and skipped.
+- Payments already reported included are no longer resent every retry interval; the chain check carries them to mined.
+- A mined payment is no longer moved back to included by a late result from another source (for example the gateway after an online-mode wallet fell back to the mesh). The same gateway can still report a reorg.
+- Automatic preparation no longer fails on a note worth exactly the split plus the fee with change.
+- The Basecamp wallet and gateway apps (and the Android bindings) no longer receive every raw transaction and nullifier on each 3-second refresh; the local HTTP API still returns them.
+- Mesh sync batches are scanned on a blocking thread instead of the async workers.
+- The package catalogue describes public testnet instead of only local Regtest.
 - A gateway that is the payee of a mesh payment now sends the payer the included receipt when its own chain check reports the payment included, as a payee does after a mesh gateway's result.
 
 ## [0.7.7] - 2026-10-29

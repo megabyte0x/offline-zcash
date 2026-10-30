@@ -456,7 +456,9 @@ impl App {
     pub(crate) async fn send_device(&self, dev: &DevicePublic, body: Body) -> Result<()> {
         let kind = body.kind();
         // Presence and tips are superseded by the next one; never let them hold the store quota.
-        let replaceable = matches!(body, Body::Presence(_) | Body::Tip { .. });
+        // Refusal receipts are best-effort (payers retry), so strangers' junk cannot fill our quota.
+        let replaceable = matches!(&body, Body::Presence(_) | Body::Tip { .. })
+            || matches!(&body, Body::Rcpt(r) if matches!(r.body.state, ReceiptState::Refused(_)));
         let pay_txid = if let Body::Pay { statement, .. } = &body { Some(statement.body.txid.clone()) } else { None };
         let payload_bytes = bincode::serialized_size(&body)?;
         let inner = Inner {
@@ -789,7 +791,9 @@ impl App {
             return self.send_to(from, Body::CompactReq { have_height: 0, have_hash: String::new(), checkpoints: vec![], birthday: start }).await;
         }
         let old_tip = wallet.tip_height;
-        let (wallet, report) = wallet.into_batch(&batch, &self.cfg.me.fvk()?)?;
+        let fvk = self.cfg.me.fvk()?;
+        // Scanning is CPU-bound; keep it off the async workers (Android has two).
+        let (wallet, report, batch) = tokio::task::spawn_blocking(move || wallet.into_batch(&batch, &fvk).map(|(w, r)| (w, r, batch))).await??;
         let (_, _, tip) = self.install_wallet(wallet, report.tip >= batch.chain_tip)?;
         if tip != old_tip { self.sync_backoff.store(1, std::sync::atomic::Ordering::Relaxed); }
         *self.sync_sources.lock().unwrap() = batch.sources.clone();
@@ -1521,6 +1525,8 @@ impl App {
                     let mut st = self.state.lock().unwrap();
                     st.1.deferred_payments.remove(&s.txid);
                     st.1.refusals.push(Refusal { ms: now_ms(), from: from.into(), txid: s.txid.clone(), reject: reject.clone() });
+                    let excess = st.1.refusals.len().saturating_sub(100);
+                    st.1.refusals.drain(..excess);
                     self.persist(&st.0, &st.1)?;
                 }
                 self.event("refused", json!({"txid": s.txid, "from": from, "code": reject.code, "reason": reject.reason}));
@@ -1683,21 +1689,29 @@ impl App {
         let entries: Vec<_> = self.state.lock().unwrap().1.gateway.values()
             .filter(|e| !e.tx_hex.is_empty() && !matches!(e.result.body.status, TxStatus::Mined { .. })).cloned().collect();
         for entry in entries {
-            let raw = hex::decode(&entry.tx_hex)?;
-            let known = source.status(&raw, &entry.txid).await?;
-            let mut submitted = false;
-            let status = match known {
-                Some(status @ (TxStatus::Included { .. } | TxStatus::Mined { .. })) => status,
-                _ if source.tip > entry.expiry_height => TxStatus::Expired,
-                _ if changed && source.tip.saturating_sub(entry.last_submit_height) >= 3 => {
-                    submitted = true;
-                    source.submit(&raw).await?
+            // One failing entry must not stop the tip update, pruning or the other entries.
+            let txid = entry.txid.clone();
+            let checked: Result<()> = async {
+                let raw = hex::decode(&entry.tx_hex)?;
+                let known = source.status(&raw, &entry.txid).await?;
+                let mut submitted = false;
+                let status = match known {
+                    Some(status @ (TxStatus::Included { .. } | TxStatus::Mined { .. })) => status,
+                    _ if source.tip > entry.expiry_height => TxStatus::Expired,
+                    _ if changed && source.tip.saturating_sub(entry.last_submit_height) >= 3 => {
+                        submitted = true;
+                        source.submit(&raw).await?
+                    }
+                    Some(status) => status,
+                    None => TxStatus::Submitted,
+                };
+                if status != entry.result.body.status || submitted {
+                    self.publish_gateway(entry, status, source.tip, submitted).await?;
                 }
-                Some(status) => status,
-                None => TxStatus::Submitted,
-            };
-            if status != entry.result.body.status || submitted {
-                self.publish_gateway(entry, status, source.tip, submitted).await?;
+                Ok(())
+            }.await;
+            if let Err(e) = checked {
+                self.event("gateway-watch-error", json!({"txid": txid, "error": format!("{e:#}")}));
             }
         }
         *self.chain_view.lock().unwrap() = (source.tip, source.hash.clone());
@@ -1893,6 +1907,10 @@ impl App {
         let txid = r.body.txid.clone();
         let p = self.payment(&txid).ok_or_else(|| anyhow!("result for unknown payment {txid}"))?;
         anyhow::ensure!(p.result.as_ref().is_none_or(|old| old.signer != r.signer || old.body.seq < r.body.seq), "stale gateway result");
+        // A later result from the same signer may report a reorg; one from another source (online mode
+        // after a mesh fallback) must not move a mined payment back.
+        anyhow::ensure!(p.state != "mined" || matches!(r.body.status, TxStatus::Mined { .. })
+            || p.result.as_ref().is_some_and(|old| old.signer == r.signer), "payment already mined");
         let included = if p.direction == "received" && matches!(r.body.status, TxStatus::Mined { .. } | TxStatus::Included { .. }) {
             Some(Signed::sign(Receipt { txid: txid.clone(), auth_digest: p.auth_digest,
                 payee: self.name().into(), amount: p.amount, state: ReceiptState::Included,
@@ -1957,7 +1975,8 @@ impl App {
             let st = self.state.lock().unwrap();
             st.1.payments
                 .values()
-                .filter(|p| !p.is_final() && p.test_tamper.is_none())
+                // Included payments are tracked to mined by the gateway's chain check; resending adds nothing.
+                .filter(|p| !p.is_final() && p.state != "included" && p.test_tamper.is_none())
                 .filter(|p| now.saturating_sub(p.last_send_ms) >= base * (1u64 << p.attempts.saturating_sub(1).min(5)))
                 .cloned()
                 .collect()
@@ -1979,6 +1998,21 @@ impl App {
                 warn!("retry {}: {e:#}", p.txid);
             }
         }
+    }
+
+    /// Payments, refusals and gateway entries for UIs that poll: raw transactions and nullifiers
+    /// are left out because no UI shows them (the HTTP API keeps them for benches).
+    pub fn payments_json(&self) -> serde_json::Value {
+        let st = self.state.lock().unwrap();
+        let slim = |v: serde_json::Value| match v {
+            serde_json::Value::Object(mut o) => { o.remove("tx_hex"); o.remove("nullifiers"); serde_json::Value::Object(o) }
+            v => v,
+        };
+        json!({
+            "payments": st.1.payments.values().map(|p| slim(json!(p))).collect::<Vec<_>>(),
+            "refusals": st.1.refusals,
+            "gateway": st.1.gateway.values().map(|e| slim(json!(e))).collect::<Vec<_>>(),
+        })
     }
 
     pub fn status(&self) -> serde_json::Value {

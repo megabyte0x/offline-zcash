@@ -138,7 +138,8 @@ pub fn prepare_offline(state: &mut WalletState, me: &DeviceSecret, count: u32, v
     let fee_with_change = transaction_fee(count as usize + 1, policy)?;
     let note = state.notes.iter().filter(|n| n.spendable()).filter_map(|n| {
         let fee = if n.value.checked_sub(amount) == Some(fee_without_change) { fee_without_change } else { fee_with_change };
-        amount.checked_add(fee).filter(|need| n.value >= *need).map(|_| (n, fee))
+        // The with-change fee pays for a change action, so it needs change left over.
+        amount.checked_add(fee).filter(|need| n.value > *need || (n.value == *need && fee == fee_without_change)).map(|_| (n, fee))
     }).min_by_key(|(n, _)| n.value).ok_or_else(|| anyhow!("no single mined note covers the split plus fee"))?;
     build_selected(state, me, &vec![(me.address()?, value); count as usize], vec![note.0.position], note.1, policy)
 }

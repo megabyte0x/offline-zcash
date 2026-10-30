@@ -380,10 +380,7 @@ impl ZcashOfflineModule for Node {
     }
 
     fn list_payments(&self) -> String {
-        out(self.app().map(|a| {
-            let st = a.state.lock().unwrap();
-            json!({"payments": st.1.payments.values().collect::<Vec<_>>(), "refusals": st.1.refusals, "gateway": st.1.gateway.values().collect::<Vec<_>>()})
-        }))
+        out(self.app().map(|a| a.payments_json()))
     }
 
     fn leave(&self) -> String {
