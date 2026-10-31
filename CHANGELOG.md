@@ -39,8 +39,15 @@ It is not security reviewed and does not support real funds.
 - The Basecamp wallet and gateway apps (and the Android bindings) no longer receive every raw transaction and nullifier on each 3-second refresh; the local HTTP API still returns them.
 - Mesh sync batches are scanned on a blocking thread instead of the async workers.
 - The package catalogue describes public testnet instead of only local Regtest.
+- The mesh saves its store at most every 10 seconds (and on shutdown) instead of rewriting and fsyncing the whole file, up to several MB, for every packet while holding the node lock. In a two-node test, 5,000 messages took 42 s with the per-packet saves and 0.7 s without them. A crash can lose up to 10 s of mesh state; payments, receipts and submissions are kept by the app and resent.
+- A wallet's own payment waits up to 5 s for a running chain check instead of being refused at once as "gateway busy", so online-mode payments are usually submitted immediately instead of after the 30 s retry.
+- A payment acknowledged by the payee after a restart is now marked delivered: the Pay message IDs are kept with the payment instead of only in memory.
+- CI builds the Basecamp module whenever its crates or the module change, instead of only when a release is tagged.
 - In Basecamp, turning online mode off through the local API is no longer undone at the next start: the choice is kept only in the device's `online-mode.json`, not also in the module's start options.
 - A gateway that is the payee of a mesh payment now sends the payer the included receipt when its own chain check reports the payment included, as a payee does after a mesh gateway's result.
+
+### Removed
+- Gateways no longer serve the pre-v0.7 full-block sync (`SyncReq`) and wallets no longer accept its replies. It read blocks from height 1 over RPC for any requester and cached them without limit; every current wallet uses compact sync. Wallets older than v0.7 cannot sync from a v0.7.8 gateway.
 
 ## [0.7.7] - 2026-10-29
 

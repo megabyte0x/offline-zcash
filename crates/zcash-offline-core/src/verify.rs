@@ -207,4 +207,33 @@ mod tests {
         // Only an exact transaction already scanned gets this exception, never a new payment.
         assert_eq!(verify_payment(&conflict.raw, &b, &payee, &policy).unwrap_err().code, code::ANCHOR);
     }
+
+    #[test]
+    fn expiry_beyond_tip_anchor_window_and_delta_is_refused() {
+        let a = DeviceSecret::generate("A", "payer");
+        let b = DeviceSecret::generate("B", "payee");
+        let policy = Policy::default();
+        let note = StoredNote {
+            position: 0, height: 1, txid: "funding".into(), value: 1_000_000,
+            recipient: hex::encode(a.address().unwrap().to_raw_address_bytes()),
+            rho: hex::encode([0; 32]), rseed: hex::encode([7; 32]), nullifier: String::new(),
+            spent_in: None, locked_by: None,
+        };
+        let cm = orchard::note::ExtractedNoteCommitment::from(note.note().unwrap().commitment());
+        let mut payer = WalletState { tip_height: 1, tip_hash: "block1".into(),
+            commitments: vec![hex::encode(cm.to_bytes())], notes: vec![note], ..Default::default() };
+        let (_, root) = payer.witness(0).unwrap();
+        payer.roots.insert(1, hex::encode(root));
+        let mut payee = payer.clone();
+        payee.notes.clear();
+        // The payer's expiry is its tip plus its delta; the payee allows its own tip + anchor window + delta.
+        let limit = policy.anchor_window + policy.expiry_delta;
+        for (extra, refused) in [(0, false), (1, true)] {
+            let payer_policy = Policy { expiry_delta: limit + extra, ..policy.clone() };
+            let payment = build_payment(&mut payer.clone(), &a, b.address().unwrap(), 20_003, &payer_policy).unwrap();
+            assert_eq!(payment.expiry_height, 1 + limit + extra);
+            let result = verify_payment(&payment.raw, &b, &payee, &policy);
+            assert_eq!(result.err().map(|r| r.code), refused.then_some(code::EXPIRY), "expiry {}", payment.expiry_height);
+        }
+    }
 }

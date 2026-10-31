@@ -71,6 +71,8 @@ pub(crate) struct Node {
     pub link_slots: Arc<tokio::sync::Semaphore>,
     outgoing_bytes: Arc<tokio::sync::Semaphore>,
     closed: AtomicBool,
+    /// The store changed since the last save; the 10 s sweep and shutdown write it.
+    dirty: AtomicBool,
     state: Mutex<State>,
     tasks: Mutex<Vec<AbortHandle>>,
     next_link_id: AtomicU64,
@@ -97,6 +99,7 @@ impl Node {
             link_slots: Arc::new(tokio::sync::Semaphore::new(32)),
             outgoing_bytes: Arc::new(tokio::sync::Semaphore::new(persist::MAX_STORE_BYTES)),
             closed: AtomicBool::new(false),
+            dirty: AtomicBool::new(false),
             state: Mutex::new(State { links: HashMap::new(), db, events: Some(events) }),
             tasks: Mutex::new(Vec::new()),
             next_link_id: AtomicU64::new(1),
@@ -322,6 +325,9 @@ impl Node {
         if !self.is_closed() && st.db.prune(now_ms()) {
             self.persist(&st);
         }
+        if !self.is_closed() && self.dirty.swap(false, Ordering::SeqCst) {
+            self.save_store(&st);
+        }
         let peers: Vec<_> = st.links.keys().copied().collect();
         for peer in peers {
             if let Some(link) = st.links.get_mut(&peer).filter(|l| l.resync && l.authenticated) {
@@ -359,13 +365,12 @@ impl Node {
         }
     }
 
-    /// Every caller holds the state lock, which `shutdown` takes after setting `closed`, so the
+    /// Marks the store for the next sweep instead of rewriting and fsyncing it per packet. A crash
+    /// loses at most 10 s of mesh state; the app layer keeps payments durable and resends them.
+    /// Saves happen under the state lock, which `shutdown` takes after setting `closed`, so the
     /// store is never written after shutdown's final save and its folder can be moved away.
-    fn persist(&self, st: &State) {
-        if self.closed.load(Ordering::SeqCst) {
-            return;
-        }
-        self.save_store(st);
+    fn persist(&self, _st: &State) {
+        self.dirty.store(true, Ordering::SeqCst);
     }
 
     fn save_store(&self, st: &State) {

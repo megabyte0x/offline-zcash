@@ -100,8 +100,9 @@ tests; wallet nodes never use that mode. v0.5.x nodes drop new acks without cras
   Local addressed messages/broadcasts still reach the application when relay
   custody is full; that does not accept new custody or bypass app authentication.
 - **Persistence.** If `store_path` is set, the store, seen ids and acked ids are written as JSON
-  (0600 on Unix, temp file, fsync, rename) after every change and on `shutdown`. A restarted relay keeps
-  forwarding, and a restarted recipient does not deliver again.
+  (0600 on Unix, temp file, fsync, rename) at most every 10 s when changed, and on `shutdown`. A restarted
+  relay keeps forwarding, and a restarted recipient does not deliver again. A crash can lose the last 10 s of
+  mesh state; applications keep their own messages durable and resend them.
 - **Limits.** Store at most 4,096 packets / 64 MiB, each claimed sender at most
   512 packets / 16 MiB; refuse new work without evicting held packets. Seen/acked
   sets hold at most 32,768 IDs each. Reject future timestamps beyond five minutes,

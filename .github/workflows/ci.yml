@@ -22,6 +22,7 @@ jobs:
     outputs:
       rust: ${{ steps.diff.outputs.rust }}
       android: ${{ steps.diff.outputs.android }}
+      module: ${{ steps.diff.outputs.module }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,7 +42,10 @@ jobs:
           touched() { [[ "$files" == ALL ]] || grep -qE "$1" <<< "$files"; }
           if touched '^(crates/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'; then rust=true; else rust=false; fi
           if touched '^(android/|crates/ozm-ffi/|\.github/workflows/(ci|android)\.yml$)'; then android=true; else android=false; fi
+          # The Basecamp module compiles the crates below with its own Cargo.lock; only releases built it before.
+          if touched '^(crates/(zcash-offline-core|ozm-mesh|ozm-ble|ozm-node)/|logos/zcash_offline_module/|\.github/workflows/ci\.yml$)'; then module=true; else module=false; fi
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "module=$module" >> "$GITHUB_OUTPUT"
           echo "android=$android" >> "$GITHUB_OUTPUT"
 
   checks:
@@ -105,3 +109,18 @@ jobs:
         run: cargo build --release -p ozm-node
       - name: Smoke test
         run: ./target/release/ozm-node --version
+
+  module:
+    name: build Basecamp module (linux)
+    needs: changes
+    if: needs.changes.outputs.module == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=
+      - name: Build
+        run: cd logos/zcash_offline_module && nix build .#lgx --accept-flake-config -L

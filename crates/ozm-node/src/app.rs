@@ -22,7 +22,7 @@ use zcash_offline_core::{
     messages::{now_ms, Body, GatewayResult, Receipt, ReceiptState, Signed, Statement, TxStatus},
     rpc::{Rpc, RpcError},
     verify::{self, code, Reject},
-    wallet::{write_atomic, BlockData, ChunkSource, WalletState},
+    wallet::{write_atomic, WalletState},
     DevicePublic, DeviceSecret, Fleet,
 };
 
@@ -62,6 +62,9 @@ pub struct Payment {
     /// Absent when the destination address has no unique mesh binding.
     #[serde(default)]
     pub receipt_peer: Option<String>,
+    /// Mesh msg_ids of the last few Pay sends; only the payee's ack of one marks it delivered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pay_msgs: Vec<String>,
 }
 
 impl Payment {
@@ -198,7 +201,6 @@ pub struct App {
     /// Serializes proving so two pays never pick the same note.
     pay_lock: tokio::sync::Mutex<()>,
     /// Gateway: blocks already read from the node, by height (checked against the node's hash).
-    block_cache: Mutex<BTreeMap<u32, BlockData>>,
     /// Gateway: one response per requester; changing tips give overlapping batches different IDs.
     compact_serving: Mutex<std::collections::BTreeSet<String>>,
     /// Device: last mesh sync request or incoming fragment (ms), to avoid flooding the gateway.
@@ -208,8 +210,6 @@ pub struct App {
     sync_run: tokio::sync::Mutex<()>,
     sync_apply: tokio::sync::Mutex<()>,
     sync_running: std::sync::atomic::AtomicBool,
-    /// Mesh msg_id of each payment send, so only the ack of that message marks it delivered.
-    pay_msgs: Mutex<BTreeMap<String, String>>,
     last_wallet_persist: std::sync::atomic::AtomicU64,
     sync_error: Mutex<Option<String>>,
     sync_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -295,14 +295,12 @@ impl App {
             sync_generation: Default::default(),
             ble: Default::default(),
             pay_lock: Default::default(),
-            block_cache: Default::default(),
             compact_serving: Default::default(),
             last_sync_req: Default::default(),
             sync_backoff: std::sync::atomic::AtomicU64::new(1),
             sync_run: Default::default(),
             sync_apply: Default::default(),
             sync_running: Default::default(),
-            pay_msgs: Default::default(),
             last_wallet_persist: Default::default(),
             sync_error: Default::default(),
             sync_task: Default::default(),
@@ -472,9 +470,12 @@ impl App {
         let peer: PeerId = dev.peer_id.parse()?;
         let msg_id = if replaceable { self.mesh.send_replaceable(peer, sealed.clone()).await? } else { self.mesh.send(peer, sealed.clone()).await? };
         if let Some(txid) = pay_txid {
-            let mut m = self.pay_msgs.lock().unwrap();
-            if m.len() >= 1024 { m.clear(); }
-            m.insert(msg_id.to_string(), txid);
+            // Kept with the payment so an ack that arrives after a restart still counts.
+            self.update(&txid, |p| {
+                p.pay_msgs.push(msg_id.to_string());
+                let excess = p.pay_msgs.len().saturating_sub(8);
+                p.pay_msgs.drain(..excess);
+            })?;
         }
         self.event("mesh-send", json!({"kind": kind, "to": dev.name, "bytes": sealed.len(), "payload_bytes": payload_bytes, "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
         Ok(())
@@ -841,72 +842,6 @@ impl App {
 
     // ---------- gateway: chain data and test funds over the mesh ----------
 
-    async fn on_sync_req(self: &Arc<Self>, from: &str, have_height: u32, have_hash: String) -> Result<()> {
-        let url = self.gateway_options().0.ok_or_else(|| anyhow!("syncq received but this device is not online"))?;
-        let cache = self.block_cache.lock().unwrap().clone();
-        let (reset, prev_hash, blocks, tip, cache) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let rpc = Rpc::new(&url);
-            let tip = rpc.tip()?;
-            let reset = have_height > 0 && (have_height > tip || rpc.block_hash(have_height)? != have_hash);
-            let (start, prev_hash) = if reset || have_height == 0 { (1, String::new()) } else { (have_height + 1, have_hash) };
-            let mut cache = cache;
-            let mut blocks = vec![];
-            let mut bytes = 0usize;
-            // About 192 KiB of transactions per answer; the requester asks again for the rest.
-            for h in start..=tip {
-                let hash = rpc.block_hash(h)?;
-                let b = match cache.get(&h).filter(|b| b.hash == hash) {
-                    Some(b) => b.clone(),
-                    None => {
-                        let (hash, txs) = rpc.block_txs(h)?;
-                        let txs: Vec<Vec<u8>> = txs.into_iter().filter(|t| zcash_offline_core::wallet::has_ironwood(t)).collect();
-                        let b = BlockData { height: h, hash, txs };
-                        cache.insert(h, b.clone());
-                        b
-                    }
-                };
-                bytes += b.txs.iter().map(Vec::len).sum::<usize>() + 80;
-                blocks.push(b);
-                if bytes > 192 * 1024 {
-                    break;
-                }
-            }
-            Ok((reset, prev_hash, blocks, tip, cache))
-        })
-        .await??;
-        *self.block_cache.lock().unwrap() = cache;
-        self.event("sync-served", json!({"to": from, "from_height": blocks.first().map(|b| b.height), "blocks": blocks.len(), "tip": tip, "reset": reset}));
-        self.send_to(from, Body::SyncRes { reset, prev_hash, blocks, chain_tip: tip }).await
-    }
-
-    async fn on_sync_res(self: &Arc<Self>, from: &str, reset: bool, prev_hash: String, blocks: Vec<BlockData>, chain_tip: u32) -> Result<()> {
-        self.require_gateway(from)?;
-        let _g = self.sync_apply.lock().await;
-        let mut wallet = self.state.lock().unwrap().0.clone();
-        let fvk = self.cfg.me.fvk()?;
-        let last = blocks.last().map(|b| b.height);
-        let (wallet, report) = tokio::task::spawn_blocking(move || -> Result<_> {
-            if reset {
-                wallet.reset_keep_locks();
-            }
-            let first = blocks.first().map_or(wallet.tip_height + 1, |b| b.height);
-            if first != wallet.tip_height + 1 {
-                bail!("chunk starts at {first}, wallet is at {}", wallet.tip_height);
-            }
-            let src = ChunkSource { prev: (wallet.tip_height, if wallet.tip_height == 0 { String::new() } else { prev_hash }), blocks };
-            let rep = wallet.sync_from(&src, &fvk)?;
-            Ok((wallet, rep))
-        })
-        .await??;
-        let (spendable, locked, tip) = self.install_wallet(wallet, true)?;
-        self.event("synced", json!({"via": from, "tip": tip, "chain_tip": chain_tip, "new_notes": report.new_notes, "rescanned": reset, "spendable": spendable, "locked": locked}));
-        drop(_g);
-        if last.is_some_and(|l| l < chain_tip) {
-            self.request_mesh_sync(true).await?;
-        }
-        Ok(())
-    }
-
     /// Device: ask a gateway for test funds (Regtest/testnet sessions).
     pub async fn request_funds(self: &Arc<Self>, notes: u32, amount_each: u64) -> Result<String> {
         anyhow::ensure!(self.cfg.fleet.network == zcash_offline_core::fleet::Network::Regtest, "no gateway faucet on testnet; use faucet.testnet.valargroup.dev, then Prepare for offline");
@@ -1039,7 +974,7 @@ impl App {
             counterparty: self.cfg.me.public_on(self.cfg.fleet.network)?.address, amount: built.amount,
             fee: built.fee, expiry_height: built.expiry_height, state: "built".into(), tx_hex: hex::encode(&built.raw),
             nullifiers: checked.nullifiers, statement: None, receipt: None, result: None, history: vec![],
-            created_ms: now_ms(), last_send_ms: now_ms(), attempts: 1, test_tamper: None, receipt_peer: None,
+            created_ms: now_ms(), last_send_ms: now_ms(), attempts: 1, test_tamper: None, receipt_peer: None, pay_msgs: vec![],
         };
         payment.note(format!("Prepare for offline: {count} × {value} zat; fee {} zat; wait for mined before going offline", built.fee));
         {
@@ -1132,6 +1067,7 @@ impl App {
                 attempts: 0,
                 test_tamper: tamper.clone(),
                 receipt_peer: payee.as_ref().map(|p| self.route_name(p)),
+                pay_msgs: vec![],
             };
             p.note(format!("built offline: {} bytes, proved in {} ms, expiry {}", built.raw.len(), built.prove_ms, built.expiry_height));
             st.1.payments.insert(p.txid.clone(), p.clone());
@@ -1309,8 +1245,8 @@ impl App {
                     Body::Rcpt(r) => self.on_receipt(&from_name, r),
                     Body::Sub { tx, txid, notify } => self.on_sub(&from_name, tx, txid, notify).await,
                     Body::Res(r) => self.handle_result(&from_name, r).await,
-                    Body::SyncReq { have_height, have_hash } => self.on_sync_req(&from_name, have_height, have_hash).await,
-                    Body::SyncRes { reset, prev_hash, blocks, chain_tip } => self.on_sync_res(&from_name, reset, prev_hash, blocks, chain_tip).await,
+                    // Full-block sync (before v0.7) was replaced by compact sync; the variants stay for wire compatibility.
+                    Body::SyncReq { .. } | Body::SyncRes { .. } => Err(anyhow!("full-block sync is no longer supported; upgrade to compact sync")),
                     Body::CompactReq { have_height, have_hash, checkpoints, birthday } => self.on_compact_req(&from_name, have_height, have_hash, checkpoints, birthday).await,
                     Body::CompactPart(part) => self.on_compact_part(&from_name, part).await,
                     Body::Tip { height, hash } => self.on_tip(&from_name, height, hash).await,
@@ -1343,7 +1279,8 @@ impl App {
                 let by_name = self.device(&by.to_string()).map(|d| self.route_name(&d)).unwrap_or(by.to_string());
                 self.event("mesh-delivered", json!({"msg_id": msg_id.to_string(), "by": by_name}));
                 // Only the payee's ack of the payment message itself marks that payment delivered.
-                let txid = self.pay_msgs.lock().unwrap().remove(&msg_id.to_string());
+                let id = msg_id.to_string();
+                let txid = self.state.lock().unwrap().1.payments.values().find(|p| p.pay_msgs.contains(&id)).map(|p| p.txid.clone());
                 if let Some(t) = txid {
                     let _ = self.update(&t, |p| {
                         if p.direction == "sent" && p.state == "sent" && p.receipt_peer.as_deref() == Some(&by_name) {
@@ -1503,6 +1440,7 @@ impl App {
                         attempts: 1,
                         test_tamper: None,
                         receipt_peer: Some(from.to_string()),
+                        pay_msgs: vec![],
                     };
                     p.note(format!("checked in {verify_ms} ms at view height {}; anchor height {}; {}", v.view_height, v.anchor_height,
                         if pending { "fleet pending acceptance" } else { "not accepted: awaiting gateway-reported inclusion" }));
@@ -1790,10 +1728,11 @@ impl App {
                         return Ok(());
                     }
                 }
-                // Our own payments are submitted inside a UI call; the retry loop resubmits them
-                // between chain checks. Mesh submitters wait instead of being refused.
-                anyhow::ensure!(from != self.name(), "gateway busy; retry submission");
-                tokio::time::timeout(Duration::from_secs(90), self.gateway_apply.lock()).await
+                // Our own payments are submitted inside a UI call (Basecamp allows 20 s), so they wait
+                // briefly for a running chain check, then leave the rest to the retry loop.
+                // Mesh submitters wait longer instead of being refused.
+                let wait = if from == self.name() { 5 } else { 90 };
+                tokio::time::timeout(Duration::from_secs(wait), self.gateway_apply.lock()).await
                     .map_err(|_| anyhow!("gateway busy; retry submission"))?
             }
         };

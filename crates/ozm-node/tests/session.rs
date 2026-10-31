@@ -338,6 +338,14 @@ fn generated_invites_join_and_never_overwrite_keys() {
             assert_eq!(std::fs::metadata(&device.invite_path).unwrap().permissions().mode() & 0o777, 0o600);
         }
     }
+    // The same device identity with another spending key must not replace the wallet's keys.
+    let alice = result.devices.iter().find(|d| d.name == "Alice").unwrap();
+    let home = dir.path().join("Alice");
+    let keys = std::fs::read(home.join("secret.json")).unwrap();
+    let mut swapped: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&alice.invite_path).unwrap()).unwrap();
+    swapped["secret"]["ironwood_sk"] = zcash_offline_core::DeviceSecret::generate("Alice", "").ironwood_sk.into();
+    assert!(join_invite(&swapped.to_string(), &home).is_err());
+    assert_eq!(std::fs::read(home.join("secret.json")).unwrap(), keys);
     // A new session without a network choice (the Organiser and CLI default) is testnet.
     let new: FleetInitOptions = serde_json::from_value(serde_json::json!({"out": "x", "name": "n", "devices": []})).unwrap();
     assert_eq!(new.network, zcash_offline_core::fleet::Network::Testnet);
@@ -462,18 +470,22 @@ async fn open_identity_persists_and_first_used_gateway_stays_pinned() {
     assert_eq!(app.status()["selected_gateway"]["peer_id"], c.public().unwrap().peer_id);
     assert_eq!(app.status()["selected_gateway"]["trust"], "gateway-reported");
     app.request_mesh_sync(true).await.unwrap();
-    let forged = Inner { from: c.name.clone(), from_key: c.public().unwrap().ed25519,
-        body: Body::SyncRes { reset: false, prev_hash: String::new(), chain_tip: 1,
-            blocks: vec![zcash_offline_core::wallet::BlockData { height: 1, hash: "block1".into(), txs: vec![] }] } };
+    let batch = zcash_offline_core::sync::Batch { prev_height: 0, prev_hash: String::new(), seed: None,
+        blocks: vec![zcash_offline_core::sync::CompactBlock { height: 1, hash: "block1".into(), txs: vec![] }],
+        chain_tip: 1, sources: vec!["controlled source".into()] };
+    let forged: Vec<Inner> = batch.chunks().unwrap().into_iter()
+        .map(|part| Inner { from: c.name.clone(), from_key: c.public().unwrap().ed25519, body: Body::CompactPart(part) }).collect();
     // Public sealing keys are sufficient to encrypt, never to impersonate the gateway.
-    for inner in [forged.clone(), envelope::authenticate(forged.clone(), &b, &recipient).unwrap()] {
+    for inner in forged.iter().cloned().chain(forged.iter().map(|f| envelope::authenticate(f.clone(), &b, &recipient).unwrap())) {
         app.handle_mesh_event(MeshEvent::Message { from: c.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
             payload: envelope::seal(&inner, &recipient).unwrap(), hops: 1, broadcast: false }).await;
         assert_eq!(app.status()["wallet"]["tip"], 0);
     }
-    let signed = envelope::authenticate(forged, &c, &recipient).unwrap();
-    app.handle_mesh_event(MeshEvent::Message { from: c.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
-        payload: envelope::seal(&signed, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    for inner in forged {
+        let signed = envelope::authenticate(inner, &c, &recipient).unwrap();
+        app.handle_mesh_event(MeshEvent::Message { from: c.public().unwrap().peer_id.parse().unwrap(), msg_id: MsgId::random(),
+            payload: envelope::seal(&signed, &recipient).unwrap(), hops: 1, broadcast: false }).await;
+    }
     assert_eq!(app.status()["wallet"]["tip"], 1);
     let pins: serde_json::Value = serde_json::from_slice(&std::fs::read(o.data.join("trust.json")).unwrap()).unwrap();
     assert_eq!(pins["gateway"]["peer_id"], c.public().unwrap().peer_id);
@@ -980,5 +992,36 @@ async fn included_payments_keep_resending_at_the_longest_backoff() {
     app.state.lock().unwrap().1.payments.get_mut(&p.txid).unwrap().last_send_ms = now - 17 * 60_000;
     app.retry_tick().await;
     assert_eq!(app.payment(&p.txid).unwrap().attempts, 2, "included is still resent");
+    app.mesh.shutdown();
+}
+
+#[tokio::test]
+async fn only_the_ack_of_the_pay_message_marks_delivered_even_after_restart() {
+    use ozm_mesh::{MeshEvent, MsgId};
+    let dir = tempfile::tempdir().unwrap();
+    let fleet = fleet_init(&FleetInitOptions { out: dir.path().join("fleet"), name: "delivered".into(),
+        network: Default::default(), birthday: 0, devices: vec!["A".into(), "B".into(), "G:gateway".into()] }).unwrap();
+    let a: zcash_offline_core::DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[0].secret_path).unwrap()).unwrap();
+    let b: zcash_offline_core::DeviceSecret = serde_json::from_slice(&std::fs::read(&fleet.devices[1].secret_path).unwrap()).unwrap();
+    let home = dir.path().join("a");
+    join_invite(&std::fs::read_to_string(&fleet.devices[0].invite_path).unwrap(), &home).unwrap();
+    let mut opts = RunOpts::for_home(&home);
+    opts.listen = "127.0.0.1:0".parse().unwrap(); opts.discover = false; opts.auto_sync_secs = 0;
+    std::fs::create_dir_all(&opts.data).unwrap();
+    // The Pay was sent before a restart; only its persisted msg_id links the later ack to it.
+    let pay = MsgId::random();
+    let mut p = recorded_payment(&a, &"cd".repeat(32), 1_000, "sent");
+    p.direction = "sent".into();
+    p.receipt_peer = Some("B".into());
+    p.pay_msgs = vec![pay.to_string()];
+    let mut book = ozm_node::app::Book::default();
+    book.payments.insert(p.txid.clone(), p.clone());
+    std::fs::write(opts.data.join("payments.json"), serde_json::to_vec(&book).unwrap()).unwrap();
+    let app = start(&opts).await.unwrap();
+    let by = b.public().unwrap().peer_id.parse().unwrap();
+    app.handle_mesh_event(MeshEvent::Delivered { msg_id: MsgId::random(), by }).await;
+    assert_eq!(app.payment(&p.txid).unwrap().state, "sent", "an ack of another message from the payee");
+    app.handle_mesh_event(MeshEvent::Delivered { msg_id: pay, by }).await;
+    assert_eq!(app.payment(&p.txid).unwrap().state, "delivered");
     app.mesh.shutdown();
 }

@@ -17,8 +17,6 @@ use orchard::{
 use serde::{Deserialize, Serialize};
 use shardtree::{store::{memory::MemoryShardStore, Checkpoint, ShardStore, TreeState}, ShardTree};
 use std::{collections::BTreeMap, path::Path};
-use zcash_primitives::transaction::Transaction;
-use zcash_protocol::consensus::BranchId;
 
 use crate::{rpc::Rpc, sync::{Batch, CompactBlock, Seed}, wallet_tree::{TreeData, CHECKPOINTS}};
 
@@ -455,11 +453,6 @@ impl WalletState {
         self.release_expired();
         Ok(SyncReport { tip: self.tip_height, new_notes, rescanned })
     }
-}
-
-/// True if the raw NU7 transaction carries an Ironwood bundle (the only transactions wallet sync needs).
-pub fn has_ironwood(raw: &[u8]) -> bool {
-    Transaction::read(raw, BranchId::Nu7).map(|tx| tx.ironwood_bundle().is_some()).unwrap_or(false)
 }
 
 pub fn check_frontier_size(encoded: &str, expected: u64) -> Result<()> {
