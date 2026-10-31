@@ -13,3 +13,4 @@ android/generated/
 android/jniLibs/
 android/local.properties
 bench/.state-ffi/
+__pycache__/
