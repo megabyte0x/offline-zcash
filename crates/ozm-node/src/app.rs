@@ -470,12 +470,13 @@ impl App {
         let peer: PeerId = dev.peer_id.parse()?;
         let msg_id = if replaceable { self.mesh.send_replaceable(peer, sealed.clone()).await? } else { self.mesh.send(peer, sealed.clone()).await? };
         if let Some(txid) = pay_txid {
-            // Kept with the payment so an ack that arrives after a restart still counts.
-            self.update(&txid, |p| {
+            // In memory only: send_payment's closing update persists it with the payment, so an ack
+            // after a restart still counts without a second full write per send.
+            if let Some(p) = self.state.lock().unwrap().1.payments.get_mut(&txid) {
                 p.pay_msgs.push(msg_id.to_string());
                 let excess = p.pay_msgs.len().saturating_sub(8);
                 p.pay_msgs.drain(..excess);
-            })?;
+            }
         }
         self.event("mesh-send", json!({"kind": kind, "to": dev.name, "bytes": sealed.len(), "payload_bytes": payload_bytes, "msg_id": msg_id.to_string(), "envelope_id": inner.envelope_id()}));
         Ok(())
@@ -1280,11 +1281,13 @@ impl App {
                 self.event("mesh-delivered", json!({"msg_id": msg_id.to_string(), "by": by_name}));
                 // Only the payee's ack of the payment message itself marks that payment delivered.
                 let id = msg_id.to_string();
-                let txid = self.state.lock().unwrap().1.payments.values().find(|p| p.pay_msgs.contains(&id)).map(|p| p.txid.clone());
+                let txid = self.state.lock().unwrap().1.payments.values()
+                    .find(|p| p.state == "sent" && p.pay_msgs.contains(&id)).map(|p| p.txid.clone());
                 if let Some(t) = txid {
                     let _ = self.update(&t, |p| {
                         if p.direction == "sent" && p.state == "sent" && p.receipt_peer.as_deref() == Some(&by_name) {
                             p.state = "delivered".into();
+                            p.pay_msgs.clear();
                             p.note(format!("mesh ack from {by_name}"));
                         }
                     });
@@ -1510,6 +1513,8 @@ impl App {
                     ReceiptState::Refused(_) => "refused, may still mine until expiry".into(),
                 };
             }
+            // Only "sent" payments wait for a mesh ack; later states never need the msg_ids.
+            p.pay_msgs.clear();
             p.note(format!("receipt from {from}: {state}"));
             p.receipt = Some(r);
         })
@@ -1873,6 +1878,7 @@ impl App {
             }
             let p = st.1.payments.get_mut(&txid).expect("checked payment");
             p.state = state.into();
+            p.pay_msgs.clear();
             p.note(text);
             if included.is_some() { p.receipt = included; }
             p.result = Some(r);
